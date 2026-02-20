@@ -34,25 +34,6 @@ def create_job(
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
-    wallet = db.query(CreditWallet).filter(CreditWallet.team_id == team.id).first()
-
-    if not wallet:
-        raise HTTPException(status_code=404, detail="Wallet not found")
-
-    now = datetime.utcnow()
-
-    # 🔒 Auto-expire subscription if needed
-    if wallet.subscription_expires_at and wallet.subscription_expires_at < now:
-        wallet.subscription_status = "EXPIRED"
-        db.commit()
-
-    # 🔒 Block only if expired AND no credits
-    if wallet.subscription_status != "ACTIVE" and wallet.balance <= 0:
-        raise HTTPException(
-            status_code=403,
-            detail="Subscription expired and no credits available"
-        )
-
     job = create_translation_job(
         db=db,
         team_id=team.id,

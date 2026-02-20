@@ -1,42 +1,19 @@
-from fastapi import FastAPI, Depends
-from app.config import settings
-from app.database import engine, Base
-from app.models import user
-from app.models import team
-from app.models import credit
-from app.models import job
-from app.models.user import User
-from app.dependencies import get_current_user
+from fastapi import FastAPI
+from dotenv import load_dotenv
+from pathlib import Path
 
-from app.routers import auth
-from app.routers import jobs
-from app.routers import subscription  # make sure this exists
+# Load .env from backend root
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
+app = FastAPI()
 
-# ✅ CREATE APP FIRST
-app = FastAPI(title=settings.app_name)
+# Import routers AFTER app creation
+from app.routers import stripe
+from app.routers import subscription
+from app.routers import auth   # ✅ ADD THIS
 
-
-# ✅ INCLUDE ROUTERS AFTER APP EXISTS
-app.include_router(auth.router)
-app.include_router(jobs.router)
+# Register routers
+app.include_router(stripe.router)
 app.include_router(subscription.router)
-
-
-@app.on_event("startup")
-def create_tables():
-    Base.metadata.create_all(bind=engine)
-
-
-@app.get("/")
-def root():
-    return {"message": "TraqConverter API running"}
-
-
-@app.get("/me")
-def read_me(current_user: User = Depends(get_current_user)):
-    return {
-        "id": str(current_user.id),
-        "email": current_user.email,
-        "full_name": current_user.full_name,
-    }
+app.include_router(auth.router)  # ✅ ADD THIS

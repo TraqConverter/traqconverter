@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 
 
 class Settings(BaseSettings):
@@ -9,8 +10,14 @@ class Settings(BaseSettings):
     algorithm: str
     access_token_expire_minutes: int
 
-    class Config:
-        env_file = ".env"
+    # --- Stripe ---
+    stripe_secret_key: str
+    stripe_webhook_secret: str
+
+    model_config = ConfigDict(
+        env_file=".env",
+        extra="ignore"  # Ignore unexpected env vars safely
+    )
 
 
 settings = Settings()

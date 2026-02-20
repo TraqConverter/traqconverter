@@ -25,7 +25,7 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Create user
+    # 🔹 Create user
     user = User(
         email=user_data.email,
         password_hash=hash_password(user_data.password),
@@ -34,7 +34,7 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     db.add(user)
     db.flush()
 
-    # Create team for user
+    # 🔹 Create team
     team = Team(
         name=f"{user.full_name}'s Team",
         owner_id=user.id
@@ -42,11 +42,15 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     db.add(team)
     db.flush()
 
-    # Create wallet with initial subscription credits
+    # 🔹 Create wallet (NEW STRUCTURE — no balance field)
     wallet = CreditWallet(
         team_id=team.id,
-        balance=39,
-        monthly_allowance=39
+        subscription_credits=0,
+        purchased_credits=0,
+        plan_type="STARTER",
+        monthly_allowance=39,
+        subscription_status="INACTIVE",
+        subscription_expires_at=None,
     )
     db.add(wallet)
 
