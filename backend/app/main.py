@@ -11,9 +11,11 @@ app = FastAPI()
 # Import routers AFTER app creation
 from app.routers import stripe
 from app.routers import subscription
-from app.routers import auth   # ✅ ADD THIS
+from app.routers import auth
+from app.routers import project  
 
 # Register routers
 app.include_router(stripe.router)
 app.include_router(subscription.router)
-app.include_router(auth.router)  # ✅ ADD THIS
+app.include_router(auth.router)
+app.include_router(project.router)  

@@ -20,3 +20,7 @@ class User(Base):
     monthly_credits = Column(Integer, default=0)
     extra_credits = Column(Integer, default=0)
     subscription_current_period_end = Column(DateTime, nullable=True)
+    subscription_plan = Column(String, nullable=False, default="BASIC")
+
+    # === ROLE FIELD ===
+    role = Column(String, nullable=False, default="USER")
