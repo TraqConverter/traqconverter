@@ -33,7 +33,7 @@ def run():
     wallet = CreditWallet(
         team_id=team_id,
         balance=10,
-        monthly_allowance=39
+        subscription_credits=30
     )
     db.add(wallet)
     db.commit()

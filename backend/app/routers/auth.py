@@ -48,7 +48,7 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
         subscription_credits=0,
         purchased_credits=0,
         plan_type="STARTER",
-        monthly_allowance=39,
+        monthly_allowance=1,
         subscription_status="INACTIVE",
         subscription_expires_at=None,
     )

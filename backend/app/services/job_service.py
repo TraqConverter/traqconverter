@@ -26,7 +26,7 @@ def create_translation_job(
 
     now = datetime.utcnow()
 
-    # 🔒 If subscription expired, zero out subscription credits usage
+    # 🔒 Expire subscription if needed
     if (
         wallet.subscription_status == "ACTIVE"
         and wallet.subscription_expires_at
@@ -43,18 +43,28 @@ def create_translation_job(
 
     remaining = page_count
 
-    # 🔹 Deduct subscription credits first (only if ACTIVE)
+    # 🔹 Deduct subscription credits first (ONLY if ACTIVE)
     if wallet.subscription_status == "ACTIVE":
-        if wallet.subscription_credits >= remaining:
-            wallet.subscription_credits -= remaining
+        sub_available = wallet.subscription_credits
+
+        if sub_available >= remaining:
+            wallet.subscription_credits = sub_available - remaining
             remaining = 0
         else:
-            remaining -= wallet.subscription_credits
             wallet.subscription_credits = 0
+            remaining -= sub_available
 
-    # 🔹 Deduct remaining from purchased credits
+    # 🔹 Deduct remaining from purchased credits SAFELY
     if remaining > 0:
+        if wallet.purchased_credits < remaining:
+            raise HTTPException(status_code=400, detail="Insufficient purchased credits")
+
         wallet.purchased_credits -= remaining
+        remaining = 0
+
+    # 🔒 Integrity check (extra safety)
+    if wallet.subscription_credits < 0 or wallet.purchased_credits < 0:
+        raise HTTPException(status_code=500, detail="Credit integrity violation")
 
     # 🔹 Log transaction
     transaction = CreditTransaction(

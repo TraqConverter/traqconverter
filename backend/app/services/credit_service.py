@@ -1,29 +1,21 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
-from app.models.credit import CreditWallet, CreditTransaction
+from app.models.credit import CreditWallet
 
 
-def deduct_credits(db: Session, team_id, pages: int):
-    wallet = db.query(CreditWallet).filter(
-        CreditWallet.team_id == team_id
-    ).first()
+def get_wallet(db: Session, team_id: str) -> CreditWallet:
+    wallet = (
+        db.query(CreditWallet)
+        .filter(CreditWallet.team_id == team_id)
+        .with_for_update()
+        .first()
+    )
 
     if not wallet:
         raise HTTPException(status_code=404, detail="Credit wallet not found")
 
-    if wallet.balance < pages:
-        raise HTTPException(status_code=400, detail="Insufficient credits")
+    return wallet
 
-    wallet.balance -= pages
 
-    transaction = CreditTransaction(
-        wallet_id=wallet.id,
-        type="USAGE",
-        amount=-pages
-    )
-
-    db.add(transaction)
-    db.commit()
-    db.refresh(wallet)
-
-    return wallet.balance
+def get_total_credits(wallet: CreditWallet) -> int:
+    return (wallet.subscription_credits or 0) + (wallet.purchased_credits or 0)
