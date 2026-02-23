@@ -20,12 +20,9 @@ class TranslationProject(Base):
     credits_used = Column(Integer, nullable=False)
 
     status = Column(
-        String,
-        nullable=False,
-        default="DRAFT"  # DRAFT / IN_PROGRESS / QUOTE_REQUESTED / COMPLETED
-    )
-
-    is_quote_request = Column(Boolean, default=False)
+    String,
+    default="PENDING"  # PENDING / IN_PROGRESS / COMPLETED / FAILED
+)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

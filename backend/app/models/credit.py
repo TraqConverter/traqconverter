@@ -17,7 +17,6 @@ class CreditWallet(Base):
 
     # 🔹 Plan configuration
     plan_type = Column(String, default="STARTER")
-    monthly_allowance = Column(Integer, default=39)
 
     subscription_status = Column(String, default="INACTIVE")
     subscription_expires_at = Column(DateTime, nullable=True)

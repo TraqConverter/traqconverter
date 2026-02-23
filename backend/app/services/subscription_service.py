@@ -4,7 +4,9 @@ from app.models.team import Team
 from uuid import uuid4
 
 
-def grant_monthly_credits(db: Session, team_id: str, amount: int = 39):
+SUBSCRIPTION_MONTHLY_CREDITS = 30
+
+def grant_monthly_credits(db: Session, team_id: str, amount: int = SUBSCRIPTION_MONTHLY_CREDITS):
     wallet = db.query(CreditWallet).filter(CreditWallet.team_id == team_id).first()
 
     if not wallet:
