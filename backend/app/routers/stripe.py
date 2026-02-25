@@ -7,6 +7,7 @@ from app.database import get_db
 from app.models.user import User
 from app.models.credit import CreditWallet
 from app.models.team import Team
+from app.models.stripe_event import StripeEvent
 from app.config import settings
 
 router = APIRouter(prefix="/stripe", tags=["Stripe"])
@@ -32,65 +33,66 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    event_id = event["id"]
     event_type = event["type"]
+
     print("Received event:", event_type)
 
     # ---------------------------------------------------
-    # 1️⃣ Store Stripe Customer ID
+    # 🔒 Idempotency check
     # ---------------------------------------------------
-    if event_type == "checkout.session.completed":
-        session = event["data"]["object"]
-        metadata = session.get("metadata", {})
-        user_id = metadata.get("user_id")
+    existing_event = db.query(StripeEvent).filter(
+        StripeEvent.id == event_id
+    ).first()
 
-        if not user_id:
+    if existing_event:
+        print("Duplicate event ignored:", event_id)
+        return {"status": "already_processed"}
+
+    # ---------------------------------------------------
+    # Only process specific events
+    # ---------------------------------------------------
+    handled_events = [
+    "invoice.payment_succeeded",
+    "customer.subscription.deleted",
+]
+
+    if event_type not in handled_events:
+        return {"status": "ignored"}
+
+    # ---------------------------------------------------
+    # Handle Subscription Payment Success
+    # ---------------------------------------------------
+    if event_type == "invoice.payment_succeeded":
+
+        invoice = event["data"]["object"]
+        subscription_id = invoice.get("subscription")
+
+        if not subscription_id:
+            return {"status": "ignored"}
+
+        # Retrieve subscription safely
+        try:
+            stripe_subscription = stripe.Subscription.retrieve(subscription_id)
+        except Exception as e:
+            print("Failed to retrieve subscription:", str(e))
+            return {"status": "ignored"}
+
+        metadata = stripe_subscription.get("metadata", {})
+
+        user_id = metadata.get("user_id")
+        team_id = metadata.get("team_id")
+
+        if not user_id or not team_id:
+            print("Missing subscription metadata — ignoring")
             return {"status": "ignored"}
 
         user = db.query(User).filter(User.id == user_id).first()
-        if not user:
+        team = db.query(Team).filter(Team.id == team_id).first()
+
+        if not user or not team:
             return {"status": "ignored"}
 
-        user.stripe_customer_id = session.get("customer")
-        db.commit()
-
-    # ---------------------------------------------------
-    # 2️⃣ Subscription Payment Success (Grant Credits)
-    # ---------------------------------------------------
-    if event_type in ["invoice.paid", "invoice.payment_succeeded"]:
-        invoice = event["data"]["object"]
-        customer_id = invoice.get("customer")
-        subscription_id = invoice.get("subscription")
-
-        if not customer_id:
-            return {"status": "ignored"}
-
-        stripe_customer = stripe.Customer.retrieve(customer_id)
-        customer_email = stripe_customer.get("email")
-
-        if not customer_email:
-            return {"status": "ignored"}
-
-        user = db.query(User).filter(User.email == customer_email).first()
-        if not user:
-            return {"status": "ignored"}
-
-        # 🔹 Update user billing metadata only
-        user.subscription_status = "ACTIVE"
-        user.subscription_plan = "PRO"
-        user.stripe_customer_id = customer_id
-        user.stripe_subscription_id = subscription_id
-
-        # 🔹 Convert Stripe period end timestamp
-        stripe_subscription = stripe.Subscription.retrieve(subscription_id)
-        expiry_timestamp = stripe_subscription["current_period_end"]
-        expiry_date = datetime.utcfromtimestamp(expiry_timestamp)
-
-        # 🔹 Get user's team
-        team = db.query(Team).filter(Team.owner_id == user.id).first()
-        if not team:
-            raise HTTPException(status_code=500, detail="Team not found")
-
-        # 🔹 Lock wallet row
         wallet = (
             db.query(CreditWallet)
             .filter(CreditWallet.team_id == team.id)
@@ -99,46 +101,74 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         )
 
         if not wallet:
-            raise HTTPException(status_code=500, detail="Credit wallet not found")
+            raise HTTPException(status_code=500, detail="Wallet not found")
 
-        # 🔹 Grant monthly credits (RESET, not add)
+        # ✅ SAFE expiry handling
+        expiry_timestamp = stripe_subscription.get("current_period_end")
+
+        if not expiry_timestamp:
+            items = stripe_subscription.get("items", {}).get("data", [])
+            if items:
+                expiry_timestamp = items[0].get("current_period_end")
+
+        if not expiry_timestamp:
+            print("Could not determine subscription expiry")
+            return {"status": "ignored"}
+
+        expiry_date = datetime.utcfromtimestamp(expiry_timestamp)
+
         wallet.subscription_status = "ACTIVE"
         wallet.subscription_credits = SUBSCRIPTION_MONTHLY_CREDITS
         wallet.subscription_expires_at = expiry_date
 
+        user.subscription_status = "ACTIVE"
+        user.subscription_plan = "PRO"
+        user.stripe_subscription_id = subscription_id
+
+        db.add(StripeEvent(id=event_id, event_type=event_type))
         db.commit()
 
-        print(f"Granted {SUBSCRIPTION_MONTHLY_CREDITS} credits to {user.email}")
+        print("Credits granted safely.")
+
+        return {"status": "success"}
 
     # ---------------------------------------------------
-    # 3️⃣ Subscription Cancellation
+    # Handle Cancellation
     # ---------------------------------------------------
     if event_type == "customer.subscription.deleted":
-        subscription = event["data"]["object"]
-        customer_id = subscription.get("customer")
 
-        user = db.query(User).filter(
-            User.stripe_customer_id == customer_id
-        ).first()
+        subscription = event["data"]["object"]
+        metadata = subscription.get("metadata", {})
+
+        user_id = metadata.get("user_id")
+        team_id = metadata.get("team_id")
+
+        if not user_id or not team_id:
+            return {"status": "ignored"}
+
+        user = db.query(User).filter(User.id == user_id).first()
+        team = db.query(Team).filter(Team.id == team_id).first()
 
         if user:
             user.subscription_status = "INACTIVE"
             user.subscription_plan = "BASIC"
             user.stripe_subscription_id = None
 
-            team = db.query(Team).filter(Team.owner_id == user.id).first()
-            if team:
-                wallet = (
-                    db.query(CreditWallet)
-                    .filter(CreditWallet.team_id == team.id)
-                    .with_for_update()
-                    .first()
-                )
+        if team:
+            wallet = (
+                db.query(CreditWallet)
+                .filter(CreditWallet.team_id == team.id)
+                .with_for_update()
+                .first()
+            )
 
-                if wallet:
-                    wallet.subscription_status = "INACTIVE"
-                    wallet.subscription_credits = 0
+            if wallet:
+                wallet.subscription_status = "INACTIVE"
+                wallet.subscription_credits = 0
 
-            db.commit()
+        db.add(StripeEvent(id=event_id, event_type=event_type))
+        db.commit()
 
-    return {"status": "success"}
+        return {"status": "success"}
+
+    return {"status": "ignored"}
