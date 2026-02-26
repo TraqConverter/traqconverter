@@ -1,20 +1,17 @@
 import os
-from uuid import uuid4
-from fastapi import UploadFile
+import uuid
 
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+BASE_UPLOAD_DIR = "uploads"
 
+def save_file_locally(file, team_id: str):
+    project_id = str(uuid.uuid4())
 
-def save_file_locally(file: UploadFile) -> str:
-    """
-    Save file locally (dev mode).
-    Returns file path.
-    """
-    file_id = str(uuid4())
-    file_path = os.path.join(UPLOAD_DIR, f"{file_id}_{file.filename}")
+    directory = os.path.join(BASE_UPLOAD_DIR, team_id, project_id)
+    os.makedirs(directory, exist_ok=True)
 
-    with open(file_path, "wb") as buffer:
-        buffer.write(file.file.read())
+    file_path = os.path.join(directory, file.filename)
 
-    return file_path
+    with open(file_path, "wb") as f:
+        f.write(file.file.read())
+
+    return file_path, project_id

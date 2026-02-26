@@ -1,16 +1,29 @@
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".jpg", ".jpeg", ".png"}
-DISALLOWED_EXTENSIONS = {".txt", ".rtf", ".html", ".htm"}
+import os
+from fastapi import HTTPException
+
+ALLOWED_EXTENSIONS = [".pdf", ".docx", ".jpg", ".jpeg", ".png"]
+MAX_FILE_SIZE_MB = 20
 
 
 def validate_file_extension(filename: str):
-    import os
-
     ext = os.path.splitext(filename)[1].lower()
 
-    if ext in DISALLOWED_EXTENSIONS:
-        raise ValueError("This file type is not supported for credit-based billing.")
-
     if ext not in ALLOWED_EXTENSIONS:
-        raise ValueError("Unsupported file type.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {ext}"
+        )
 
-    return ext
+
+def validate_file_size(file):
+    file.file.seek(0, os.SEEK_END)
+    size = file.file.tell()
+    file.file.seek(0)
+
+    max_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
+
+    if size > max_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail="File too large"
+        )
