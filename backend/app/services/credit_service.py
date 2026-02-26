@@ -1,9 +1,10 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
-from app.models.credit import CreditWallet
+from app.models.credit import CreditWallet, CreditTransaction
 
 
-def get_wallet(db: Session, team_id: str) -> CreditWallet:
+def deduct_wallet_credits(db: Session, team_id: str, pages: int):
+
     wallet = (
         db.query(CreditWallet)
         .filter(CreditWallet.team_id == team_id)
@@ -14,8 +15,34 @@ def get_wallet(db: Session, team_id: str) -> CreditWallet:
     if not wallet:
         raise HTTPException(status_code=404, detail="Credit wallet not found")
 
-    return wallet
+    total_available = wallet.subscription_credits + wallet.purchased_credits
 
+    if total_available < pages:
+        raise HTTPException(status_code=400, detail="Insufficient credits")
 
-def get_total_credits(wallet: CreditWallet) -> int:
-    return (wallet.subscription_credits or 0) + (wallet.purchased_credits or 0)
+    remaining = pages
+
+    # Deduct subscription credits first
+    if wallet.subscription_credits >= remaining:
+        wallet.subscription_credits -= remaining
+        remaining = 0
+    else:
+        remaining -= wallet.subscription_credits
+        wallet.subscription_credits = 0
+
+    # Deduct purchased credits
+    if remaining > 0:
+        wallet.purchased_credits -= remaining
+
+    # Log transaction
+    transaction = CreditTransaction(
+        wallet_id=wallet.id,
+        type="USAGE",
+        amount=-pages,
+    )
+
+    db.add(transaction)
+
+    return (
+        wallet.subscription_credits + wallet.purchased_credits
+    )

@@ -55,10 +55,48 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     handled_events = [
     "invoice.payment_succeeded",
     "customer.subscription.deleted",
+    "checkout.session.completed",
 ]
 
     if event_type not in handled_events:
         return {"status": "ignored"}
+
+    # ---------------------------------------------------
+    # Handle One-Time Credit Purchase
+    # ---------------------------------------------------
+    if event_type == "checkout.session.completed":
+
+        session = event["data"]["object"]
+        metadata = session.get("metadata", {})
+
+        if metadata.get("type") != "credit_purchase":
+            return {"status": "ignored"}
+
+        user_id = metadata.get("user_id")
+        team_id = metadata.get("team_id")
+        credits = int(metadata.get("credits", 0))
+
+        if not user_id or not team_id or credits <= 0:
+            return {"status": "ignored"}
+
+        wallet = (
+            db.query(CreditWallet)
+            .filter(CreditWallet.team_id == team_id)
+            .with_for_update()
+            .first()
+        )
+
+        if not wallet:
+            raise HTTPException(status_code=500, detail="Wallet not found")
+
+        wallet.purchased_credits += credits
+
+        db.add(StripeEvent(id=event_id, event_type=event_type))
+        db.commit()
+
+        print(f"Added {credits} purchased credits.")
+
+        return {"status": "success"}
 
     # ---------------------------------------------------
     # Handle Subscription Payment Success
