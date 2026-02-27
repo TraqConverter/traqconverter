@@ -2,6 +2,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.database import get_db
 from app.database import SessionLocal
 from app.dependencies import get_current_user
 from app.models.user import User
@@ -9,19 +10,6 @@ from app.models.team import Team
 from app.models.credit import CreditWallet
 from app.schemas.job import JobCreate, JobResponse
 from app.services.job_service import create_translation_job
-
-
-# ✅ DEFINE ROUTER FIRST
-router = APIRouter(prefix="/jobs", tags=["jobs"])
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 
 @router.post("/", response_model=JobResponse)
 def create_job(

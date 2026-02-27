@@ -1,5 +1,5 @@
 import os
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -18,6 +18,7 @@ router = APIRouter(prefix="/projects", tags=["Projects"])
 
 @router.post("/upload")
 async def upload_project(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -26,28 +27,32 @@ async def upload_project(
     validate_file_size(file)
 
     file_path = None
+    project = None
 
     try:
-        # Get user's team
-        team = db.query(Team).filter(Team.owner_id == current_user.id).first()
+        # 1. Get user's team
+        team = db.query(Team).filter(
+            Team.owner_id == current_user.id
+        ).first()
+
         if not team:
             raise HTTPException(status_code=400, detail="Team not found")
 
-        # Save file (structured storage)
-        file_path, project_id = save_file_locally(file, str(team.id))
+        # 2. Save file
+        file_path, _ = save_file_locally(file, str(team.id))
 
-        # Count pages
+        # 3. Count pages
         page_count = get_page_count(file_path)
         credits_required = page_count
 
-        # Deduct credits
+        # 4. Deduct credits
         new_balance = deduct_wallet_credits(
             db=db,
             team_id=str(team.id),
             pages=credits_required
         )
 
-        # Create project record
+        # 5. Create project
         project = TranslationProject(
             user_id=current_user.id,
             file_name=file.filename,
@@ -61,32 +66,27 @@ async def upload_project(
         db.commit()
         db.refresh(project)
 
-        # Queue translation job
-        enqueue_translation_job(str(project.id))
-
-        return {
-            "message": "Project created",
-            "pages": page_count,
-            "credits_used": credits_required,
-            "remaining_credits": new_balance,
-            "project_id": project.id
-        }
+        project_id = str(project.id)
 
     except HTTPException:
         db.rollback()
-
-        if file_path and isinstance(file_path, str) and os.path.exists(file_path):
+        if file_path and os.path.exists(file_path):
             os.remove(file_path)
-
         raise
 
     except Exception:
         db.rollback()
-
-        if file_path and isinstance(file_path, str) and os.path.exists(file_path):
+        if file_path and os.path.exists(file_path):
             os.remove(file_path)
+        raise HTTPException(status_code=400, detail="Invalid or unsupported file")
 
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid or unsupported file"
-        )
+    # Run worker AFTER response cycle safely
+    background_tasks.add_task(enqueue_translation_job, project_id)
+
+    return {
+        "message": "Project created",
+        "pages": page_count,
+        "credits_used": credits_required,
+        "remaining_credits": new_balance,
+        "project_id": project_id
+    }

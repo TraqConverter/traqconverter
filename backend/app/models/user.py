@@ -22,3 +22,5 @@ class User(Base):
 
     # === ROLE FIELD ===
     role = Column(String, nullable=False, default="USER")
+
+    certification_file = Column(String, nullable=True)
