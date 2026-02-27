@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.database import get_db
 from app.database import SessionLocal
 from app.models.user import User
 from app.models.team import Team
@@ -9,14 +10,6 @@ from app.schemas.auth import UserRegister, UserLogin, TokenResponse
 from app.core.security import hash_password, verify_password, create_access_token
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 @router.post("/register", response_model=TokenResponse)

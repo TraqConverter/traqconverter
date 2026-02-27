@@ -13,6 +13,9 @@ from app.routers import stripe
 from app.routers import subscription
 from app.routers import auth
 from app.routers import project  
+from app.routers import settings
+
+app.include_router(settings.router)
 
 # Register routers
 app.include_router(stripe.router)
