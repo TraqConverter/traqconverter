@@ -20,3 +20,5 @@ Thumbs.db
 
 # Migrations cache
 *.sqlite3
+
+uploads/
