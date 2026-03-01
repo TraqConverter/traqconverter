@@ -1,48 +1,157 @@
 from sqlalchemy.orm import Session
-from fastapi import HTTPException
 from app.models.credit import CreditWallet, CreditTransaction
 
 
-def deduct_wallet_credits(db: Session, team_id: str, pages: int):
+# ============================================================
+# DOMAIN EXCEPTIONS (NO HTTP HERE)
+# ============================================================
 
-    wallet = (
-        db.query(CreditWallet)
-        .filter(CreditWallet.team_id == team_id)
-        .with_for_update()
-        .first()
-    )
+class WalletNotFoundError(Exception):
+    pass
 
-    if not wallet:
-        raise HTTPException(status_code=404, detail="Credit wallet not found")
 
-    total_available = wallet.subscription_credits + wallet.purchased_credits
+class InsufficientCreditsError(Exception):
+    pass
 
-    if total_available < pages:
-        raise HTTPException(status_code=400, detail="Insufficient credits")
 
-    remaining = pages
+# ============================================================
+# CREDIT SERVICE (DUAL BUCKET)
+# ============================================================
 
-    # Deduct subscription credits first
-    if wallet.subscription_credits >= remaining:
-        wallet.subscription_credits -= remaining
-        remaining = 0
-    else:
-        remaining -= wallet.subscription_credits
-        wallet.subscription_credits = 0
+class CreditService:
 
-    # Deduct purchased credits
-    if remaining > 0:
-        wallet.purchased_credits -= remaining
+    @staticmethod
+    def deduct_credits(
+        db: Session,
+        team_id: str,
+        amount: int,
+        reference_id: str | None = None,
+    ) -> int:
+        """
+        Atomic dual-bucket deduction.
 
-    # Log transaction
-    transaction = CreditTransaction(
-        wallet_id=wallet.id,
-        type="USAGE",
-        amount=-pages,
-    )
+        - Row-level locking
+        - Subscription credits deducted first
+        - Purchased credits second
+        - No commit inside service
+        - Logs transaction
+        - Raises domain exceptions
 
-    db.add(transaction)
+        Returns remaining total credits.
+        """
 
-    return (
-        wallet.subscription_credits + wallet.purchased_credits
-    )
+        wallet = (
+            db.query(CreditWallet)
+            .filter(CreditWallet.team_id == team_id)
+            .with_for_update()
+            .first()
+        )
+
+        if not wallet:
+            raise WalletNotFoundError("Credit wallet not found")
+
+        total_available = wallet.subscription_credits + wallet.purchased_credits
+
+        if total_available < amount:
+            raise InsufficientCreditsError("Insufficient credits")
+
+        remaining = amount
+
+        # ----------------------------------------------------
+        # Deduct subscription credits first
+        # ----------------------------------------------------
+        if wallet.subscription_credits >= remaining:
+            wallet.subscription_credits -= remaining
+            remaining = 0
+        else:
+            remaining -= wallet.subscription_credits
+            wallet.subscription_credits = 0
+
+        # ----------------------------------------------------
+        # Deduct purchased credits
+        # ----------------------------------------------------
+        if remaining > 0:
+            wallet.purchased_credits -= remaining
+
+        # ----------------------------------------------------
+        # Log transaction
+        # ----------------------------------------------------
+        transaction = CreditTransaction(
+            wallet_id=wallet.id,
+            type="USAGE",
+            amount=-amount,
+            reference_id=reference_id,
+        )
+
+        db.add(transaction)
+
+        return wallet.subscription_credits + wallet.purchased_credits
+
+    # ========================================================
+    # MONTHLY GRANT
+    # ========================================================
+
+    @staticmethod
+    def grant_subscription_credits(
+        db: Session,
+        team_id: str,
+        amount: int,
+    ) -> None:
+        """
+        Grants subscription credits.
+        Resets subscription bucket.
+        """
+
+        wallet = (
+            db.query(CreditWallet)
+            .filter(CreditWallet.team_id == team_id)
+            .with_for_update()
+            .first()
+        )
+
+        if not wallet:
+            raise WalletNotFoundError("Credit wallet not found")
+
+        wallet.subscription_credits = amount
+
+        transaction = CreditTransaction(
+            wallet_id=wallet.id,
+            type="SUBSCRIPTION_GRANT",
+            amount=amount,
+        )
+
+        db.add(transaction)
+
+    # ========================================================
+    # ONE-TIME PURCHASE
+    # ========================================================
+
+    @staticmethod
+    def grant_purchased_credits(
+        db: Session,
+        team_id: str,
+        amount: int,
+    ) -> None:
+        """
+        Adds purchased credits (non-expiring).
+        """
+
+        wallet = (
+            db.query(CreditWallet)
+            .filter(CreditWallet.team_id == team_id)
+            .with_for_update()
+            .first()
+        )
+
+        if not wallet:
+            raise WalletNotFoundError("Credit wallet not found")
+
+        wallet.purchased_credits += amount
+
+        transaction = CreditTransaction(
+            wallet_id=wallet.id,
+            type="PURCHASE",
+            amount=amount,
+        )
+
+        db.add(transaction)

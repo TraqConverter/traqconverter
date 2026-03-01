@@ -1,6 +1,7 @@
 import uuid
 from sqlalchemy import Column, String, Boolean, DateTime
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from app.database import Base
 
 
@@ -24,3 +25,6 @@ class User(Base):
     role = Column(String, nullable=False, default="USER")
 
     certification_file = Column(String, nullable=True)
+
+    # ✅ Bidirectional relationship
+    projects = relationship("TranslationProject", back_populates="user")
