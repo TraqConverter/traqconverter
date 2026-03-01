@@ -23,6 +23,7 @@ class TranslationProject(Base):
 
     file_name = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
+    output_file = Column(String, nullable=True)  # ✅ Added
 
     page_count = Column(Integer, nullable=False)
     credits_used = Column(Integer, nullable=False)
@@ -45,4 +46,5 @@ class TranslationProject(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    user = relationship("User")
+    # ✅ Proper bidirectional relationship
+    user = relationship("User", back_populates="projects")
