@@ -23,10 +23,18 @@ class TranslationProject(Base):
 
     file_name = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
-    output_file = Column(String, nullable=True)  # ✅ Added
+    output_file = Column(String, nullable=True)
 
     page_count = Column(Integer, nullable=False)
     credits_used = Column(Integer, nullable=False)
+
+    # ✅ Idempotency Key (NEW)
+    idempotency_key = Column(
+        String,
+        nullable=True,
+        unique=True,
+        index=True
+    )
 
     status = Column(
         Enum(ProjectStatus, name="project_status_enum"),
@@ -46,5 +54,10 @@ class TranslationProject(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # ✅ Proper bidirectional relationship
+    retry_count = Column(Integer, nullable=False, default=0)
+    last_heartbeat = Column(DateTime, nullable=True)
+
+    # Relationship
     user = relationship("User", back_populates="projects")
+
+    progress_percent = Column(Integer, nullable=False, default=0)
