@@ -3,6 +3,7 @@ import shutil
 import tempfile
 import traceback
 import uuid
+from datetime import datetime
 
 from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import SQLAlchemyError
@@ -18,9 +19,6 @@ from app.services.pdf_merge_service import PdfMergeService
 # ============================================================
 
 def enqueue_translation_job(project_id: uuid.UUID):
-    """
-    Called via FastAPI BackgroundTasks AFTER commit.
-    """
     process_translation_job(project_id)
 
 
@@ -29,6 +27,8 @@ def enqueue_translation_job(project_id: uuid.UUID):
 # ============================================================
 
 def process_translation_job(project_id: uuid.UUID) -> None:
+
+    MAX_ATTEMPTS = 3
 
     db = SessionLocal()
 
@@ -43,32 +43,48 @@ def process_translation_job(project_id: uuid.UUID) -> None:
         if not project:
             return
 
-        if project.status != ProjectStatus.PENDING:
+        # ----------------------------------------------------
+        # Retry / Status Logic
+        # ----------------------------------------------------
+        if project.status == ProjectStatus.COMPLETED:
             return
 
-        # ----------------------------------------------------
-        # Move to PROCESSING
-        # ----------------------------------------------------
+        if project.retry_count >= MAX_ATTEMPTS:
+            project.status = ProjectStatus.FAILED
+            db.commit()
+            return
+
+        # Increment retry
+        project.retry_count += 1
+        project.last_heartbeat = datetime.utcnow()
         project.status = ProjectStatus.PROCESSING
+
         db.commit()
         db.refresh(project)
 
         # ----------------------------------------------------
         # Generate translated output
         # ----------------------------------------------------
+        project.last_heartbeat = datetime.utcnow()
+        db.commit()
+
         output_path = _generate_translation_output(project)
 
         # ----------------------------------------------------
-        # Certification Injection (BEFORE persistence)
+        # Certification Injection
         # ----------------------------------------------------
         if project.add_certification:
+            project.last_heartbeat = datetime.utcnow()
+            db.commit()
+
             _inject_certification(project, output_path)
 
         # ----------------------------------------------------
-        # Persist final state atomically
+        # Finalize
         # ----------------------------------------------------
         project.output_file = str(output_path)
         project.status = ProjectStatus.COMPLETED
+        project.last_heartbeat = datetime.utcnow()
 
         db.commit()
 
@@ -83,7 +99,12 @@ def process_translation_job(project_id: uuid.UUID) -> None:
             )
 
             if failed_project:
-                failed_project.status = ProjectStatus.FAILED
+                if failed_project.retry_count >= MAX_ATTEMPTS:
+                    failed_project.status = ProjectStatus.FAILED
+                else:
+                    # Leave as PENDING for retry
+                    failed_project.status = ProjectStatus.PENDING
+
                 db.commit()
 
         except SQLAlchemyError:
@@ -101,10 +122,6 @@ def process_translation_job(project_id: uuid.UUID) -> None:
 # ============================================================
 
 def _generate_translation_output(project: TranslationProject) -> Path:
-    """
-    Replace this with real translation engine later.
-    Currently performs a safe copy.
-    """
 
     original_path = Path(project.file_path)
 
@@ -131,15 +148,9 @@ def _inject_certification(project: TranslationProject, output_path: Path) -> Non
         certification_pdf = temp_dir / "certification.pdf"
         merged_pdf = temp_dir / "merged_output.pdf"
 
-        # ----------------------------------------------------
-        # Validate language fields before generating cert
-        # ----------------------------------------------------
         if not project.source_language or not project.target_language:
             raise ValueError("Source/Target language required for certification")
 
-        # ----------------------------------------------------
-        # Generate certification PDF
-        # ----------------------------------------------------
         CertificationService.generate_certification_pdf(
             output_path=certification_pdf,
             user_name=project.user.full_name or "Certified Translator",
@@ -148,18 +159,12 @@ def _inject_certification(project: TranslationProject, output_path: Path) -> Non
             override_text=project.certification_override_text,
         )
 
-        # ----------------------------------------------------
-        # Merge PDFs
-        # ----------------------------------------------------
         PdfMergeService.append_pdf(
             original_pdf=output_path,
             append_pdf=certification_pdf,
             output_pdf=merged_pdf,
         )
 
-        # ----------------------------------------------------
-        # Atomic replace
-        # ----------------------------------------------------
         shutil.move(str(merged_pdf), str(output_path))
 
     finally:
