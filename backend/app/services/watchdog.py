@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
@@ -5,12 +6,14 @@ from sqlalchemy import or_
 from app.database import SessionLocal
 from app.models.project import TranslationProject, ProjectStatus
 
+logger = logging.getLogger(__name__)
+
 MAX_ATTEMPTS = 3
 STALL_TIMEOUT_MINUTES = 2
 
 
 def recover_stalled_jobs():
-    print("[WATCHDOG] Checking for stalled jobs...")
+    logger.info("Watchdog checking for stalled jobs")
 
     db: Session = SessionLocal()
 
@@ -27,23 +30,23 @@ def recover_stalled_jobs():
             )
         ).all()
 
-        print(f"[WATCHDOG] Found {len(stalled_projects)} stalled jobs")
+        logger.info(f"Watchdog found {len(stalled_projects)} stalled jobs")
 
         for project in stalled_projects:
-            print(f"[WATCHDOG] Recovering project {project.id}")
+            logger.info(f"Watchdog recovering project {project.id}")
 
             if project.retry_count >= MAX_ATTEMPTS:
                 project.status = ProjectStatus.FAILED
-                print("[WATCHDOG] Marked FAILED")
+                logger.error("Watchdog marked project FAILED")
             else:
                 project.status = ProjectStatus.PENDING
-                print("[WATCHDOG] Returned to PENDING")
+                logger.warning("Watchdog returned project to PENDING")
 
         db.commit()
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        print("[WATCHDOG ERROR]", str(e))
+        logger.exception("Watchdog recovery failed")
 
     finally:
         db.close()

@@ -3,6 +3,7 @@ from pydantic import ConfigDict
 
 
 class Settings(BaseSettings):
+    # --- App ---
     app_name: str
     environment: str
     database_url: str
@@ -14,9 +15,20 @@ class Settings(BaseSettings):
     stripe_secret_key: str
     stripe_webhook_secret: str
 
+    # --- AWS ---
+    AWS_ACCESS_KEY: str
+    AWS_SECRET_KEY: str
+    AWS_REGION: str = "us-east-1"
+
+    # --- Storage ---
+    S3_BUCKET_NAME: str
+
+    # --- Queue ---
+    SQS_QUEUE_URL: str
+
     model_config = ConfigDict(
         env_file=".env",
-        extra="ignore"  # Ignore unexpected env vars safely
+        extra="ignore"
     )
 
 

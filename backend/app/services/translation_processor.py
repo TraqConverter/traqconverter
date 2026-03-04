@@ -1,16 +1,31 @@
+import logging
+import tempfile
+import shutil
+import time
+
+from pathlib import Path
+from datetime import datetime, timedelta
+
 from sqlalchemy.orm import Session
+
 from app.models.project import TranslationProject, ProjectStatus
 from app.database import SessionLocal
-from datetime import datetime, timedelta
-import time
+from app.services.s3_service import download_file_from_s3, upload_file_to_s3
+
+logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
 
 
+# ============================================================
+# TRANSLATION WORKER
+# ============================================================
+
 def process_translation_job(project_id: str):
-    print(f"[WORKER] Starting processing for {project_id}")
+    logger.info(f"Worker starting processing for {project_id}")
 
     db: Session = SessionLocal()
+    temp_dir = None
 
     try:
         project = db.query(TranslationProject).filter(
@@ -18,10 +33,10 @@ def process_translation_job(project_id: str):
         ).first()
 
         if not project:
-            print("[WORKER] Project not found")
+            logger.warning("Worker project not found")
             return
 
-        print("[WORKER] Project found")
+        logger.info("Worker project found")
 
         # ----------------------------------------------------
         # Crash Recovery Detection
@@ -31,7 +46,7 @@ def process_translation_job(project_id: str):
             and project.last_heartbeat
             and datetime.utcnow() - project.last_heartbeat > timedelta(seconds=60)
         ):
-            print("[WORKER] Detected stale PROCESSING job. Resetting to PENDING.")
+            logger.warning("Detected stale PROCESSING job. Resetting to PENDING.")
             project.status = ProjectStatus.PENDING
             db.commit()
 
@@ -39,14 +54,14 @@ def process_translation_job(project_id: str):
         # Completed Guard
         # ----------------------------------------------------
         if project.status == ProjectStatus.COMPLETED:
-            print("[WORKER] Already completed")
+            logger.info("Worker job already completed")
             return
 
         # ----------------------------------------------------
         # Retry Limit Guard
         # ----------------------------------------------------
         if project.retry_count >= MAX_ATTEMPTS:
-            print("[WORKER] Max attempts reached. Marking FAILED.")
+            logger.error("Max retry attempts reached. Marking FAILED.")
             project.status = ProjectStatus.FAILED
             db.commit()
             return
@@ -60,10 +75,24 @@ def process_translation_job(project_id: str):
         project.progress_percent = 0
         db.commit()
 
-        print(f"[WORKER] Attempt #{project.retry_count}")
+        logger.info(f"Worker attempt #{project.retry_count}")
 
         # ----------------------------------------------------
-        # Simulated Long Processing With Progress + Heartbeat
+        # Create temp working directory
+        # ----------------------------------------------------
+        temp_dir = Path(tempfile.mkdtemp())
+
+        input_file = temp_dir / project.file_name
+
+        logger.info("Downloading source file from S3")
+
+        download_file_from_s3(
+            project.file_path,
+            input_file
+        )
+
+        # ----------------------------------------------------
+        # Simulated Processing
         # ----------------------------------------------------
         total_steps = 4
 
@@ -74,20 +103,34 @@ def process_translation_job(project_id: str):
             project.last_heartbeat = datetime.utcnow()
             db.commit()
 
-            print(f"[WORKER] Progress: {project.progress_percent}%")
+            logger.info(f"Worker progress: {project.progress_percent}%")
+
+        # ----------------------------------------------------
+        # Generate translated output
+        # ----------------------------------------------------
+        output_filename = f"translated_{project.file_name}"
+        output_file = temp_dir / output_filename
+
+        shutil.copyfile(input_file, output_file)
+
+        logger.info("Uploading translated output to S3")
+
+        output_s3_key = upload_file_to_s3(output_file)
 
         # ----------------------------------------------------
         # Success
         # ----------------------------------------------------
+        project.output_file = output_s3_key
         project.status = ProjectStatus.COMPLETED
         project.progress_percent = 100
         project.last_heartbeat = datetime.utcnow()
+
         db.commit()
 
-        print("[WORKER] Completed")
+        logger.info("Worker completed successfully")
 
-    except Exception as e:
-        print("[WORKER ERROR]", str(e))
+    except Exception:
+        logger.exception("Worker processing failed")
         db.rollback()
 
         project = db.query(TranslationProject).filter(
@@ -97,19 +140,27 @@ def process_translation_job(project_id: str):
         if project:
             if project.retry_count >= MAX_ATTEMPTS:
                 project.status = ProjectStatus.FAILED
-                print("[WORKER] Permanently FAILED")
+                logger.error("Worker permanently failed after max retries")
             else:
                 project.status = ProjectStatus.PENDING
-                print("[WORKER] Marked PENDING for queue retry")
+                logger.warning("Worker returned job to PENDING for retry")
 
             db.commit()
 
     finally:
+
+        if temp_dir:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
         db.close()
 
 
+# ============================================================
+# WATCHDOG RECOVERY
+# ============================================================
+
 def recover_stalled_jobs():
-    print("[WATCHDOG] Checking for stalled jobs...")
+    logger.info("Watchdog checking for stalled jobs")
 
     db: Session = SessionLocal()
 
@@ -121,19 +172,22 @@ def recover_stalled_jobs():
             TranslationProject.last_heartbeat < timeout_threshold
         ).all()
 
-        print(f"[WATCHDOG] Found {len(stalled_projects)} stalled jobs")
+        logger.info(f"Watchdog found {len(stalled_projects)} stalled jobs")
 
         for project in stalled_projects:
-            print(f"[WATCHDOG] Recovering {project.id}")
+            logger.info(f"Watchdog recovering project {project.id}")
 
             if project.retry_count >= MAX_ATTEMPTS:
                 project.status = ProjectStatus.FAILED
-                print("[WATCHDOG] Marked FAILED")
+                logger.error("Watchdog marked project FAILED")
             else:
                 project.status = ProjectStatus.PENDING
-                print("[WATCHDOG] Returned to PENDING")
+                logger.warning("Watchdog returned project to PENDING")
 
         db.commit()
+
+    except Exception:
+        logger.exception("Watchdog recovery failed")
 
     finally:
         db.close()

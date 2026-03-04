@@ -1,5 +1,7 @@
+import logging
 import os
 from uuid import UUID
+from pathlib import Path
 
 from fastapi import (
     APIRouter,
@@ -22,13 +24,17 @@ from app.schemas.project import ProjectStatusResponse
 
 from app.core.file_validation import validate_file_extension, validate_file_size
 from app.core.page_counter import get_page_count
+
 from app.services.storage_service import save_file_locally
+from app.services.s3_service import upload_file_to_s3
 from app.services.queue_service import enqueue_translation_job
 from app.services.credit_service import (
     CreditService,
     WalletNotFoundError,
     InsufficientCreditsError,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -52,7 +58,9 @@ async def upload_project(
     project = None
 
     try:
+        # ----------------------------------------------------
         # 1️⃣ Idempotency Check
+        # ----------------------------------------------------
         if idempotency_key:
             existing_project = (
                 db.query(TranslationProject)
@@ -61,6 +69,7 @@ async def upload_project(
             )
 
             if existing_project:
+                logger.info("Idempotent replay detected")
                 return {
                     "message": "Project already created (idempotent replay)",
                     "project_id": str(existing_project.id),
@@ -68,7 +77,9 @@ async def upload_project(
                     "credits_used": existing_project.credits_used,
                 }
 
+        # ----------------------------------------------------
         # 2️⃣ Get Team
+        # ----------------------------------------------------
         team = (
             db.query(Team)
             .filter(Team.owner_id == current_user.id)
@@ -78,18 +89,30 @@ async def upload_project(
         if not team:
             raise HTTPException(status_code=400, detail="Team not found")
 
-        # 3️⃣ Save File
+        # ----------------------------------------------------
+        # 3️⃣ Save File Locally (temporary)
+        # ----------------------------------------------------
         file_path, _ = save_file_locally(file, str(team.id))
 
-        # 4️⃣ Count Pages
+        # ----------------------------------------------------
+        # 4️⃣ Upload File To S3
+        # ----------------------------------------------------
+        s3_key = upload_file_to_s3(Path(file_path))
+        logger.info(f"Uploaded file to S3: {s3_key}")
+
+        # ----------------------------------------------------
+        # 5️⃣ Count Pages
+        # ----------------------------------------------------
         page_count = get_page_count(file_path)
         credits_required = page_count
 
-        # 5️⃣ Create Project
+        # ----------------------------------------------------
+        # 6️⃣ Create Project
+        # ----------------------------------------------------
         project = TranslationProject(
             user_id=current_user.id,
             file_name=file.filename,
-            file_path=file_path,
+            file_path=s3_key,  # store S3 key instead of local path
             page_count=page_count,
             credits_used=credits_required,
             idempotency_key=idempotency_key,
@@ -99,7 +122,9 @@ async def upload_project(
         db.add(project)
         db.flush()
 
-        # 6️⃣ Deduct Credits
+        # ----------------------------------------------------
+        # 7️⃣ Deduct Credits
+        # ----------------------------------------------------
         try:
             new_balance = CreditService.deduct_credits(
                 db=db,
@@ -112,11 +137,17 @@ async def upload_project(
         except InsufficientCreditsError:
             raise HTTPException(status_code=400, detail="Insufficient credits")
 
-        # 7️⃣ Commit
+        # ----------------------------------------------------
+        # 8️⃣ Commit Transaction
+        # ----------------------------------------------------
         db.commit()
         db.refresh(project)
 
         project_id = str(project.id)
+
+        # remove local temp file
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
 
     except HTTPException:
         db.rollback()
@@ -124,15 +155,21 @@ async def upload_project(
             os.remove(file_path)
         raise
 
-    except Exception as e:
+    except Exception:
         db.rollback()
-        print("UPLOAD ERROR:", repr(e))
+        logger.exception("Upload failed")
+
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
+
         raise HTTPException(status_code=400, detail="Invalid or unsupported file")
 
-    # 8️⃣ Trigger Worker
+    # ----------------------------------------------------
+    # 9️⃣ Trigger Worker
+    # ----------------------------------------------------
     background_tasks.add_task(enqueue_translation_job, project_id)
+
+    logger.info(f"Project {project_id} queued for processing")
 
     return {
         "message": "Project created",
@@ -144,7 +181,7 @@ async def upload_project(
 
 
 # ============================================================
-# GET PROJECT STATUS (NEW)
+# GET PROJECT STATUS
 # ============================================================
 
 @router.get("/{project_id}", response_model=ProjectStatusResponse)
