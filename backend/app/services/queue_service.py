@@ -1,8 +1,9 @@
-from app.services.translation_processor import process_translation_job
+import logging
+from app.services.sqs_service import send_translation_job
+
+logger = logging.getLogger(__name__)
 
 
 def enqueue_translation_job(project_id: str):
-    print(f"[QUEUE] Translation job queued for project {project_id}")
-
-    # DEV mode: process immediately
-    process_translation_job(project_id)
+    logger.info(f"Sending project {project_id} to SQS")
+    send_translation_job(project_id)

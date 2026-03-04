@@ -1,8 +1,9 @@
-from pathlib import Path
+import logging
 import shutil
 import tempfile
 import traceback
 import uuid
+from pathlib import Path
 from datetime import datetime
 
 from sqlalchemy.orm import joinedload
@@ -14,11 +15,15 @@ from app.services.certification_service import CertificationService
 from app.services.pdf_merge_service import PdfMergeService
 
 
+logger = logging.getLogger(__name__)
+
+
 # ============================================================
 # PUBLIC ENTRYPOINT (DEV MODE)
 # ============================================================
 
 def enqueue_translation_job(project_id: uuid.UUID):
+    logger.info(f"Queue received translation job for project {project_id}")
     process_translation_job(project_id)
 
 
@@ -29,10 +34,11 @@ def enqueue_translation_job(project_id: uuid.UUID):
 def process_translation_job(project_id: uuid.UUID) -> None:
 
     MAX_ATTEMPTS = 3
-
     db = SessionLocal()
 
     try:
+        logger.info(f"Worker starting processing for project {project_id}")
+
         project = (
             db.query(TranslationProject)
             .options(joinedload(TranslationProject.user))
@@ -41,15 +47,18 @@ def process_translation_job(project_id: uuid.UUID) -> None:
         )
 
         if not project:
+            logger.warning("Worker could not find project")
             return
 
         # ----------------------------------------------------
         # Retry / Status Logic
         # ----------------------------------------------------
         if project.status == ProjectStatus.COMPLETED:
+            logger.info("Worker detected project already completed")
             return
 
         if project.retry_count >= MAX_ATTEMPTS:
+            logger.error("Max retry attempts reached. Marking project FAILED")
             project.status = ProjectStatus.FAILED
             db.commit()
             return
@@ -61,6 +70,8 @@ def process_translation_job(project_id: uuid.UUID) -> None:
 
         db.commit()
         db.refresh(project)
+
+        logger.info(f"Worker attempt #{project.retry_count}")
 
         # ----------------------------------------------------
         # Generate translated output
@@ -74,6 +85,8 @@ def process_translation_job(project_id: uuid.UUID) -> None:
         # Certification Injection
         # ----------------------------------------------------
         if project.add_certification:
+            logger.info("Running certification injection")
+
             project.last_heartbeat = datetime.utcnow()
             db.commit()
 
@@ -88,6 +101,8 @@ def process_translation_job(project_id: uuid.UUID) -> None:
 
         db.commit()
 
+        logger.info(f"Worker completed project {project_id}")
+
     except Exception:
         db.rollback()
 
@@ -101,17 +116,17 @@ def process_translation_job(project_id: uuid.UUID) -> None:
             if failed_project:
                 if failed_project.retry_count >= MAX_ATTEMPTS:
                     failed_project.status = ProjectStatus.FAILED
+                    logger.error("Project permanently failed after max retries")
                 else:
-                    # Leave as PENDING for retry
                     failed_project.status = ProjectStatus.PENDING
+                    logger.warning("Project returned to PENDING for retry")
 
                 db.commit()
 
         except SQLAlchemyError:
             db.rollback()
 
-        print("Translation worker failed:")
-        print(traceback.format_exc())
+        logger.exception("Translation worker failed")
 
     finally:
         db.close()
@@ -132,6 +147,8 @@ def _generate_translation_output(project: TranslationProject) -> Path:
     output_path = original_path.parent / output_filename
 
     shutil.copyfile(original_path, output_path)
+
+    logger.info(f"Generated translated output: {output_path}")
 
     return output_path
 
@@ -166,6 +183,8 @@ def _inject_certification(project: TranslationProject, output_path: Path) -> Non
         )
 
         shutil.move(str(merged_pdf), str(output_path))
+
+        logger.info("Certification successfully injected")
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

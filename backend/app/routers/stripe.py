@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Request, HTTPException, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -37,7 +38,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     event_id = event["id"]
     event_type = event["type"]
 
-    print("Received event:", event_type)
+    logger.info(f"Received Stripe event: {event_type}")
 
     # ---------------------------------------------------
     # Insert StripeEvent FIRST (DB-level idempotency)
@@ -100,7 +101,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             wallet.purchased_credits += credits
 
             db.commit()
-            print(f"Added {credits} purchased credits.")
+            logger.info(f"Added {credits} purchased credits")
             return {"status": "success"}
 
         # ---------------------------------------------------
@@ -164,7 +165,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             user.stripe_subscription_id = subscription_id
 
             db.commit()
-            print("Subscription credits granted.")
+            logger.info("Subscription credits granted")
             return {"status": "success"}
 
         # ---------------------------------------------------
