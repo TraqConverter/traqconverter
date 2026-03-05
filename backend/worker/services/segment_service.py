@@ -1,5 +1,6 @@
 from app.models.translation_segment import TranslationSegment
 from app.models.translation_memory import TranslationMemory
+from app.services.ai_translation_service import translate_text
 
 
 def store_segments(db, project_id, paragraphs):
@@ -21,7 +22,7 @@ def store_segments(db, project_id, paragraphs):
         text = " ".join(text.split())
 
         # --------------------------------
-        # Check Translation Memory
+        # Translation Memory lookup
         # --------------------------------
         tm_match = db.query(TranslationMemory).filter(
             TranslationMemory.source_text == text
@@ -31,6 +32,15 @@ def store_segments(db, project_id, paragraphs):
 
         if tm_match:
             suggested_translation = tm_match.translated_text
+
+        else:
+            # --------------------------------
+            # AI translation fallback
+            # --------------------------------
+            try:
+                suggested_translation = translate_text(text)
+            except Exception:
+                suggested_translation = None
 
         # --------------------------------
         # Create segment
