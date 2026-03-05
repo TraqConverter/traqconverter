@@ -8,6 +8,8 @@ from app.models.translation_segment import TranslationSegment
 from app.models.project import TranslationProject
 from app.models.user import User
 
+from app.services.translation_memory_service import store_translation
+
 router = APIRouter(
     prefix="/segments",
     tags=["Segments"]
@@ -71,5 +73,14 @@ def update_segment(
     segment.translated_text = translated_text
 
     db.commit()
+
+    # -------------------------------------
+    # Store translation in Translation Memory
+    # -------------------------------------
+    store_translation(
+        db,
+        segment.source_text,
+        translated_text
+    )
 
     return {"message": "Segment updated"}
