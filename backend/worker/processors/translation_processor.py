@@ -20,3 +20,30 @@ def process_translation(file_path: Path) -> Path:
         f.write(data)
 
     return output
+
+from pypdf import PdfReader
+
+
+def extract_paragraphs(file_path):
+
+    reader = PdfReader(file_path)
+
+    paragraphs = []
+
+    for page in reader.pages:
+
+        text = page.extract_text()
+
+        if not text:
+            continue
+
+        lines = text.split("\n")
+
+        for line in lines:
+
+            line = line.strip()
+
+            if line:
+                paragraphs.append(line)
+
+    return paragraphs

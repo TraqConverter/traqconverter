@@ -3,8 +3,9 @@ from pathlib import Path
 
 from worker.services.sqs_worker_service import receive_job, delete_job
 from worker.services.s3_worker_service import download_file, upload_file
-from worker.processors.translation_processor import process_translation
+from worker.processors.translation_processor import process_translation, extract_paragraphs
 from worker.services.db_service import get_db
+from worker.services.segment_service import store_segments
 
 from app.models.project import TranslationProject, ProjectStatus
 
@@ -58,6 +59,15 @@ def run_worker():
             local_input = WORK_DIR / file_key.split("/")[-1]
 
             download_file(file_key, local_input)
+
+            # --------------------------------------------------
+            # STEP 4: Extract document segments
+            # --------------------------------------------------
+            paragraphs = extract_paragraphs(local_input)
+
+            if paragraphs:
+                store_segments(db, project_id, paragraphs)
+                logger.info(f"{len(paragraphs)} segments created for project {project_id}")
 
             # --------------------------------------------------
             # Process translation
