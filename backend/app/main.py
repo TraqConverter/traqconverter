@@ -51,7 +51,8 @@ from app.routers import subscription
 from app.routers import auth
 from app.routers import project
 from app.routers import settings
-from app.routers import billing   # <-- STEP 7 added
+from app.routers import billing
+from app.routers import segments   # <-- STEP 3 added
 
 # ----------------------------------------------------
 # Register routers
@@ -61,6 +62,7 @@ app.include_router(stripe.router)
 app.include_router(subscription.router)
 app.include_router(auth.router)
 app.include_router(project.router)
-app.include_router(billing.router)   # <-- STEP 7 added
+app.include_router(billing.router)
+app.include_router(segments.router)   # <-- STEP 3 added
 
 logger.info("All routers registered successfully")

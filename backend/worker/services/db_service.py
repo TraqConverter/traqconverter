@@ -1,5 +1,13 @@
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from app.database import engine
+
+from app.config import settings
+
+
+DATABASE_URL = settings.database_url
+
+
+engine = create_engine(DATABASE_URL)
 
 SessionLocal = sessionmaker(
     autocommit=False,
@@ -9,8 +17,4 @@ SessionLocal = sessionmaker(
 
 
 def get_db():
-    db = SessionLocal()
-    try:
-        return db
-    finally:
-        db.close()
+    return SessionLocal()
