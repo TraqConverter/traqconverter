@@ -6,15 +6,18 @@ from botocore.exceptions import ClientError
 
 from app.config import settings
 
-
 logger = logging.getLogger(__name__)
 
 
+# ============================================================
+# S3 CLIENT
+# ============================================================
+
 s3_client = boto3.client(
     "s3",
-    aws_access_key_id=settings.AWS_ACCESS_KEY,
-    aws_secret_access_key=settings.AWS_SECRET_KEY,
     region_name=settings.AWS_REGION,
+    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
 )
 
 BUCKET_NAME = settings.S3_BUCKET_NAME
@@ -77,7 +80,7 @@ def download_file_from_s3(key: str, destination: Path):
 # Generate Signed Download URL
 # ============================================================
 
-def generate_signed_url(key: str, expiration: int = 3600) -> str:
+def generate_presigned_download_url(key: str, expiration: int = 3600) -> str:
     """
     Generate a temporary secure download URL.
     """
@@ -99,31 +102,3 @@ def generate_signed_url(key: str, expiration: int = 3600) -> str:
     except ClientError:
         logger.exception("Failed generating signed URL")
         raise
-
-# ============================================================
-# GENERATE PRESIGNED DOWNLOAD URL
-# ============================================================
-
-import boto3
-import os
-
-s3_client = boto3.client("s3")
-
-
-def generate_presigned_download_url(object_key: str, expiration: int = 3600):
-    """
-    Generate a presigned URL for downloading files from S3
-    """
-
-    bucket_name = os.getenv("AWS_S3_BUCKET")
-
-    url = s3_client.generate_presigned_url(
-        ClientMethod="get_object",
-        Params={
-            "Bucket": bucket_name,
-            "Key": object_key
-        },
-        ExpiresIn=expiration
-    )
-
-    return url
