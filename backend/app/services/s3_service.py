@@ -99,3 +99,31 @@ def generate_signed_url(key: str, expiration: int = 3600) -> str:
     except ClientError:
         logger.exception("Failed generating signed URL")
         raise
+
+# ============================================================
+# GENERATE PRESIGNED DOWNLOAD URL
+# ============================================================
+
+import boto3
+import os
+
+s3_client = boto3.client("s3")
+
+
+def generate_presigned_download_url(object_key: str, expiration: int = 3600):
+    """
+    Generate a presigned URL for downloading files from S3
+    """
+
+    bucket_name = os.getenv("AWS_S3_BUCKET")
+
+    url = s3_client.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": bucket_name,
+            "Key": object_key
+        },
+        ExpiresIn=expiration
+    )
+
+    return url

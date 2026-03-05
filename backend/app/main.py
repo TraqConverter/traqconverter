@@ -37,6 +37,13 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 # ----------------------------------------------------
+# Health Check Endpoint
+# ----------------------------------------------------
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
+
+# ----------------------------------------------------
 # Import routers AFTER app creation
 # ----------------------------------------------------
 from app.routers import stripe
@@ -44,6 +51,7 @@ from app.routers import subscription
 from app.routers import auth
 from app.routers import project
 from app.routers import settings
+from app.routers import billing   # <-- STEP 7 added
 
 # ----------------------------------------------------
 # Register routers
@@ -53,5 +61,6 @@ app.include_router(stripe.router)
 app.include_router(subscription.router)
 app.include_router(auth.router)
 app.include_router(project.router)
+app.include_router(billing.router)   # <-- STEP 7 added
 
 logger.info("All routers registered successfully")
