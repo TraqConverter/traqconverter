@@ -28,6 +28,7 @@ from app.core.page_counter import get_page_count
 from app.services.storage_service import save_file_locally
 from app.services.s3_service import upload_file_to_s3, generate_presigned_download_url
 from app.services.queue_service import enqueue_translation_job
+
 from app.services.credit_service import (
     CreditService,
     WalletNotFoundError,
@@ -172,7 +173,7 @@ async def upload_project(
     # ----------------------------------------------------
     # 9️⃣ Trigger Worker
     # ----------------------------------------------------
-    background_tasks.add_task(enqueue_translation_job, project_id)
+    background_tasks.add_task(enqueue_translation_job, project_id, s3_key)
 
     logger.info(f"Project {project_id} queued for processing")
 
@@ -311,3 +312,34 @@ def delete_project(
     logger.info(f"Project {project_id} deleted")
 
     return {"message": "Project deleted successfully"}
+
+@router.get("/{project_id}/download")
+def download_project(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+
+    project = (
+        db.query(TranslationProject)
+        .filter(
+            TranslationProject.id == project_id,
+            TranslationProject.user_id == current_user.id
+        )
+        .first()
+    )
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project.status != ProjectStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Project not completed yet")
+
+    if not project.output_file:
+        raise HTTPException(status_code=404, detail="Output file missing")
+
+    download_url = generate_signed_url(project.output_file)
+
+    return {
+        "download_url": download_url
+    }
