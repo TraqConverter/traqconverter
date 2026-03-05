@@ -19,16 +19,28 @@ class TranslationProject(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
+    # --------------------------------
+    # Ownership
+    # --------------------------------
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    team_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=False)
 
+    # --------------------------------
+    # File Info
+    # --------------------------------
     file_name = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
     output_file = Column(String, nullable=True)
 
+    # --------------------------------
+    # Billing
+    # --------------------------------
     page_count = Column(Integer, nullable=False)
     credits_used = Column(Integer, nullable=False)
 
-    # ✅ Idempotency Key (NEW)
+    # --------------------------------
+    # Idempotency Protection
+    # --------------------------------
     idempotency_key = Column(
         String,
         nullable=True,
@@ -36,15 +48,23 @@ class TranslationProject(Base):
         index=True
     )
 
+    # --------------------------------
+    # Processing Status
+    # --------------------------------
     status = Column(
         Enum(ProjectStatus, name="project_status_enum"),
         nullable=False,
         default=ProjectStatus.PENDING
     )
 
-    # -----------------------------
-    # Certification Injection Fields
-    # -----------------------------
+    progress_percent = Column(Integer, nullable=False, default=0)
+
+    retry_count = Column(Integer, nullable=False, default=0)
+    last_heartbeat = Column(DateTime, nullable=True)
+
+    # --------------------------------
+    # Certification Injection
+    # --------------------------------
     add_certification = Column(Boolean, default=False, nullable=False)
 
     source_language = Column(String, nullable=True)
@@ -52,12 +72,13 @@ class TranslationProject(Base):
 
     certification_override_text = Column(String, nullable=True)
 
+    # --------------------------------
+    # Metadata
+    # --------------------------------
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    retry_count = Column(Integer, nullable=False, default=0)
-    last_heartbeat = Column(DateTime, nullable=True)
-
-    # Relationship
+    # --------------------------------
+    # Relationships
+    # --------------------------------
     user = relationship("User", back_populates="projects")
-
-    progress_percent = Column(Integer, nullable=False, default=0)
+    team = relationship("Team")

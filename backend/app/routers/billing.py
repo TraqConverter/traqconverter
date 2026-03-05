@@ -6,6 +6,7 @@ from app.dependencies import get_current_user
 
 from app.models.credit import CreditWallet, CreditTransaction
 from app.models.user import User
+from app.models.team import Team
 
 router = APIRouter(
     prefix="/billing",
@@ -23,9 +24,20 @@ def get_wallet(
     current_user: User = Depends(get_current_user)
 ):
 
+    # Find user's team
+    team = (
+        db.query(Team)
+        .filter(Team.owner_id == current_user.id)
+        .first()
+    )
+
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    # Find wallet for the team
     wallet = (
         db.query(CreditWallet)
-        .filter(CreditWallet.team_id == current_user.team_id)
+        .filter(CreditWallet.team_id == team.id)
         .first()
     )
 
@@ -52,10 +64,20 @@ def get_transactions(
     current_user: User = Depends(get_current_user)
 ):
 
+    # Find user's team
+    team = (
+        db.query(Team)
+        .filter(Team.owner_id == current_user.id)
+        .first()
+    )
+
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
     transactions = (
         db.query(CreditTransaction)
         .join(CreditWallet)
-        .filter(CreditWallet.team_id == current_user.team_id)
+        .filter(CreditWallet.team_id == team.id)
         .order_by(CreditTransaction.created_at.desc())
         .limit(100)
         .all()

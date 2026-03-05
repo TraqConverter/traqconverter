@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     stripe_webhook_secret: str
 
     # --- AWS ---
-    AWS_ACCESS_KEY: str
-    AWS_SECRET_KEY: str
+    AWS_ACCESS_KEY_ID: str
+    AWS_SECRET_ACCESS_KEY: str
     AWS_REGION: str = "us-east-1"
 
     # --- Storage ---
