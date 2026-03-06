@@ -1,6 +1,7 @@
 import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -24,6 +25,17 @@ logger.info("Starting TraqConverter API")
 # Create FastAPI app
 # ----------------------------------------------------
 app = FastAPI()
+
+# ----------------------------------------------------
+# STEP 5: Enable CORS (for frontend access)
+# ----------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # later restrict to frontend domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ----------------------------------------------------
 # Global Exception Logging
@@ -52,7 +64,8 @@ from app.routers import auth
 from app.routers import project
 from app.routers import settings
 from app.routers import billing
-from app.routers import segments   # <-- STEP 3 added
+from app.routers import segments
+from app.routers import comments   
 
 # ----------------------------------------------------
 # Register routers
@@ -63,6 +76,7 @@ app.include_router(subscription.router)
 app.include_router(auth.router)
 app.include_router(project.router)
 app.include_router(billing.router)
-app.include_router(segments.router)   # <-- STEP 3 added
+app.include_router(segments.router)
+app.include_router(comments.router)
 
 logger.info("All routers registered successfully")

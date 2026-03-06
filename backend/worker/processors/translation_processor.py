@@ -8,46 +8,38 @@ logger = logging.getLogger(__name__)
 # =========================================
 # EXTRACT PARAGRAPHS FROM PDF
 # =========================================
-def extract_paragraphs(file_path: Path):
+from pypdf import PdfReader
+from worker.services.ocr_service import extract_text_with_textract
+
+
+def extract_paragraphs(file_path):
 
     reader = PdfReader(file_path)
 
     paragraphs = []
-    seen = set()
 
     for page in reader.pages:
 
         text = page.extract_text()
 
-        if not text:
-            continue
+        if text:
+            lines = text.split("\n")
 
-        lines = text.split("\n")
+            for line in lines:
+                line = line.strip()
+                if line:
+                    paragraphs.append(line)
 
-        for line in lines:
+    # --------------------------------
+    # If no text found → use OCR
+    # --------------------------------
 
-            line = line.strip()
+    if not paragraphs:
 
-            # Skip empty lines
-            if not line:
-                continue
+        with open(file_path, "rb") as f:
+            file_bytes = f.read()
 
-            # Normalize whitespace
-            line = " ".join(line.split())
-
-            # Skip very short garbage segments
-            if len(line) < 2:
-                continue
-
-            # Prevent duplicates (common with PDF headers/footers)
-            if line in seen:
-                continue
-
-            seen.add(line)
-
-            paragraphs.append(line)
-
-    logger.info(f"Extracted {len(paragraphs)} segments")
+        paragraphs = extract_text_with_textract(file_bytes)
 
     return paragraphs
 
