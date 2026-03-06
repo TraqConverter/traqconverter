@@ -1,17 +1,17 @@
 from openai import OpenAI
-from app.core.settings import settings
+from app.config import settings
 
-client = OpenAI(api_key=settings.openai_api_key)
+client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
 
-def translate_text(text, source_lang="English", target_lang="Spanish"):
+def translate_text(text: str, source_lang: str, target_lang: str) -> str:
 
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
             {
                 "role": "system",
-                "content": f"Translate from {source_lang} to {target_lang}. Only return the translation."
+                "content": f"Translate the following text from {source_lang} to {target_lang}. Only return the translated text."
             },
             {
                 "role": "user",

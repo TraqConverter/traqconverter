@@ -66,7 +66,16 @@ def run_worker():
             paragraphs = extract_paragraphs(local_input)
 
             if paragraphs:
-                store_segments(db, project_id, paragraphs)
+
+                store_segments(
+                    db,
+                    project.id,
+                    project.team_id,
+                    project.source_language,
+                    project.target_language,
+                    paragraphs
+                )
+
                 logger.info(f"{len(paragraphs)} segments created for project {project_id}")
 
             # --------------------------------------------------
@@ -97,7 +106,7 @@ def run_worker():
 
             logger.info(f"Project {project_id} completed")
 
-        except Exception as e:
+        except Exception:
 
             logger.exception(f"Worker failed processing project {project_id}")
 

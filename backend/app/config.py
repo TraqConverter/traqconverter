@@ -3,6 +3,7 @@ from pydantic import ConfigDict
 
 
 class Settings(BaseSettings):
+
     # --- App ---
     app_name: str
     environment: str
@@ -10,6 +11,9 @@ class Settings(BaseSettings):
     secret_key: str
     algorithm: str
     access_token_expire_minutes: int
+
+    # --- OpenAI ---
+    OPENAI_API_KEY: str
 
     # --- Stripe ---
     stripe_secret_key: str
