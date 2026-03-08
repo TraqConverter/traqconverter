@@ -10,14 +10,12 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# S3 CLIENT
+# S3 CLIENT (IAM compatible)
 # ============================================================
 
 s3_client = boto3.client(
     "s3",
-    region_name=settings.AWS_REGION,
-    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+    region_name=settings.AWS_REGION
 )
 
 BUCKET_NAME = settings.S3_BUCKET_NAME
@@ -35,6 +33,7 @@ def upload_file_to_s3(file_path: Path) -> str:
     key = f"uploads/{uuid.uuid4()}_{file_path.name}"
 
     try:
+
         s3_client.upload_file(
             str(file_path),
             BUCKET_NAME,
@@ -49,7 +48,9 @@ def upload_file_to_s3(file_path: Path) -> str:
         return key
 
     except ClientError:
+
         logger.exception("S3 upload failed")
+
         raise
 
 
@@ -63,6 +64,7 @@ def download_file_from_s3(key: str, destination: Path):
     """
 
     try:
+
         s3_client.download_file(
             BUCKET_NAME,
             key,
@@ -72,7 +74,9 @@ def download_file_from_s3(key: str, destination: Path):
         logger.info(f"S3 download successful: {key}")
 
     except ClientError:
+
         logger.exception("S3 download failed")
+
         raise
 
 
@@ -86,6 +90,7 @@ def generate_presigned_download_url(key: str, expiration: int = 3600) -> str:
     """
 
     try:
+
         url = s3_client.generate_presigned_url(
             "get_object",
             Params={
@@ -100,5 +105,7 @@ def generate_presigned_download_url(key: str, expiration: int = 3600) -> str:
         return url
 
     except ClientError:
+
         logger.exception("Failed generating signed URL")
+
         raise

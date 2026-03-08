@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from uuid import UUID
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -14,6 +15,13 @@ router = APIRouter(
     prefix="/segments",
     tags=["Segments"]
 )
+
+# =========================================
+# Request schema for segment update
+# =========================================
+
+class SegmentUpdate(BaseModel):
+    translated_text: str
 
 
 # =========================================
@@ -58,7 +66,7 @@ def get_segments(
 @router.patch("/{segment_id}")
 def update_segment(
     segment_id: UUID,
-    translated_text: str,
+    data: SegmentUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -70,17 +78,28 @@ def update_segment(
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
 
-    segment.translated_text = translated_text
-
+    # Update translation
+    segment.translated_text = data.translated_text
     db.commit()
 
     # -------------------------------------
     # Store translation in Translation Memory
     # -------------------------------------
-    store_translation(
-        db,
-        segment.source_text,
-        translated_text
-    )
+    project = db.query(TranslationProject).filter(
+        TranslationProject.id == segment.project_id
+    ).first()
 
-    return {"message": "Segment updated"}
+    if project:
+        store_translation(
+            db=db,
+            team_id=project.team_id,
+            source_language=project.source_language,
+            target_language=project.target_language,
+            source_text=segment.source_text,
+            translated_text=data.translated_text
+        )
+
+    return {
+        "message": "Segment updated",
+        "segment_id": segment_id
+    }

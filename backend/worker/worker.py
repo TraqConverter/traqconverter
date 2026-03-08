@@ -6,8 +6,12 @@ from worker.services.s3_worker_service import download_file, upload_file
 from worker.processors.translation_processor import process_translation, extract_paragraphs
 from worker.services.db_service import get_db
 from worker.services.segment_service import store_segments
+from worker.services.pdf_reconstruction_service import build_searchable_pdf
+from worker.services.ocr_service import extract_text_with_textract
 
+from app.services.pdf_detection_service import pdf_has_text
 from app.models.project import TranslationProject, ProjectStatus
+from app.models.translation_segment import TranslationSegment
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,6 +45,7 @@ def run_worker():
             # --------------------------------------------------
             # Set project status to PROCESSING
             # --------------------------------------------------
+
             project = db.query(TranslationProject).filter(
                 TranslationProject.id == project_id
             ).first()
@@ -56,14 +61,30 @@ def run_worker():
             # --------------------------------------------------
             # Download file from S3
             # --------------------------------------------------
+
             local_input = WORK_DIR / file_key.split("/")[-1]
 
             download_file(file_key, local_input)
 
             # --------------------------------------------------
-            # STEP 4: Extract document segments
+            # Detect scanned vs text PDF
             # --------------------------------------------------
-            paragraphs = extract_paragraphs(local_input)
+
+            if pdf_has_text(str(local_input)):
+
+                logger.info("PDF contains selectable text — using normal parser")
+
+                paragraphs = extract_paragraphs(local_input)
+
+            else:
+
+                logger.info("Scanned PDF detected — routing through Textract")
+
+                paragraphs = extract_text_with_textract(local_input)
+
+            # --------------------------------------------------
+            # Store segments
+            # --------------------------------------------------
 
             if paragraphs:
 
@@ -81,18 +102,44 @@ def run_worker():
             # --------------------------------------------------
             # Process translation
             # --------------------------------------------------
-            output_file = process_translation(local_input)
+
+            process_translation(local_input)
+
+            # --------------------------------------------------
+            # Collect translated lines from DB
+            # --------------------------------------------------
+
+            segments = db.query(TranslationSegment).filter(
+                TranslationSegment.project_id == project.id
+            ).order_by(
+                TranslationSegment.segment_index
+            ).all()
+
+            translated_lines = [
+                s.translated_text for s in segments if s.translated_text
+            ]
+
+            # --------------------------------------------------
+            # Build searchable PDF
+            # --------------------------------------------------
+
+            output_file = build_searchable_pdf(
+                local_input,
+                translated_lines
+            )
 
             output_key = f"outputs/{output_file.name}"
 
             # --------------------------------------------------
             # Upload translated file
             # --------------------------------------------------
+
             upload_file(output_file, output_key)
 
             # --------------------------------------------------
-            # Mark project as COMPLETED
+            # Mark project completed
             # --------------------------------------------------
+
             project.status = ProjectStatus.COMPLETED
             project.output_file = output_key
             project.progress_percent = 100
@@ -102,6 +149,7 @@ def run_worker():
             # --------------------------------------------------
             # Delete SQS job
             # --------------------------------------------------
+
             delete_job(receipt)
 
             logger.info(f"Project {project_id} completed")
