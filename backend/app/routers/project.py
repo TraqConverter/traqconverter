@@ -59,10 +59,13 @@ async def upload_project(
     project = None
 
     try:
+
         # ----------------------------------------------------
-        # 1️⃣ Idempotency Check
+        # Idempotency Check
         # ----------------------------------------------------
+
         if idempotency_key:
+
             existing_project = (
                 db.query(TranslationProject)
                 .filter(TranslationProject.idempotency_key == idempotency_key)
@@ -70,6 +73,7 @@ async def upload_project(
             )
 
             if existing_project:
+
                 logger.info("Idempotent replay detected")
 
                 return {
@@ -80,8 +84,9 @@ async def upload_project(
                 }
 
         # ----------------------------------------------------
-        # 2️⃣ Get Team
+        # Get Team
         # ----------------------------------------------------
+
         team = (
             db.query(Team)
             .filter(Team.owner_id == current_user.id)
@@ -92,28 +97,34 @@ async def upload_project(
             raise HTTPException(status_code=400, detail="Team not found")
 
         # ----------------------------------------------------
-        # 3️⃣ Save File Locally
+        # Save File Locally
         # ----------------------------------------------------
+
         file_path, _ = save_file_locally(file, str(team.id))
 
         # ----------------------------------------------------
-        # 4️⃣ Upload To S3
+        # Upload To S3
         # ----------------------------------------------------
+
         s3_key = upload_file_to_s3(Path(file_path))
+
         logger.info(f"Uploaded file to S3: {s3_key}")
 
         # ----------------------------------------------------
-        # 5️⃣ Count Pages
+        # Count Pages
         # ----------------------------------------------------
+
         page_count = get_page_count(file_path)
+
         credits_required = page_count
 
         # ----------------------------------------------------
-        # 6️⃣ Create Project
+        # Create Project
         # ----------------------------------------------------
+
         project = TranslationProject(
             user_id=current_user.id,
-            team_id=team.id,  # FIXED
+            team_id=team.id,
             file_name=file.filename,
             file_path=s3_key,
             page_count=page_count,
@@ -126,9 +137,11 @@ async def upload_project(
         db.flush()
 
         # ----------------------------------------------------
-        # 7️⃣ Deduct Credits
+        # Deduct Credits
         # ----------------------------------------------------
+
         try:
+
             new_balance = CreditService.deduct_credits(
                 db=db,
                 team_id=str(team.id),
@@ -143,8 +156,9 @@ async def upload_project(
             raise HTTPException(status_code=400, detail="Insufficient credits")
 
         # ----------------------------------------------------
-        # 8️⃣ Commit
+        # Commit
         # ----------------------------------------------------
+
         db.commit()
         db.refresh(project)
 
@@ -154,6 +168,7 @@ async def upload_project(
             os.remove(file_path)
 
     except HTTPException:
+
         db.rollback()
 
         if file_path and os.path.exists(file_path):
@@ -162,7 +177,9 @@ async def upload_project(
         raise
 
     except Exception:
+
         db.rollback()
+
         logger.exception("Upload failed")
 
         if file_path and os.path.exists(file_path):
@@ -171,9 +188,14 @@ async def upload_project(
         raise HTTPException(status_code=400, detail="Invalid or unsupported file")
 
     # ----------------------------------------------------
-    # 9️⃣ Trigger Worker
+    # Trigger Worker
     # ----------------------------------------------------
-    background_tasks.add_task(enqueue_translation_job, project_id, s3_key)
+
+    background_tasks.add_task(
+        enqueue_translation_job,
+        project_id,
+        s3_key
+    )
 
     logger.info(f"Project {project_id} queued for processing")
 
@@ -187,7 +209,7 @@ async def upload_project(
 
 
 # ============================================================
-# LIST PROJECTS (Dashboard)
+# LIST PROJECTS
 # ============================================================
 
 @router.get("/")
@@ -195,6 +217,7 @@ def list_projects(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+
     projects = (
         db.query(TranslationProject)
         .filter(TranslationProject.user_id == current_user.id)
@@ -225,6 +248,7 @@ def get_project_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+
     project = (
         db.query(TranslationProject)
         .filter(
@@ -239,12 +263,10 @@ def get_project_status(
 
     return project
 
+
 # ============================================================
 # DOWNLOAD PROJECT RESULT
 # ============================================================
-
-from app.services.s3_service import generate_presigned_download_url
-
 
 @router.get("/{project_id}/download")
 def download_project(
@@ -281,7 +303,8 @@ def download_project(
 
     return {
         "download_url": download_url
-    }   
+    }
+
 
 # ============================================================
 # DELETE PROJECT
@@ -312,34 +335,3 @@ def delete_project(
     logger.info(f"Project {project_id} deleted")
 
     return {"message": "Project deleted successfully"}
-
-@router.get("/{project_id}/download")
-def download_project(
-    project_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-
-    project = (
-        db.query(TranslationProject)
-        .filter(
-            TranslationProject.id == project_id,
-            TranslationProject.user_id == current_user.id
-        )
-        .first()
-    )
-
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    if project.status != ProjectStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail="Project not completed yet")
-
-    if not project.output_file:
-        raise HTTPException(status_code=404, detail="Output file missing")
-
-    download_url = generate_signed_url(project.output_file)
-
-    return {
-        "download_url": download_url
-    }
