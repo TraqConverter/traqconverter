@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.database import SessionLocal
 from app.models.user import User
 from app.models.team import Team
 from app.models.credit import CreditWallet
@@ -12,8 +11,10 @@ from app.core.security import hash_password, verify_password, create_access_toke
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+# ✅ REGISTER
 @router.post("/register", response_model=TokenResponse)
 def register(user_data: UserRegister, db: Session = Depends(get_db)):
+    # Check if user already exists
     existing = db.query(User).filter(User.email == user_data.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -25,17 +26,17 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
         full_name=user_data.full_name,
     )
     db.add(user)
-    db.flush()
+    db.flush()  # ensures user.id is available
 
     # 🔹 Create team
     team = Team(
-        name=f"{user.full_name}'s Team",
+        name=f"{user.full_name or user.email}'s Team",
         owner_id=user.id
     )
     db.add(team)
     db.flush()
 
-    # 🔹 Create wallet (NEW STRUCTURE — no balance field)
+    # 🔹 Create wallet
     wallet = CreditWallet(
         team_id=team.id,
         subscription_credits=1,
@@ -44,17 +45,18 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
         subscription_status="INACTIVE",
         subscription_expires_at=None
     )
-
     db.add(wallet)
 
     db.commit()
     db.refresh(user)
 
+    # 🔐 Create JWT
     token = create_access_token({"sub": str(user.id)})
 
     return TokenResponse(access_token=token)
 
 
+# ✅ LOGIN
 @router.post("/login", response_model=TokenResponse)
 def login(user_data: UserLogin, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == user_data.email).first()
@@ -62,9 +64,11 @@ def login(user_data: UserLogin, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
+    # 🔐 Verify password
     if not verify_password(user_data.password, user.password_hash):
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
+    # 🔐 Create JWT
     token = create_access_token({"sub": str(user.id)})
 
     return TokenResponse(access_token=token)

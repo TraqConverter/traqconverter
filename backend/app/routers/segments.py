@@ -9,7 +9,7 @@ from app.models.translation_segment import TranslationSegment
 from app.models.project import TranslationProject
 from app.models.user import User
 
-from app.services.translation_memory_service import store_translation
+from app.services.translation_memory_service import store_tm_entry
 
 router = APIRouter(
     prefix="/segments",

@@ -2,7 +2,9 @@ import logging
 import os
 from uuid import UUID
 from pathlib import Path
+from app.models.translation_segment import TranslationSegment
 
+from fastapi import Form
 from fastapi import (
     APIRouter,
     UploadFile,
@@ -48,6 +50,12 @@ router = APIRouter(prefix="/projects", tags=["Projects"])
 async def upload_project(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+
+    # ✅ NEW FIELDS (FROM FRONTEND)
+    source_language: str = Form(...),
+    target_language: str = Form(...),
+    model: str = Form(...),
+
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -123,15 +131,21 @@ async def upload_project(
         # ----------------------------------------------------
 
         project = TranslationProject(
-            user_id=current_user.id,
-            team_id=team.id,
-            file_name=file.filename,
-            file_path=s3_key,
-            page_count=page_count,
-            credits_used=credits_required,
-            idempotency_key=idempotency_key,
-            status=ProjectStatus.PENDING,
-        )
+    user_id=current_user.id,
+    team_id=team.id,
+    file_name=file.filename,
+    file_path=s3_key,
+    page_count=page_count,
+    credits_used=credits_required,
+    idempotency_key=idempotency_key,
+
+    # ✅ NEW DATA
+    source_language=source_language,
+    target_language=target_language,
+    model=model,
+
+    status=ProjectStatus.PENDING,
+)
 
         db.add(project)
         db.flush()
@@ -262,6 +276,46 @@ def get_project_status(
         raise HTTPException(status_code=404, detail="Project not found")
 
     return project
+
+# ============================================================
+# GET PROJECT SEGMENTS
+# ============================================================
+
+@router.get("/{project_id}/segments")
+def get_project_segments(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # 🔒 Ensure project belongs to user
+    project = (
+        db.query(TranslationProject)
+        .filter(
+            TranslationProject.id == project_id,
+            TranslationProject.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # 📄 Get segments
+    segments = (
+        db.query(TranslationSegment)
+        .filter(TranslationSegment.project_id == project_id)
+        .order_by(TranslationSegment.segment_index)
+        .all()
+    )
+
+    return [
+        {
+            "id": str(s.id),  # UUID → string
+            "source": s.source_text,
+            "target": s.translated_text or ""
+        }
+        for s in segments
+    ]
 
 
 # ============================================================

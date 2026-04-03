@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict
+from typing import Optional
 
 
 class Settings(BaseSettings):
@@ -17,11 +18,12 @@ class Settings(BaseSettings):
 
     # --- Stripe ---
     stripe_secret_key: str
+    stripe_publishable_key: str
     stripe_webhook_secret: str
 
-    # --- AWS ---
-    AWS_ACCESS_KEY_ID: str
-    AWS_SECRET_ACCESS_KEY: str
+    # --- AWS (IAM compatible) ---
+    AWS_ACCESS_KEY_ID: Optional[str] = None
+    AWS_SECRET_ACCESS_KEY: Optional[str] = None
     AWS_REGION: str = "us-east-1"
 
     # --- Storage ---
