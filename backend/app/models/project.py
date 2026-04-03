@@ -68,13 +68,20 @@ class TranslationProject(Base):
     add_certification = Column(Boolean, default=False, nullable=False)
 
     # --------------------------------
+    # --------------------------------
+    # --------------------------------
     # Language Pair (required for TM scope)
     # --------------------------------
     source_language = Column(String, nullable=False, default="English")
     target_language = Column(String, nullable=False, default="Spanish")
 
-    certification_override_text = Column(String, nullable=True)
+    # ✅ NEW: AI Model Selection
+    model = Column(String, nullable=False, default="balanced")
 
+    # --------------------------------
+    # Certification
+    # --------------------------------
+    certification_override_text = Column(String, nullable=True)
     # --------------------------------
     # Metadata
     # --------------------------------

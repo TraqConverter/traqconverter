@@ -5,10 +5,12 @@ import time
 
 from pathlib import Path
 from datetime import datetime, timedelta
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from app.models.project import TranslationProject, ProjectStatus
+from app.models.translation_segment import TranslationSegment  # ✅ ADD THIS
 from app.database import SessionLocal
 from app.services.s3_service import download_file_from_s3, upload_file_to_s3
 
@@ -28,8 +30,10 @@ def process_translation_job(project_id: str):
     temp_dir = None
 
     try:
+        project_uuid = UUID(project_id)
+
         project = db.query(TranslationProject).filter(
-            TranslationProject.id == project_id
+            TranslationProject.id == project_uuid
         ).first()
 
         if not project:
@@ -90,6 +94,42 @@ def process_translation_job(project_id: str):
             project.file_path,
             input_file
         )
+
+        # ----------------------------------------------------
+        # 🔥 CREATE SEGMENTS (CRITICAL FIX)
+        # ----------------------------------------------------
+        logger.info("Creating translation segments")
+
+        # For now: simulate extracted text
+        text = "This is a test document. It has multiple sentences."
+
+        sentences = text.split(".")
+
+        # Clear old segments (important)
+        db.query(TranslationSegment).filter(
+            TranslationSegment.project_id == project_uuid
+        ).delete()
+
+        index = 0
+
+        for s in sentences:
+            s = s.strip()
+            if not s:
+                continue
+
+            segment = TranslationSegment(
+                project_id=project_uuid,
+                segment_index=index,
+                source_text=s,
+                translated_text=""
+            )
+
+            db.add(segment)
+            index += 1
+
+        db.commit()
+
+        logger.info("✅ Segments created")
 
         # ----------------------------------------------------
         # Simulated Processing
