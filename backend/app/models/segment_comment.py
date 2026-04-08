@@ -1,9 +1,8 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Text, DateTime, ForeignKey, Boolean
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
 
 from app.database import Base
 
@@ -22,13 +21,11 @@ class SegmentComment(Base):
     user_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id"),
-        nullable=False
+        nullable=True  # keep flexible for now
     )
 
-    comment = Column(Text, nullable=False)
+    text = Column(Text, nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # relationships
-    segment = relationship("TranslationSegment")
-    user = relationship("User")
+    resolved = Column(Boolean, default=False)

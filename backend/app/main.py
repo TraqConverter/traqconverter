@@ -65,7 +65,7 @@ from app.routers import project
 from app.routers import settings
 from app.routers import billing
 from app.routers import segments
-from app.routers import comments   
+from app.routers import segment_comments   
 
 # ----------------------------------------------------
 # Register routers
@@ -77,6 +77,6 @@ app.include_router(auth.router)
 app.include_router(project.router)
 app.include_router(billing.router)
 app.include_router(segments.router)
-app.include_router(comments.router)
+app.include_router(segment_comments.router)  
 
 logger.info("All routers registered successfully")
