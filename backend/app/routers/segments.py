@@ -81,16 +81,15 @@ def update_segment(
     # Update translation
     segment.translated_text = data.translated_text
     db.commit()
+    db.refresh(segment)
 
-    # -------------------------------------
-    # Store translation in Translation Memory
-    # -------------------------------------
+    # Store in Translation Memory
     project = db.query(TranslationProject).filter(
         TranslationProject.id == segment.project_id
     ).first()
 
     if project:
-        store_translation(
+        store_tm_entry(
             db=db,
             team_id=project.team_id,
             source_language=project.source_language,
@@ -100,6 +99,7 @@ def update_segment(
         )
 
     return {
-        "message": "Segment updated",
-        "segment_id": segment_id
+        "id": segment.id,
+        "source_text": segment.source_text,
+        "translated_text": segment.translated_text
     }

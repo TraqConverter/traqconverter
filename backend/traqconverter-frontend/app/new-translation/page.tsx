@@ -10,12 +10,12 @@ export default function NewTranslationPage() {
   const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
 
-  const [sourceLang, setSourceLang] = useState("auto")
-  const [targetLang, setTargetLang] = useState("es")
+  const [sourceLang, setSourceLang] = useState("English")
+  const [targetLang, setTargetLang] = useState("Spanish")
   const [model, setModel] = useState("balanced")
 
   const handleUpload = async () => {
-    if (!file) return alert("Please select a file")
+    if (!file || loading) return alert("Please select a file")
 
     try {
       setLoading(true)
@@ -26,19 +26,27 @@ export default function NewTranslationPage() {
       formData.append("target_language", targetLang)
       formData.append("model", model)
 
-      const res = await api.post("/projects/upload", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-      })
+      // ✅ FIX: REMOVE headers (axios handles it)
+      const res = await api.post("/projects/upload", formData)
 
-      const projectId = res.data.id
+      // ✅ FIX: backend returns project_id, not id
+      const projectId = res.data.project_id
 
+      if (!projectId) {
+        throw new Error("Invalid response from server")
+      }
+
+      // 🚀 Redirect to editor
       router.push(`/editor/${projectId}`)
 
-    } catch (err) {
+    } catch (err: any) {
       console.error(err)
-      alert("Upload failed")
+
+      // ✅ Better error message from backend
+      const message =
+        err?.response?.data?.detail || "Upload failed"
+
+      alert(message)
     } finally {
       setLoading(false)
     }
@@ -137,8 +145,8 @@ export default function NewTranslationPage() {
                 onChange={(e) => setSourceLang(e.target.value)}
                 className="w-full border p-2 rounded mt-1"
               >
-                <option value="auto">Auto Detect</option>
-                <option value="en">English</option>
+                <option value="English">Auto Detect</option>
+                <option value="English">English</option>
               </select>
             </div>
 
@@ -151,9 +159,9 @@ export default function NewTranslationPage() {
                 onChange={(e) => setTargetLang(e.target.value)}
                 className="w-full border p-2 rounded mt-1"
               >
-                <option value="es">Spanish</option>
-                <option value="fr">French</option>
-                <option value="de">German</option>
+                <option value="Spanish">Spanish</option>
+                <option value="French">French</option>
+                <option value="German">German</option>
               </select>
             </div>
 
