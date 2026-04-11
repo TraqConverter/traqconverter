@@ -31,6 +31,10 @@ from app.services.storage_service import save_file_locally
 from app.services.s3_service import upload_file_to_s3, generate_presigned_download_url
 from app.services.queue_service import enqueue_translation_job
 
+from fastapi.responses import StreamingResponse
+from app.services.export_service import generate_docx
+from app.services.export_service import generate_pdf
+
 from app.services.credit_service import (
     CreditService,
     WalletNotFoundError,
@@ -300,6 +304,92 @@ def get_project_segments(
         for s in segments
     ]
 
+# ============================================================
+# EXPORT PROJECT (DOCX)
+# ============================================================
+
+@router.get("/{project_id}/export")
+def export_project(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # 🔒 Ensure project belongs to user
+    project = (
+        db.query(TranslationProject)
+        .filter(
+            TranslationProject.id == project_id,
+            TranslationProject.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # 📄 Get segments
+    segments = (
+        db.query(TranslationSegment)
+        .filter(TranslationSegment.project_id == project_id)
+        .order_by(TranslationSegment.segment_index)
+        .all()
+    )
+
+    if not segments:
+        raise HTTPException(status_code=404, detail="No segments found")
+
+    # 📄 Generate DOCX
+    file_buffer = generate_docx(segments)
+
+    return StreamingResponse(
+        file_buffer,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": "attachment; filename=translation.docx"
+        }
+    )
+
+# ============================================================
+# EXPORT PROJECT (PDF)
+# ============================================================
+
+@router.get("/{project_id}/export/pdf")
+def export_project_pdf(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = (
+        db.query(TranslationProject)
+        .filter(
+            TranslationProject.id == project_id,
+            TranslationProject.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    segments = (
+        db.query(TranslationSegment)
+        .filter(TranslationSegment.project_id == project_id)
+        .order_by(TranslationSegment.segment_index)
+        .all()
+    )
+
+    if not segments:
+        raise HTTPException(status_code=404, detail="No segments found")
+
+    file_buffer = generate_pdf(segments)
+
+    return StreamingResponse(
+        file_buffer,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": "attachment; filename=translation.pdf"
+        }
+    )
 
 # ============================================================
 # DOWNLOAD PROJECT RESULT

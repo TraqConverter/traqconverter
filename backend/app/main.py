@@ -14,7 +14,7 @@ env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 # ----------------------------------------------------
-# Configure logging (must run BEFORE anything else)
+# Configure logging
 # ----------------------------------------------------
 configure_logging()
 
@@ -27,11 +27,13 @@ logger.info("Starting TraqConverter API")
 app = FastAPI()
 
 # ----------------------------------------------------
-# STEP 5: Enable CORS (for frontend access)
+# ✅ CORS (MUST BE IMMEDIATELY AFTER APP INIT)
 # ----------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # later restrict to frontend domain
+    allow_origins=[
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,14 +51,15 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 # ----------------------------------------------------
-# Health Check Endpoint
+# Health Check
 # ----------------------------------------------------
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
 
+
 # ----------------------------------------------------
-# Import routers AFTER app creation
+# ✅ IMPORT ALL ROUTERS TOGETHER (IMPORTANT)
 # ----------------------------------------------------
 from app.routers import stripe
 from app.routers import subscription
@@ -65,10 +68,13 @@ from app.routers import project
 from app.routers import settings
 from app.routers import billing
 from app.routers import segments
-from app.routers import segment_comments   
+from app.routers import segment_comments
+from app.routers import export
+from app.routers import glossary   # ✅ MOVE HERE
+
 
 # ----------------------------------------------------
-# Register routers
+# ✅ REGISTER ROUTERS (ALL TOGETHER)
 # ----------------------------------------------------
 app.include_router(settings.router)
 app.include_router(stripe.router)
@@ -77,6 +83,8 @@ app.include_router(auth.router)
 app.include_router(project.router)
 app.include_router(billing.router)
 app.include_router(segments.router)
-app.include_router(segment_comments.router)  
+app.include_router(segment_comments.router)
+app.include_router(export.router)
+app.include_router(glossary.router)   # ✅ REGISTER HERE
 
 logger.info("All routers registered successfully")
