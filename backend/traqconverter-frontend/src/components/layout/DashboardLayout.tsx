@@ -14,6 +14,10 @@ export default function DashboardLayout({
   const navItems = [
     { name: "Dashboard", path: "/dashboard" },
     { name: "New Translation", path: "/new-translation" },
+
+    // 🔥 ADDED JOBS
+    { name: "Jobs", path: "/dashboard/jobs" },
+
     { name: "Editor Studio", path: "/editor" },
   ]
 
@@ -39,7 +43,7 @@ export default function DashboardLayout({
                 key={item.path}
                 onClick={() => router.push(item.path)}
                 className={`w-full text-left px-4 py-2 rounded-lg transition ${
-                  pathname.startsWith(item.path)
+                  pathname === item.path || pathname.startsWith(item.path + "/")
                     ? "bg-blue-600 text-white"
                     : "hover:bg-gray-100"
                 }`}

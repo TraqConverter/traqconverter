@@ -3,6 +3,11 @@ import tempfile
 import shutil
 import time
 import re
+import os
+
+import pytesseract
+
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -15,6 +20,12 @@ from app.models.translation_segment import TranslationSegment
 from app.database import SessionLocal
 from app.services.s3_service import download_file_from_s3, upload_file_to_s3
 from app.services.ai_translation_service import translate_batch
+from app.services.glossary_service import get_glossary
+from app.services.translation_memory_service import store_tm_entry  # 🔥 NEW
+
+from docx import Document
+from pdfminer.high_level import extract_text
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +34,37 @@ BATCH_SIZE = 20
 
 
 # ============================================================
+# FILE TEXT EXTRACTION
+# ============================================================
+def extract_file_text(file_path: str):
+    ext = os.path.splitext(file_path)[1].lower()
+
+    if ext == ".pdf":
+        return extract_text(file_path)
+
+    elif ext == ".docx":
+        doc = Document(file_path)
+        return "\n".join([
+            p.text.strip()
+            for p in doc.paragraphs
+            if p.text and p.text.strip()
+        ])
+
+    elif ext == ".txt":
+        with open(file_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    elif ext in [".jpg", ".jpeg", ".png"]:
+        image = Image.open(file_path)
+        return pytesseract.image_to_string(image)
+
+    else:
+        raise Exception(f"Unsupported file type: {ext}")
+
+
+# ============================================================
 # TRANSLATION WORKER
 # ============================================================
-
 def process_translation_job(project_id: str):
     logger.info(f"Worker starting processing for {project_id}")
 
@@ -82,19 +121,17 @@ def process_translation_job(project_id: str):
         download_file_from_s3(project.file_path, input_file)
 
         # ----------------------------------------------------
-        # 🔥 EXTRACT TEXT
+        # TEXT EXTRACTION
         # ----------------------------------------------------
-        from pdfminer.high_level import extract_text
-
         logger.info("Extracting text")
 
-        text = extract_text(str(input_file))
+        text = extract_file_text(str(input_file))
 
         if not text or not text.strip():
             raise Exception("Failed to extract text")
 
         # ----------------------------------------------------
-        # 🔥 CLEAN SEGMENTATION (FIXED)
+        # CLEAN SEGMENTATION
         # ----------------------------------------------------
         logger.info("Creating clean segments")
 
@@ -107,14 +144,10 @@ def process_translation_job(project_id: str):
 
             if not s:
                 continue
-
-            # ❌ Remove junk
             if len(s) < 3:
                 continue
-
             if s.isdigit():
                 continue
-
             if s.lower() in ["co", "za"]:
                 continue
 
@@ -146,7 +179,7 @@ def process_translation_job(project_id: str):
         logger.info(f"✅ {len(segments)} clean segments created")
 
         # ----------------------------------------------------
-        # 🔥 TRANSLATION (OPENAI)
+        # TRANSLATION
         # ----------------------------------------------------
         logger.info("Starting translation")
 
@@ -155,26 +188,63 @@ def process_translation_job(project_id: str):
         source_lang = project.source_language or "English"
         target_lang = project.target_language or "Spanish"
 
+        # ----------------------------------------------------
+        # LOAD GLOSSARY
+        # ----------------------------------------------------
+        try:
+            glossary_entries = get_glossary(
+                db,
+                project.team_id,  # ✅ FIXED
+                source_lang,
+                target_lang
+            )
+            logger.info(f"Loaded {len(glossary_entries)} glossary terms")
+        except Exception as e:
+            logger.warning(f"Glossary load failed: {e}")
+
+        # ----------------------------------------------------
+        # BATCH TRANSLATION + AUTO TM 🔥
+        # ----------------------------------------------------
         for i in range(0, len(texts), BATCH_SIZE):
             batch = texts[i:i + BATCH_SIZE]
 
-            translations = translate_batch(batch, source_lang, target_lang)
+            translations = translate_batch(
+                batch,
+                source_lang,
+                target_lang,
+                db=db,
+                project=project
+            )
 
             if len(translations) != len(batch):
                 logger.warning("Translation mismatch, skipping batch")
                 continue
 
-            for j, translated in enumerate(translations):
+            for j, (src, translated) in enumerate(zip(batch, translations)):
                 segments[i + j].translated_text = translated
+
+                # 🔥 AUTO TM LEARNING
+                try:
+                    if src.strip() and translated.strip():
+                        store_tm_entry(
+                            db=db,
+                            team_id=project.team_id,
+                            source_language=source_lang,
+                            target_language=target_lang,
+                            source_text=src,
+                            translated_text=translated
+                        )
+                except Exception as e:
+                    logger.error(f"TM STORE ERROR: {e}")
 
             db.commit()
 
-            logger.info(f"Translated batch {i} → {i + len(batch)}")
+            logger.info(f"Translated batch {i} → {i + len(batch)} (TM saved)")
 
         logger.info("✅ Translation complete")
 
         # ----------------------------------------------------
-        # Progress simulation
+        # PROGRESS
         # ----------------------------------------------------
         for i in range(4):
             time.sleep(1)
@@ -183,7 +253,7 @@ def process_translation_job(project_id: str):
             db.commit()
 
         # ----------------------------------------------------
-        # OUTPUT FILE
+        # OUTPUT
         # ----------------------------------------------------
         output_file = temp_dir / f"translated_{project.file_name}"
         shutil.copyfile(input_file, output_file)
@@ -220,37 +290,4 @@ def process_translation_job(project_id: str):
         if temp_dir:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-        db.close()
-
-
-# ============================================================
-# WATCHDOG
-# ============================================================
-
-def recover_stalled_jobs():
-    logger.info("Checking stalled jobs")
-
-    db: Session = SessionLocal()
-
-    try:
-        timeout = datetime.utcnow() - timedelta(minutes=2)
-
-        stalled = db.query(TranslationProject).filter(
-            TranslationProject.status == ProjectStatus.PROCESSING,
-            TranslationProject.last_heartbeat < timeout
-        ).all()
-
-        for project in stalled:
-            project.status = (
-                ProjectStatus.FAILED
-                if project.retry_count >= MAX_ATTEMPTS
-                else ProjectStatus.PENDING
-            )
-
-        db.commit()
-
-    except Exception:
-        logger.exception("Watchdog failed")
-
-    finally:
         db.close()
