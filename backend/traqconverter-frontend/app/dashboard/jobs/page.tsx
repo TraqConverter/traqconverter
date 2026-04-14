@@ -10,8 +10,58 @@ export default function JobsPage() {
   const [jobs, setJobs] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
+  // =====================================
+  // 🔥 INITIAL LOAD + WEBSOCKET
+  // =====================================
   useEffect(() => {
     fetchJobs()
+
+    let socket: WebSocket
+
+    const connect = () => {
+      socket = new WebSocket(
+        `${process.env.NEXT_PUBLIC_WS_URL}/ws/projects/all`
+      )
+
+      socket.onopen = () => {
+        console.log("WS connected")
+      }
+
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+
+          setJobs((prev) =>
+            prev.map((job) =>
+              job.id === data.project_id
+                ? {
+                    ...job,
+                    progress: data.progress,
+                    status: data.status,
+                  }
+                : job
+            )
+          )
+        } catch (err) {
+          console.error("WS PARSE ERROR:", err)
+        }
+      }
+
+      socket.onclose = () => {
+        console.log("WS disconnected — retrying...")
+        setTimeout(connect, 2000) // 🔥 auto reconnect
+      }
+
+      socket.onerror = () => {
+        socket.close()
+      }
+    }
+
+    connect()
+
+    return () => {
+      if (socket) socket.close()
+    }
   }, [])
 
   const fetchJobs = async () => {
@@ -19,9 +69,7 @@ export default function JobsPage() {
       const res = await api.get("/projects")
       const data = res.data || []
 
-      // 🔥 limit results for cleaner UI
       setJobs(data.slice(0, 20))
-
     } catch (err) {
       console.error("JOBS ERROR:", err)
     } finally {
@@ -29,6 +77,9 @@ export default function JobsPage() {
     }
   }
 
+  // =====================================
+  // STATUS COLORS
+  // =====================================
   const getStatusColor = (status: string) => {
     switch (status) {
       case "COMPLETED":
@@ -44,15 +95,8 @@ export default function JobsPage() {
     }
   }
 
-  const getProgress = (p: any) => {
-    if (p.progress !== undefined && p.progress !== null) {
-      return p.progress
-    }
-
-    // fallback logic
-    if (p.status === "COMPLETED") return 100
-    if (p.status === "PROCESSING") return 50
-    return 10
+  const getProgress = (job: any) => {
+    return job.progress || 0
   }
 
   if (loading) {
@@ -105,20 +149,17 @@ export default function JobsPage() {
             )}
 
             {jobs.map((job) => {
-
               const progress = getProgress(job)
+              const isReady = progress === 100
 
               return (
                 <tr key={job.id} className="border-t">
 
-                  {/* FILE */}
                   <td className="p-4 font-medium">
                     {job.filename ||
-                     job.original_filename ||
                      `Project ${job.id.slice(0, 6)}`}
                   </td>
 
-                  {/* STATUS */}
                   <td>
                     <span
                       className={`px-2 py-1 text-xs rounded ${getStatusColor(job.status)}`}
@@ -127,55 +168,71 @@ export default function JobsPage() {
                     </span>
                   </td>
 
-                  {/* PROGRESS */}
                   <td className="w-48">
                     <div className="flex items-center gap-2">
-                      <div className="w-full bg-gray-200 h-2 rounded">
+                      <div className="w-full bg-gray-200 h-2 rounded overflow-hidden">
                         <div
-                          className="bg-blue-600 h-2 rounded"
+                          className={`h-2 rounded transition-all duration-500 ${
+                            isReady ? "bg-green-600" : "bg-blue-600"
+                          }`}
                           style={{ width: `${progress}%` }}
                         />
                       </div>
-                      <span className="text-xs">{progress}%</span>
+                      <span className="text-xs font-medium">
+                        {progress}%
+                      </span>
                     </div>
                   </td>
 
-                  {/* LANG */}
                   <td>
                     {job.source_lang || "EN"} → {job.target_lang || "EN"}
                   </td>
 
-                  {/* ACTIONS */}
                   <td>
                     <div className="flex gap-3 text-sm font-medium">
 
                       <button
+                        disabled={!isReady}
                         onClick={() => router.push(`/editor/${job.id}`)}
-                        className="text-blue-600 hover:underline"
+                        className={`${
+                          isReady
+                            ? "text-blue-600 hover:underline"
+                            : "text-gray-400 cursor-not-allowed"
+                        }`}
                       >
                         Open
                       </button>
 
                       <button
+                        disabled={!isReady}
                         onClick={() =>
                           window.open(
-                            `http://localhost:8000/projects/${job.id}/export/pdf`,
+                            `${process.env.NEXT_PUBLIC_API_URL}/projects/${job.id}/export/pdf`,
                             "_blank"
                           )
                         }
-                        className="text-green-600 hover:underline"
+                        className={`${
+                          isReady
+                            ? "text-green-600 hover:underline"
+                            : "text-gray-400"
+                        }`}
                       >
                         PDF
                       </button>
 
                       <button
+                        disabled={!isReady}
                         onClick={() =>
                           window.open(
-                            `http://localhost:8000/projects/${job.id}/export`,
+                            `${process.env.NEXT_PUBLIC_API_URL}/projects/${job.id}/export`,
                             "_blank"
                           )
                         }
-                        className="text-purple-600 hover:underline"
+                        className={`${
+                          isReady
+                            ? "text-purple-600 hover:underline"
+                            : "text-gray-400"
+                        }`}
                       >
                         DOCX
                       </button>

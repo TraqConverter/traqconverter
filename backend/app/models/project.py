@@ -57,7 +57,12 @@ class TranslationProject(Base):
         default=ProjectStatus.PENDING
     )
 
+    # 🔥 EXISTING
     progress_percent = Column(Integer, nullable=False, default=0)
+
+    # 🔥 NEW (REAL PROGRESS TRACKING)
+    total_segments = Column(Integer, nullable=False, default=0)
+    translated_segments = Column(Integer, nullable=False, default=0)
 
     retry_count = Column(Integer, nullable=False, default=0)
     last_heartbeat = Column(DateTime, nullable=True)
@@ -68,20 +73,21 @@ class TranslationProject(Base):
     add_certification = Column(Boolean, default=False, nullable=False)
 
     # --------------------------------
-    # --------------------------------
-    # --------------------------------
-    # Language Pair (required for TM scope)
+    # Language Pair
     # --------------------------------
     source_language = Column(String, nullable=False, default="English")
     target_language = Column(String, nullable=False, default="Spanish")
 
-    # ✅ NEW: AI Model Selection
+    # --------------------------------
+    # AI Model Selection
+    # --------------------------------
     model = Column(String, nullable=False, default="balanced")
 
     # --------------------------------
     # Certification
     # --------------------------------
     certification_override_text = Column(String, nullable=True)
+
     # --------------------------------
     # Metadata
     # --------------------------------
