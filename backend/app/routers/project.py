@@ -227,16 +227,39 @@ def list_projects(
         .all()
     )
 
-    return [
-        {
-            "id": p.id,
+    result = []
+
+    for p in projects:
+
+        progress = 0
+
+        if p.total_segments and p.total_segments > 0:
+            progress = int(
+                (p.translated_segments / p.total_segments) * 100
+            )
+
+        # fallback (safety)
+        if p.status == ProjectStatus.COMPLETED:
+            progress = 100
+
+        result.append({
+            "id": str(p.id),
+
+            "filename": p.file_name,
+
             "status": p.status,
+
+            "progress": progress,
+
+            "source_lang": p.source_language,
+            "target_lang": p.target_language,
+
             "page_count": p.page_count,
             "credits_used": p.credits_used,
-            "created_at": p.created_at
-        }
-        for p in projects
-    ]
+            "created_at": p.created_at,
+        })
+
+    return result
 
 
 # ============================================================
@@ -262,7 +285,19 @@ def get_project_status(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    return project
+    progress = 0
+
+    if project.total_segments and project.total_segments > 0:
+        progress = int(
+            (project.translated_segments / project.total_segments) * 100
+        )
+
+    return {
+        "id": str(project.id),
+        "status": project.status,
+        "progress": progress,
+        "filename": project.file_name,
+    }
 
 # ============================================================
 # GET PROJECT SEGMENTS

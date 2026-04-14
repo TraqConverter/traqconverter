@@ -1,8 +1,11 @@
 import axios from "axios"
 
-// 🔥 ALWAYS use 127.0.0.1 (more reliable than localhost)
+// ✅ Use ENV (prevents hardcoding issues)
+const BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"
+
 export const api = axios.create({
-  baseURL: "http://localhost:8000",
+  baseURL: BASE_URL,
   withCredentials: false,
 })
 
@@ -12,7 +15,6 @@ api.interceptors.request.use((config) => {
     const token = localStorage.getItem("token")
 
     if (token) {
-      // 🔥 ensure headers object exists
       config.headers = config.headers || {}
       config.headers.Authorization = `Bearer ${token}`
     }
@@ -21,16 +23,21 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// 🔥 Handle auth errors globally
+// 🔥 Handle errors globally
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // 🔥 Handle network errors (important for your issue)
+    // ✅ Proper network error handling
     if (!error.response) {
-      console.error("NETWORK ERROR:", error)
+      console.error("🚨 NETWORK ERROR:", error.message)
+
+      // Optional: show UI alert
+      // alert("Cannot reach backend. Is server running?")
+
       return Promise.reject(error)
     }
 
+    // 🔐 Handle auth failure
     if (error.response.status === 401) {
       localStorage.removeItem("token")
 
@@ -39,17 +46,22 @@ api.interceptors.response.use(
       }
     }
 
+    // 🔥 Log backend error clearly
+    console.error("API ERROR:", error.response.data)
+
     return Promise.reject(error)
   }
 )
 
-// 📄 Upload document
+// 📄 Upload document (FIXED)
 export const uploadDocument = async (file: File) => {
   const formData = new FormData()
   formData.append("file", file)
 
   const res = await api.post("/projects/upload", formData, {
     headers: {
+      // ✅ Let axios set boundary automatically
+      // DO NOT manually set multipart boundary
       "Content-Type": "multipart/form-data",
     },
   })
