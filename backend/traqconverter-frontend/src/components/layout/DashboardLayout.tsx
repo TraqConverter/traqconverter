@@ -19,6 +19,8 @@ export default function DashboardLayout({
     { name: "Jobs", path: "/dashboard/jobs" },
 
     { name: "Editor Studio", path: "/editor" },
+
+    { name: "Billing", path: "/billing" },
   ]
 
   const handleLogout = () => {
