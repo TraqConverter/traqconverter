@@ -10,17 +10,15 @@ export default function JobsPage() {
   const [jobs, setJobs] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
-  // =====================================
-  // 🔥 INITIAL LOAD + WEBSOCKET
-  // =====================================
   useEffect(() => {
     fetchJobs()
 
-    let socket: WebSocket
+    let socket: WebSocket | null = null
+    let reconnectTimeout: any = null
 
     const connect = () => {
       socket = new WebSocket(
-        `${process.env.NEXT_PUBLIC_WS_URL}/ws/projects/all`
+        `${process.env.NEXT_PUBLIC_WS_URL}/ws/projects`
       )
 
       socket.onopen = () => {
@@ -36,8 +34,8 @@ export default function JobsPage() {
               job.id === data.project_id
                 ? {
                     ...job,
-                    progress: data.progress,
-                    status: data.status,
+                    progress: data.progress ?? job.progress ?? 0,
+                    status: data.status ?? job.status,
                   }
                 : job
             )
@@ -49,11 +47,12 @@ export default function JobsPage() {
 
       socket.onclose = () => {
         console.log("WS disconnected — retrying...")
-        setTimeout(connect, 2000) // 🔥 auto reconnect
+        reconnectTimeout = setTimeout(connect, 2000)
       }
 
-      socket.onerror = () => {
-        socket.close()
+      socket.onerror = (err) => {
+        console.error("WS ERROR:", err)
+        socket?.close()
       }
     }
 
@@ -61,6 +60,7 @@ export default function JobsPage() {
 
     return () => {
       if (socket) socket.close()
+      if (reconnectTimeout) clearTimeout(reconnectTimeout)
     }
   }, [])
 
@@ -77,9 +77,6 @@ export default function JobsPage() {
     }
   }
 
-  // =====================================
-  // STATUS COLORS
-  // =====================================
   const getStatusColor = (status: string) => {
     switch (status) {
       case "COMPLETED":
@@ -96,7 +93,10 @@ export default function JobsPage() {
   }
 
   const getProgress = (job: any) => {
-    return job.progress || 0
+    if (job.progress !== undefined) return job.progress
+    if (job.status === "COMPLETED") return 100
+    if (job.status === "PROCESSING") return 50
+    return 0
   }
 
   if (loading) {
@@ -106,12 +106,11 @@ export default function JobsPage() {
   return (
     <div className="space-y-6">
 
-      {/* HEADER */}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-semibold">Translation Jobs</h1>
           <p className="text-gray-500 text-sm">
-            Manage and track all translation projects
+            Live progress updates enabled
           </p>
         </div>
 
@@ -123,7 +122,6 @@ export default function JobsPage() {
         </button>
       </div>
 
-      {/* TABLE */}
       <div className="bg-white rounded-xl shadow overflow-hidden">
 
         <table className="w-full text-sm">
@@ -156,8 +154,7 @@ export default function JobsPage() {
                 <tr key={job.id} className="border-t">
 
                   <td className="p-4 font-medium">
-                    {job.filename ||
-                     `Project ${job.id.slice(0, 6)}`}
+                    {job.file_name || job.filename || `Project ${job.id.slice(0, 6)}`}
                   </td>
 
                   <td>
@@ -185,7 +182,8 @@ export default function JobsPage() {
                   </td>
 
                   <td>
-                    {job.source_lang || "EN"} → {job.target_lang || "EN"}
+                    {job.source_language || job.source_lang || "EN"} →{" "}
+                    {job.target_language || job.target_lang || "EN"}
                   </td>
 
                   <td>
