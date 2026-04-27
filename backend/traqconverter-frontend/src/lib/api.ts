@@ -1,70 +1,79 @@
 import axios from "axios"
+import { getToken, clearToken } from "./auth"
 
-// ✅ Use ENV (prevents hardcoding issues)
 const BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"
 
 export const api = axios.create({
   baseURL: BASE_URL,
-  withCredentials: false,
 })
 
-// 🔐 Attach token automatically
+// ======================================================
+// REQUEST INTERCEPTOR (STRICT TOKEN HANDLING)
+// ======================================================
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
-    const token = localStorage.getItem("token")
+    const token = getToken()
 
-    if (token) {
-      config.headers = config.headers || {}
-      config.headers.Authorization = `Bearer ${token}`
+    // Prevent broken tokens being sent
+    if (token && token !== "undefined" && token !== "null") {
+      if (!config.headers) config.headers = {} as typeof config.headers
+      ;(config.headers as Record<string, string>).Authorization = `Bearer ${token}`
     }
   }
 
   return config
 })
 
-// 🔥 Handle errors globally
+// ======================================================
+// RESPONSE INTERCEPTOR (NO LOOPS + SAFE HANDLING)
+// ======================================================
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // ✅ Proper network error handling
     if (!error.response) {
-      console.error("🚨 NETWORK ERROR:", error.message)
-
-      // Optional: show UI alert
-      // alert("Cannot reach backend. Is server running?")
-
+      console.error("NETWORK ERROR:", error.message)
       return Promise.reject(error)
     }
 
-    // 🔐 Handle auth failure
-    if (error.response.status === 401) {
-      localStorage.removeItem("token")
+    const status = error.response.status
+    const url = error.config?.url || ""
+
+    // HANDLE 401 SAFELY
+    if (status === 401) {
+      const isAuthRequest =
+        url.includes("/login") ||
+        url.includes("/register")
 
       if (typeof window !== "undefined") {
-        window.location.href = "/login"
+        const currentPath = window.location.pathname
+
+        // ONLY redirect if:
+        // - not already on login
+        // - not an auth request itself
+        if (!isAuthRequest && currentPath !== "/login") {
+          clearToken()
+          window.location.href = "/login"
+        }
       }
+      // 401s are expected during token expiry — don't spam the console
+      return Promise.reject(error)
     }
 
-    // 🔥 Log backend error clearly
-    console.error("API ERROR:", error.response.data)
+    // Only log unexpected (non-auth) errors
+    console.error("API ERROR:", status, url, error.response.data)
 
     return Promise.reject(error)
   }
 )
 
-// 📄 Upload document (FIXED)
+// ======================================================
+// FILE UPLOAD (CLEAN)
+// ======================================================
 export const uploadDocument = async (file: File) => {
   const formData = new FormData()
   formData.append("file", file)
 
-  const res = await api.post("/projects/upload", formData, {
-    headers: {
-      // ✅ Let axios set boundary automatically
-      // DO NOT manually set multipart boundary
-      "Content-Type": "multipart/form-data",
-    },
-  })
-
+  const res = await api.post("/projects/upload", formData)
   return res.data
 }

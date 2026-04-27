@@ -12,11 +12,26 @@ from app.models.team import Team
 from app.models.stripe_event import StripeEvent
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/stripe", tags=["Stripe"])
 
 stripe.api_key = settings.stripe_secret_key
 
-SUBSCRIPTION_MONTHLY_CREDITS = 30
+
+# ============================================================
+# PLAN CONFIG (REPLACE WITH REAL IDS)
+# ============================================================
+PLAN_CONFIG = {
+    "price_pro": {
+        "plan": "PRO",
+        "credits": 30,
+    },
+    "price_basic": {
+        "plan": "BASIC",
+        "credits": 1,
+    },
+}
 
 
 @router.post("/webhook")
@@ -38,38 +53,27 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     event_id = event["id"]
     event_type = event["type"]
 
-    logger.info(f"Received Stripe event: {event_type}")
+    logger.info(f"Stripe event: {event_type}")
 
-    # ---------------------------------------------------
-    # Insert StripeEvent FIRST (DB-level idempotency)
-    # ---------------------------------------------------
+    # ============================================================
+    # IDEMPOTENCY
+    # ============================================================
     try:
         db.add(StripeEvent(id=event_id, event_type=event_type))
-        db.flush()  # Force DB insert immediately
+        db.flush()
     except IntegrityError:
         db.rollback()
         return {"status": "already_processed"}
 
-    handled_events = [
-        "invoice.payment_succeeded",
-        "customer.subscription.deleted",
-        "checkout.session.completed",
-    ]
-
-    if event_type not in handled_events:
-        db.commit()
-        return {"status": "ignored"}
-
     try:
 
-        # ---------------------------------------------------
-        # One-Time Credit Purchase
-        # ---------------------------------------------------
+        # ============================================================
+        # ONE-TIME PURCHASE
+        # ============================================================
         if event_type == "checkout.session.completed":
 
             session = event["data"]["object"]
 
-            # Ensure payment actually completed
             if session.get("payment_status") != "paid":
                 db.commit()
                 return {"status": "ignored"}
@@ -88,41 +92,77 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 db.commit()
                 return {"status": "ignored"}
 
-            wallet = (
-                db.query(CreditWallet)
-                .filter(CreditWallet.team_id == team_id)
-                .with_for_update()
+            reference = f"checkout_{session.get('id')}"
+
+            existing = db.query(StripeEvent).filter(
+                StripeEvent.id == reference
+            ).first()
+
+            if existing:
+                db.commit()
+                return {"status": "duplicate_skipped"}
+
+            wallet = db.query(CreditWallet)\
+                .filter(CreditWallet.team_id == team_id)\
+                .with_for_update()\
                 .first()
-            )
 
             if not wallet:
-                raise HTTPException(status_code=500, detail="Wallet not found")
+                wallet = CreditWallet(
+                    team_id=team_id,
+                    purchased_credits=0,
+                    subscription_credits=0,
+                    subscription_status="INACTIVE"
+                )
+                db.add(wallet)
+                db.flush()
 
             wallet.purchased_credits += credits
 
+            db.add(StripeEvent(id=reference, event_type="credit_grant"))
+
             db.commit()
-            logger.info(f"Added {credits} purchased credits")
+            logger.info(f"Added {credits} credits")
             return {"status": "success"}
 
-        # ---------------------------------------------------
-        # Subscription Payment Success
-        # ---------------------------------------------------
+        # ============================================================
+        # SUBSCRIPTION PAYMENT (FIXED)
+        # ============================================================
         if event_type == "invoice.payment_succeeded":
 
             invoice = event["data"]["object"]
-            subscription_id = invoice.get("subscription")
 
-            if not subscription_id:
-                db.commit()
-                return {"status": "ignored"}
+            # PRIMARY SOURCE (NO API CALL)
+            lines = invoice.get("lines", {}).get("data", [])
 
-            stripe_subscription = stripe.Subscription.retrieve(subscription_id)
-            metadata = stripe_subscription.get("metadata", {})
+            price_id = None
+            if lines:
+                price_id = lines[0].get("price", {}).get("id")
 
+            # METADATA (BEST SOURCE)
+            metadata = invoice.get("metadata", {})
             user_id = metadata.get("user_id")
             team_id = metadata.get("team_id")
 
-            if not user_id or not team_id:
+            subscription_id = invoice.get("subscription")
+
+            # FALLBACK ONLY IF NEEDED
+            if (not user_id or not team_id or not price_id) and subscription_id:
+                try:
+                    sub = stripe.Subscription.retrieve(subscription_id)
+
+                    metadata = sub.get("metadata", {})
+                    user_id = user_id or metadata.get("user_id")
+                    team_id = team_id or metadata.get("team_id")
+
+                    items = sub.get("items", {}).get("data", [])
+                    if items and not price_id:
+                        price_id = items[0].get("price", {}).get("id")
+
+                except Exception as e:
+                    logger.warning(f"Stripe fallback failed: {e}")
+
+            if not user_id or not team_id or not price_id:
                 db.commit()
                 return {"status": "ignored"}
 
@@ -133,44 +173,50 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 db.commit()
                 return {"status": "ignored"}
 
-            wallet = (
-                db.query(CreditWallet)
-                .filter(CreditWallet.team_id == team.id)
-                .with_for_update()
+            wallet = db.query(CreditWallet)\
+                .filter(CreditWallet.team_id == team.id)\
+                .with_for_update()\
                 .first()
-            )
 
             if not wallet:
-                raise HTTPException(status_code=500, detail="Wallet not found")
+                wallet = CreditWallet(
+                    team_id=team.id,
+                    purchased_credits=0,
+                    subscription_credits=0,
+                    subscription_status="INACTIVE"
+                )
+                db.add(wallet)
+                db.flush()
 
-            expiry_timestamp = stripe_subscription.get("current_period_end")
+            plan_config = PLAN_CONFIG.get(price_id)
 
-            if not expiry_timestamp:
-                items = stripe_subscription.get("items", {}).get("data", [])
-                if items:
-                    expiry_timestamp = items[0].get("current_period_end")
-
-            if not expiry_timestamp:
+            if not plan_config:
+                logger.warning(f"Unknown price_id: {price_id}")
                 db.commit()
-                return {"status": "ignored"}
+                return {"status": "unknown_plan"}
 
-            expiry_date = datetime.utcfromtimestamp(expiry_timestamp)
+            expiry_timestamp = invoice.get("current_period_end")
+
+            if not expiry_timestamp:
+                expiry_timestamp = invoice.get("lines", {}).get("data", [{}])[0].get("period", {}).get("end")
+
+            expiry_date = datetime.utcfromtimestamp(expiry_timestamp) if expiry_timestamp else None
 
             wallet.subscription_status = "ACTIVE"
-            wallet.subscription_credits = SUBSCRIPTION_MONTHLY_CREDITS
+            wallet.subscription_credits = plan_config["credits"]
             wallet.subscription_expires_at = expiry_date
 
             user.subscription_status = "ACTIVE"
-            user.subscription_plan = "PRO"
+            user.subscription_plan = plan_config["plan"]
             user.stripe_subscription_id = subscription_id
 
             db.commit()
-            logger.info("Subscription credits granted")
+            logger.info("Subscription updated")
             return {"status": "success"}
 
-        # ---------------------------------------------------
-        # Subscription Cancellation
-        # ---------------------------------------------------
+        # ============================================================
+        # SUB CANCELLED
+        # ============================================================
         if event_type == "customer.subscription.deleted":
 
             subscription = event["data"]["object"]
@@ -178,10 +224,6 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
             user_id = metadata.get("user_id")
             team_id = metadata.get("team_id")
-
-            if not user_id or not team_id:
-                db.commit()
-                return {"status": "ignored"}
 
             user = db.query(User).filter(User.id == user_id).first()
             team = db.query(Team).filter(Team.id == team_id).first()
@@ -192,12 +234,9 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 user.stripe_subscription_id = None
 
             if team:
-                wallet = (
-                    db.query(CreditWallet)
-                    .filter(CreditWallet.team_id == team.id)
-                    .with_for_update()
+                wallet = db.query(CreditWallet)\
+                    .filter(CreditWallet.team_id == team.id)\
                     .first()
-                )
 
                 if wallet:
                     wallet.subscription_status = "INACTIVE"
@@ -210,5 +249,6 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         return {"status": "ignored"}
 
     except Exception:
-        db.rollback()
-        raise
+        logger.exception("Stripe webhook failed")
+        db.commit()
+        return {"status": "error_handled"}

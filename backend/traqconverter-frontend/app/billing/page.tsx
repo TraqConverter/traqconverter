@@ -7,6 +7,7 @@ export default function BillingPage() {
   const [wallet, setWallet] = useState<any>(null)
   const [transactions, setTransactions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [purchasing, setPurchasing] = useState(false)
 
   useEffect(() => {
     fetchBilling()
@@ -26,6 +27,32 @@ export default function BillingPage() {
       console.error("BILLING ERROR:", err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // ============================================================
+  // 🔥 PURCHASE CREDITS (FIX)
+  // ============================================================
+  const handlePurchaseCredits = async () => {
+    try {
+      setPurchasing(true)
+
+      // 👉 you can later replace 100 with input from user
+      const amount = 100
+
+      const res = await api.post("/subscription/purchase-credits", null, {
+        params: { amount }
+      })
+
+      if (res.data?.checkout_url) {
+        window.location.href = res.data.checkout_url
+      }
+
+    } catch (err) {
+      console.error("PURCHASE ERROR:", err)
+      alert("Failed to start purchase")
+    } finally {
+      setPurchasing(false)
     }
   }
 
@@ -51,21 +78,23 @@ export default function BillingPage() {
           </p>
         </div>
 
-        <button className="bg-blue-600 text-white px-4 py-2 rounded-lg">
-          Purchase Credits
+        <button
+          onClick={handlePurchaseCredits}
+          disabled={purchasing}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg disabled:opacity-50"
+        >
+          {purchasing ? "Redirecting..." : "Purchase Credits"}
         </button>
       </div>
 
       {/* CARDS */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
 
-        {/* TOTAL */}
         <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-6 rounded-xl">
           <p className="text-sm opacity-80">Total Credits</p>
           <h2 className="text-3xl font-bold mt-2">{totalCredits}</h2>
         </div>
 
-        {/* SUBSCRIPTION */}
         <div className="bg-white p-6 rounded-xl shadow">
           <p className="text-sm text-gray-500">Subscription Credits</p>
           <h2 className="text-3xl font-bold mt-2">
@@ -73,7 +102,6 @@ export default function BillingPage() {
           </h2>
         </div>
 
-        {/* PURCHASED */}
         <div className="bg-white p-6 rounded-xl shadow">
           <p className="text-sm text-gray-500">Purchased Credits</p>
           <h2 className="text-3xl font-bold mt-2">
@@ -81,7 +109,6 @@ export default function BillingPage() {
           </h2>
         </div>
 
-        {/* PLAN */}
         <div className="bg-white p-6 rounded-xl shadow">
           <p className="text-sm text-gray-500">Plan</p>
           <h2 className="text-xl font-bold mt-2">

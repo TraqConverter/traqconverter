@@ -295,8 +295,12 @@ def get_project_status(
     return {
         "id": str(project.id),
         "status": project.status,
-        "progress": progress,
-        "filename": project.file_name,
+        "progress_percent": progress,        # ✅ FIXED
+        "retry_count": project.retry_count,  # ✅ REQUIRED
+        "created_at": project.created_at,    # ✅ REQUIRED
+        "file_name": project.file_name,
+        "source_language": project.source_language,
+        "target_language": project.target_language,
     }
 
 # ============================================================
@@ -330,11 +334,13 @@ def get_project_segments(
         .all()
     )
 
+    # ✅ FIX: return correct field names
     return [
         {
-            "id": str(s.id),  # UUID → string
-            "source": s.source_text,
-            "target": s.translated_text or ""
+            "id": str(s.id),
+            "segment_index": s.segment_index,
+            "source_text": s.source_text,
+            "translated_text": s.translated_text or ""
         }
         for s in segments
     ]

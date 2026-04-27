@@ -11,20 +11,32 @@ BATCH_SIZE = 20
 
 
 # ============================================================
-# 🔥 GLOSSARY PRE-REPLACEMENT (HARD ENFORCEMENT)
+# GLOSSARY PRE-REPLACEMENT (HARD ENFORCEMENT)
 # ============================================================
-
 def apply_glossary_pre_replace(text, glossary_map):
     for src, tgt in glossary_map.items():
-        # exact match replacement (safe)
         text = re.sub(rf"\b{re.escape(src)}\b", tgt, text)
     return text
 
 
 # ============================================================
+# SAFE TEAM RESOLUTION
+# ============================================================
+def get_project_scope(project):
+    """
+    Standardize glossary + TM scope.
+    Always prefer team_id (canonical).
+    """
+    if hasattr(project, "team_id") and project.team_id:
+        return project.team_id
+
+    # fallback (should never happen ideally)
+    return getattr(project, "user_id", None)
+
+
+# ============================================================
 # SINGLE TRANSLATION
 # ============================================================
-
 def translate_text(
     text: str,
     source_lang: str,
@@ -38,9 +50,11 @@ def translate_text(
 
     if db and project:
         try:
+            scope_id = get_project_scope(project)
+
             glossary_entries = get_glossary(
                 db,
-                project.team_id,
+                scope_id,  # ✅ FIXED
                 source_lang,
                 target_lang
             )
@@ -52,7 +66,6 @@ def translate_text(
                 for g in glossary_entries
             }
 
-            # 🔥 HARD APPLY BEFORE AI
             text = apply_glossary_pre_replace(text, glossary_map)
 
         except Exception as e:
@@ -90,9 +103,8 @@ Return ONLY the translated text.
 
 
 # ============================================================
-# BATCH TRANSLATION (FINAL FIXED 🔥)
+# BATCH TRANSLATION (FIXED)
 # ============================================================
-
 def translate_batch(
     texts: list[str],
     source_lang: str,
@@ -105,17 +117,20 @@ def translate_batch(
     glossary_prompt = ""
     glossary_map = {}
 
+    # 🔧 STANDARDIZED SCOPE
+    scope_id = get_project_scope(project) if project else None
+
     # ========================================================
-    # 🔥 LOAD TM
+    # LOAD TM (TEAM SCOPED)
     # ========================================================
-    if db and project:
+    if db and project and scope_id:
         try:
             tm_entries = []
 
             for t in texts:
                 entries = get_tm_entries(
                     db=db,
-                    team_id=project.team_id,
+                    team_id=scope_id,  # ✅ FIXED
                     source_language=source_lang,
                     target_language=target_lang,
                     source_text=t
@@ -136,13 +151,13 @@ def translate_batch(
             print("TM ERROR:", e)
 
     # ========================================================
-    # 🔥 LOAD GLOSSARY
+    # LOAD GLOSSARY (TEAM SCOPED)
     # ========================================================
-    if db and project:
+    if db and project and scope_id:
         try:
             glossary_entries = get_glossary(
                 db,
-                project.user_id,
+                scope_id,  # ✅ FIXED
                 source_lang,
                 target_lang
             )
@@ -158,7 +173,7 @@ def translate_batch(
             print("GLOSSARY ERROR:", e)
 
     # ========================================================
-    # 🔥 HARD APPLY GLOSSARY BEFORE AI (CRITICAL FIX)
+    # APPLY GLOSSARY BEFORE AI
     # ========================================================
     if glossary_map:
         texts = [
@@ -167,7 +182,7 @@ def translate_batch(
         ]
 
     # ========================================================
-    # 🔥 PROMPT (STRICT)
+    # PROMPT
     # ========================================================
     prompt = f"""
 You are a professional translator.
@@ -178,7 +193,6 @@ STRICT RULES:
 - Glossary terms are FINAL and MUST NOT be changed
 - If a term is already translated, DO NOT modify it
 - Maintain exact meaning and structure
-
 """
 
     if glossary_prompt:
@@ -202,7 +216,7 @@ No numbering. No explanations.
         prompt += f"\n{t}"
 
     # ========================================================
-    # 🔥 OPENAI CALL
+    # OPENAI CALL
     # ========================================================
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
@@ -215,7 +229,7 @@ No numbering. No explanations.
     output = response.choices[0].message.content
 
     # ========================================================
-    # 🔥 CLEAN OUTPUT
+    # CLEAN OUTPUT
     # ========================================================
     translations = []
 

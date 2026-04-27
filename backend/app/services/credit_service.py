@@ -1,4 +1,7 @@
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from datetime import datetime
+
 from app.models.credit import CreditWallet, CreditTransaction
 
 
@@ -11,6 +14,10 @@ class WalletNotFoundError(Exception):
 
 
 class InsufficientCreditsError(Exception):
+    pass
+
+
+class DuplicateTransactionError(Exception):
     pass
 
 
@@ -28,14 +35,13 @@ class CreditService:
         reference_id: str | None = None,
     ) -> int:
         """
-        Atomic dual-bucket deduction.
+         FIXED:
 
+        - Single source of truth
+        - Subscription expiry handled here
+        - Idempotency via reference_id
         - Row-level locking
-        - Subscription credits deducted first
-        - Purchased credits second
         - No commit inside service
-        - Logs transaction
-        - Raises domain exceptions
 
         Returns remaining total credits.
         """
@@ -50,6 +56,35 @@ class CreditService:
         if not wallet:
             raise WalletNotFoundError("Credit wallet not found")
 
+        # ====================================================
+        # HANDLE SUBSCRIPTION EXPIRY (MOVED HERE)
+        # ====================================================
+        now = datetime.utcnow()
+
+        if (
+            wallet.subscription_status == "ACTIVE"
+            and wallet.subscription_expires_at
+            and wallet.subscription_expires_at < now
+        ):
+            wallet.subscription_status = "EXPIRED"
+            wallet.subscription_credits = 0
+
+        # ====================================================
+        # IDEMPOTENCY CHECK
+        # ====================================================
+        if reference_id:
+            existing = (
+                db.query(CreditTransaction)
+                .filter(CreditTransaction.reference_id == reference_id)
+                .first()
+            )
+
+            if existing:
+                raise DuplicateTransactionError("Duplicate credit transaction")
+
+        # ====================================================
+        # CHECK BALANCE
+        # ====================================================
         total_available = wallet.subscription_credits + wallet.purchased_credits
 
         if total_available < amount:
@@ -57,25 +92,32 @@ class CreditService:
 
         remaining = amount
 
-        # ----------------------------------------------------
-        # Deduct subscription credits first
-        # ----------------------------------------------------
-        if wallet.subscription_credits >= remaining:
-            wallet.subscription_credits -= remaining
-            remaining = 0
-        else:
-            remaining -= wallet.subscription_credits
-            wallet.subscription_credits = 0
+        # ====================================================
+        # DEDUCT SUBSCRIPTION FIRST (ONLY IF ACTIVE)
+        # ====================================================
+        if wallet.subscription_status == "ACTIVE":
+            if wallet.subscription_credits >= remaining:
+                wallet.subscription_credits -= remaining
+                remaining = 0
+            else:
+                remaining -= wallet.subscription_credits
+                wallet.subscription_credits = 0
 
-        # ----------------------------------------------------
-        # Deduct purchased credits
-        # ----------------------------------------------------
+        # ====================================================
+        # DEDUCT PURCHASED
+        # ====================================================
         if remaining > 0:
             wallet.purchased_credits -= remaining
 
-        # ----------------------------------------------------
-        # Log transaction
-        # ----------------------------------------------------
+        # ====================================================
+        # SAFETY CHECK
+        # ====================================================
+        if wallet.subscription_credits < 0 or wallet.purchased_credits < 0:
+            raise Exception("Credit integrity violation")
+
+        # ====================================================
+        # 🧾 LOG TRANSACTION
+        # ====================================================
         transaction = CreditTransaction(
             wallet_id=wallet.id,
             type="USAGE",
@@ -97,10 +139,6 @@ class CreditService:
         team_id: str,
         amount: int,
     ) -> None:
-        """
-        Grants subscription credits.
-        Resets subscription bucket.
-        """
 
         wallet = (
             db.query(CreditWallet)
@@ -132,9 +170,6 @@ class CreditService:
         team_id: str,
         amount: int,
     ) -> None:
-        """
-        Adds purchased credits (non-expiring).
-        """
 
         wallet = (
             db.query(CreditWallet)
