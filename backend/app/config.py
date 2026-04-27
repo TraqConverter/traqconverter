@@ -21,6 +21,17 @@ class Settings(BaseSettings):
     stripe_publishable_key: str
     stripe_webhook_secret: str
 
+    # NEW: STRIPE PRICING (REQUIRED)
+    STRIPE_PRICE_PRO: str
+    STRIPE_PRICE_BASIC: Optional[str] = None
+
+    # NEW: STRIPE URLS
+    STRIPE_SUCCESS_URL: str = "http://localhost:3000/success"
+    STRIPE_CANCEL_URL: str = "http://localhost:3000/cancel"
+
+    # NEW: CREDIT PRICING
+    CREDIT_PRICE_CENTS: int = 100
+
     # --- AWS (IAM compatible) ---
     AWS_ACCESS_KEY_ID: Optional[str] = None
     AWS_SECRET_ACCESS_KEY: Optional[str] = None

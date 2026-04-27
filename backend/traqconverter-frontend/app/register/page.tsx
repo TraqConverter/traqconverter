@@ -3,6 +3,53 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
+import { setToken } from "@/lib/auth"
+
+// ============================================================
+// REGISTER — ESPRESSO LOOK (matches login)
+// ============================================================
+
+function IconUser() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9a9178" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21c0-4 4-7 8-7s8 3 8 7" />
+    </svg>
+  )
+}
+
+function IconMail() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9a9178" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m3 7 9 6 9-6" />
+    </svg>
+  )
+}
+
+function IconLock() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9a9178" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="11" width="16" height="10" rx="2" />
+      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </svg>
+  )
+}
+
+function IconEye({ open }: { open: boolean }) {
+  return open ? (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9a9178" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ) : (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9a9178" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m3 3 18 18" />
+      <path d="M10.6 6.1a10.5 10.5 0 0 1 1.4-.1c6.5 0 10 7 10 7a16.6 16.6 0 0 1-3.3 4.1" />
+      <path d="M6.6 6.6A16.4 16.4 0 0 0 2 12s3.5 7 10 7c1.6 0 3-.3 4.3-.9" />
+    </svg>
+  )
+}
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -10,89 +57,208 @@ export default function RegisterPage() {
   const [fullName, setFullName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [showPwd, setShowPwd] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const handleRegister = async () => {
+    setError(null)
     if (!fullName || !email || !password) {
-      alert("Please fill all fields")
+      setError("Please fill in your name, email and password.")
       return
     }
-
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.")
+      return
+    }
     try {
       setLoading(true)
-
       const res = await api.post("/auth/register", {
         full_name: fullName,
         email,
         password,
       })
-
       const { access_token } = res.data
-
-      localStorage.setItem("token", access_token)
-
+      if (!access_token) throw new Error("No token returned")
+      // New accounts default to "remember me"
+      setToken(access_token, true)
       router.push("/dashboard")
-
     } catch (err: any) {
       console.error("REGISTER ERROR:", err)
-
-      const message =
-        err?.response?.data?.detail || "Registration failed"
-
-      alert(message)
-
+      const message = err?.response?.data?.detail || "Registration failed."
+      setError(typeof message === "string" ? message : "Registration failed.")
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div className="h-screen flex items-center justify-center bg-gray-50">
-      <div className="bg-white p-8 rounded-xl shadow w-96 space-y-4">
-
-        <h1 className="text-xl font-bold">Register</h1>
-
-        <input
-          className="w-full border p-2 rounded"
-          placeholder="Full Name"
-          value={fullName}
-          onChange={(e) => setFullName(e.target.value)}
-        />
-
-        <input
-          className="w-full border p-2 rounded"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-
-        <input
-          type="password"
-          className="w-full border p-2 rounded"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-
-        <button
-          onClick={handleRegister}
-          disabled={loading}
-          className="w-full bg-green-600 text-white p-2 rounded disabled:opacity-50"
-        >
-          {loading ? "Creating..." : "Register"}
-        </button>
-
-        <p className="text-sm text-center">
-          Already have an account?{" "}
-          <span
-            className="text-blue-600 cursor-pointer"
-            onClick={() => router.push("/login")}
-          >
-            Login
-          </span>
-        </p>
-
+    <div className="min-h-screen flex" style={{ background: "#faf5ee", color: "#1f2a2e" }}>
+      {/* LEFT — BRAND PANEL */}
+      <div
+        className="hidden md:flex flex-col justify-between p-10 flex-1 max-w-[520px]"
+        style={{ background: "#f3ecdb", borderRight: "1px solid #e7ddc5" }}
+      >
+        <div>
+          <div className="flex items-center gap-3 mb-12">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-lg" style={{ background: "#0a7870" }}>T</div>
+            <div className="leading-tight">
+              <div className="font-semibold text-[17px]">TraqConverter</div>
+              <div className="text-[10px] tracking-[0.18em]" style={{ color: "#8a8270" }}>WORKSPACE</div>
+            </div>
+          </div>
+          <div className="text-[11px] font-semibold tracking-[0.18em] mb-4" style={{ color: "#9a9178" }}>JOIN THE WORKBENCH</div>
+          <h2 className="text-[34px] font-semibold leading-tight tracking-tight mb-5" style={{ color: "#1f2a2e" }}>
+            Spin up your translation workspace in under a minute.
+          </h2>
+          <p className="text-[15px]" style={{ color: "#4a4638" }}>
+            Free 14-day trial — no card required. Bring your own glossary or start from a sample medical, legal or financial corpus.
+          </p>
+        </div>
+        <div className="space-y-3">
+          <Bullet text="Personal TM and glossary from day one" />
+          <Bullet text="Invite reviewers, certifiers and PMs in seconds" />
+          <Bullet text="ISO 17100 audit-ready exports & signed PDFs" />
+        </div>
       </div>
+
+      {/* RIGHT — FORM */}
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div
+          className="w-full max-w-md rounded-2xl p-8"
+          style={{ background: "#ffffff", border: "1px solid #e7ddc5", boxShadow: "0 1px 2px rgba(30,30,20,0.04)" }}
+        >
+          <div className="md:hidden flex items-center gap-3 mb-8">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-lg" style={{ background: "#0a7870" }}>T</div>
+            <div className="leading-tight">
+              <div className="font-semibold text-[17px]">TraqConverter</div>
+              <div className="text-[10px] tracking-[0.18em]" style={{ color: "#8a8270" }}>WORKSPACE</div>
+            </div>
+          </div>
+          <h1 className="text-[26px] font-semibold tracking-tight mb-1" style={{ color: "#1f2a2e" }}>Create your account</h1>
+          <p className="text-sm mb-6" style={{ color: "#8a8270" }}>Get started with your TraqConverter workspace.</p>
+
+          {error && (
+            <div className="text-sm rounded-lg px-3 py-2 mb-4" style={{ background: "#f2d4cf", color: "#7a2f24" }}>{error}</div>
+          )}
+
+          <Field label="FULL NAME" icon={<IconUser />}>
+            <input
+              type="text"
+              autoComplete="name"
+              placeholder="Niki Lawrence"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleRegister()}
+              className="flex-1 bg-transparent outline-none text-sm"
+              style={{ color: "#1f2a2e" }}
+            />
+          </Field>
+
+          <Field label="EMAIL" icon={<IconMail />}>
+            <input
+              type="email"
+              autoComplete="email"
+              placeholder="you@company.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleRegister()}
+              className="flex-1 bg-transparent outline-none text-sm"
+              style={{ color: "#1f2a2e" }}
+            />
+          </Field>
+
+          <Field
+            label="PASSWORD"
+            icon={<IconLock />}
+            trailing={
+              <button type="button" onClick={() => setShowPwd((v) => !v)} aria-label={showPwd ? "Hide password" : "Show password"} className="p-1 -mr-1">
+                <IconEye open={showPwd} />
+              </button>
+            }
+          >
+            <input
+              type={showPwd ? "text" : "password"}
+              autoComplete="new-password"
+              placeholder="At least 6 characters"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleRegister()}
+              className="flex-1 bg-transparent outline-none text-sm"
+              style={{ color: "#1f2a2e" }}
+            />
+          </Field>
+
+          <p className="text-[11px] mb-5" style={{ color: "#8a8270" }}>
+            By creating an account you agree to the Terms of Service and Privacy Policy.
+          </p>
+
+          <button
+            onClick={handleRegister}
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-2 py-3 rounded-full text-[15px] font-semibold transition"
+            style={{
+              background: loading ? "#9bc9c5" : "#0a7870",
+              color: "#fff",
+              cursor: loading ? "not-allowed" : "pointer",
+            }}
+            onMouseEnter={(e) => { if (!loading) e.currentTarget.style.background = "#0a645d" }}
+            onMouseLeave={(e) => { if (!loading) e.currentTarget.style.background = "#0a7870" }}
+          >
+            {loading ? "Creating account…" : "Create account"}
+          </button>
+
+          <div className="text-center mt-5 text-sm" style={{ color: "#8a8270" }}>
+            Already have an account?{" "}
+            <button type="button" onClick={() => router.push("/login")} className="font-medium hover:underline" style={{ color: "#0a7870" }}>
+              Sign in
+            </button>
+          </div>
+
+          <div className="text-[11px] text-center mt-8" style={{ color: "#9a9178" }}>
+            Encrypted at rest · SOC 2 compliant
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Field({
+  label,
+  icon,
+  trailing,
+  children,
+}: {
+  label: string
+  icon: React.ReactNode
+  trailing?: React.ReactNode
+  children: React.ReactNode
+}) {
+  return (
+    <div className="mb-4">
+      <div className="text-[11px] font-semibold tracking-[0.14em] mb-2" style={{ color: "#9a9178" }}>{label}</div>
+      <div
+        className="flex items-center gap-2 px-4 py-2.5 rounded-xl transition"
+        style={{ background: "#faf5ee", border: "1px solid #e7ddc5" }}
+      >
+        {icon}
+        {children}
+        {trailing}
+      </div>
+    </div>
+  )
+}
+
+function Bullet({ text }: { text: string }) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="mt-0.5 w-5 h-5 rounded-full flex items-center justify-center shrink-0" style={{ background: "#cfe6e2", color: "#0a7870" }}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <path d="m5 12 5 5 10-10" />
+        </svg>
+      </span>
+      <span className="text-sm" style={{ color: "#4a4638" }}>{text}</span>
     </div>
   )
 }

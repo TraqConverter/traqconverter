@@ -2,6 +2,7 @@ import json
 import boto3
 import time
 import logging
+import threading
 
 from app.services.translation_processor import process_translation_job
 from app.config import settings
@@ -18,19 +19,47 @@ sqs = boto3.client(
 
 QUEUE_URL = settings.SQS_QUEUE_URL
 
+# MUST be > max processing time (set this properly)
+VISIBILITY_TIMEOUT = 300  # 5 minutes
+HEARTBEAT_INTERVAL = 60   # extend every 60 seconds
 
+
+# ============================================================
+# VISIBILITY HEARTBEAT (prevents duplicate processing)
+# ============================================================
+def start_visibility_heartbeat(receipt_handle: str, stop_event: threading.Event):
+    while not stop_event.is_set():
+        try:
+            time.sleep(HEARTBEAT_INTERVAL)
+
+            sqs.change_message_visibility(
+                QueueUrl=QUEUE_URL,
+                ReceiptHandle=receipt_handle,
+                VisibilityTimeout=VISIBILITY_TIMEOUT
+            )
+
+            logger.info("🔄 Visibility extended")
+
+        except Exception as e:
+            logger.warning(f"Heartbeat failed: {e}")
+
+
+# ============================================================
+# WORKER LOOP
+# ============================================================
 def start_worker():
-    print("🚀 Worker started")
-    print("Using queue:", QUEUE_URL)
+    logger.info("Worker started")
+    logger.info(f"Using queue: {QUEUE_URL}")
 
     while True:
         try:
-            print("⏳ Polling SQS...")
+            logger.info("⏳ Polling SQS...")
 
             response = sqs.receive_message(
                 QueueUrl=QUEUE_URL,
                 MaxNumberOfMessages=1,
-                WaitTimeSeconds=20  # long polling
+                WaitTimeSeconds=20,
+                VisibilityTimeout=VISIBILITY_TIMEOUT  # ✅ FIX
             )
 
             messages = response.get("Messages", [])
@@ -39,31 +68,48 @@ def start_worker():
                 continue
 
             message = messages[0]
+            receipt_handle = message["ReceiptHandle"]
 
             body = json.loads(message["Body"])
 
-            # 🔥 handle SNS-style wrapping (important)
+            # 🔥 SNS unwrap support
             if isinstance(body, str):
                 body = json.loads(body)
 
             project_id = body.get("project_id")
 
             if not project_id:
-                print("⚠️ Invalid message:", body)
+                logger.warning(f"⚠️ Invalid message: {body}")
                 continue
 
-            print(f"📥 Processing project: {project_id}")
+            logger.info(f"📥 Processing project: {project_id}")
 
-            # 🔥 PROCESS JOB
-            process_translation_job(project_id)
-
-            # ✅ delete after success
-            sqs.delete_message(
-                QueueUrl=QUEUE_URL,
-                ReceiptHandle=message["ReceiptHandle"]
+            # ============================================================
+            # START HEARTBEAT THREAD
+            # ============================================================
+            stop_event = threading.Event()
+            heartbeat_thread = threading.Thread(
+                target=start_visibility_heartbeat,
+                args=(receipt_handle, stop_event),
+                daemon=True
             )
+            heartbeat_thread.start()
 
-            print(f"✅ Completed project: {project_id}")
+            try:
+                # 🔥 PROCESS JOB
+                process_translation_job(project_id)
+
+                # ✅ SUCCESS → DELETE MESSAGE
+                sqs.delete_message(
+                    QueueUrl=QUEUE_URL,
+                    ReceiptHandle=receipt_handle
+                )
+
+                logger.info(f"✅ Completed project: {project_id}")
+
+            finally:
+                # 🔥 STOP HEARTBEAT
+                stop_event.set()
 
         except Exception as e:
             logger.error(f"❌ Worker failed: {str(e)}")

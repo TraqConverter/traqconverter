@@ -1,14 +1,23 @@
 import logging
 import tempfile
 import shutil
-import time
 import re
 import os
 import asyncio
 
 import pytesseract
 
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# ============================================================
+# CROSS-PLATFORM TESSERACT CONFIG
+# ============================================================
+TESSERACT_PATH = os.getenv("TESSERACT_CMD")
+
+if TESSERACT_PATH:
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+    logging.getLogger(__name__).info(f"Using Tesseract from ENV: {TESSERACT_PATH}")
+else:
+    # fallback to PATH
+    logging.getLogger(__name__).info("Using Tesseract from system PATH")
 
 from pathlib import Path
 from datetime import datetime
@@ -22,101 +31,67 @@ from app.database import SessionLocal
 from app.services.s3_service import download_file_from_s3, upload_file_to_s3
 from app.services.ai_translation_service import translate_batch
 from app.services.translation_memory_service import store_tm_entry
-
+from app.services.certification_service import CertificationService
 from app.routers.ws import broadcast_progress
 
 from docx import Document
-import fitz  # 🔥 USE PyMuPDF INSTEAD (MORE RELIABLE)
+import fitz
 from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-MAX_ATTEMPTS = 3
 BATCH_SIZE = 20
 
 
 # ============================================================
-# 🔥 FIXED TEXT EXTRACTION
+# TEXT EXTRACTION
 # ============================================================
 def extract_file_text(file_path: str):
     ext = os.path.splitext(file_path)[1].lower()
 
-    # =========================
-    # PDF (FIXED)
-    # =========================
     if ext == ".pdf":
         text = ""
+        doc = fitz.open(file_path)
 
-        try:
-            doc = fitz.open(file_path)
+        for page in doc:
+            text += page.get_text()
 
-            for page in doc:
-                text += page.get_text()
+        doc.close()
 
-            doc.close()
-
-        except Exception as e:
-            raise Exception(f"PDF extraction failed: {e}")
-
-        # 🔥 FALLBACK TO OCR IF EMPTY
         if not text.strip():
-            try:
-                logger.warning("PDF text empty → using OCR fallback")
+            logger.warning("PDF empty → OCR fallback")
 
+            try:
                 doc = fitz.open(file_path)
+
                 for page in doc:
                     pix = page.get_pixmap()
                     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                     text += pytesseract.image_to_string(img)
 
                 doc.close()
+
             except Exception as e:
-                raise Exception(f"OCR fallback failed: {e}")
-
-        if not text.strip():
-            raise Exception("PDF has no extractable text")
+                logger.error("OCR failed — check Tesseract installation")
+                raise Exception(f"OCR failed: {e}")
 
         return text
 
-    # =========================
-    # DOCX
-    # =========================
     elif ext == ".docx":
-        try:
-            doc = Document(file_path)
-            text = "\n".join([
-                p.text.strip()
-                for p in doc.paragraphs
-                if p.text and p.text.strip()
-            ])
-        except Exception as e:
-            raise Exception(f"DOCX extraction failed: {e}")
+        doc = Document(file_path)
+        return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
 
-        if not text.strip():
-            raise Exception("DOCX has no extractable text")
-
-        return text
-
-    # =========================
-    # TXT
-    # =========================
     elif ext == ".txt":
-        with open(file_path, "r", encoding="utf-8") as f:
-            return f.read()
+        return open(file_path, "r", encoding="utf-8").read()
 
-    # =========================
-    # IMAGE (OCR)
-    # =========================
     elif ext in [".jpg", ".jpeg", ".png"]:
         try:
             image = Image.open(file_path)
             return pytesseract.image_to_string(image)
         except Exception as e:
-            raise Exception(f"Image OCR failed: {e}")
+            logger.error("Image OCR failed")
+            raise Exception(f"OCR failed: {e}")
 
-    # =========================
-    # UNSUPPORTED
-    # =========================
     else:
         raise Exception(f"Unsupported file type: {ext}")
 
@@ -138,10 +113,8 @@ def process_translation_job(project_id: str):
         ).first()
 
         if not project:
-            logger.warning("Worker project not found")
             return
 
-        project.retry_count += 1
         project.status = ProjectStatus.PROCESSING
         project.progress_percent = 0
         project.translated_segments = 0
@@ -154,19 +127,12 @@ def process_translation_job(project_id: str):
         download_file_from_s3(project.file_path, input_file)
 
         text = extract_file_text(str(input_file))
-
-        if not text or not text.strip():
-            raise Exception("Failed to extract text")
-
-        # =========================
-        # SEGMENTATION
-        # =========================
-        raw_sentences = re.split(r'[.\n]+', text)
+        text = re.sub(r"\s+", " ", text)
 
         sentences = [
             s.strip()
-            for s in raw_sentences
-            if s.strip() and len(s.strip()) > 2 and not s.strip().isdigit()
+            for s in re.split(r"[.\n]+", text)
+            if s.strip() and len(s.strip()) > 2
         ]
 
         db.query(TranslationSegment).filter(
@@ -176,10 +142,10 @@ def process_translation_job(project_id: str):
 
         segments = []
 
-        for index, s in enumerate(sentences):
+        for i, s in enumerate(sentences):
             seg = TranslationSegment(
                 project_id=project_uuid,
-                segment_index=index,
+                segment_index=i,
                 source_text=s,
                 translated_text=""
             )
@@ -198,85 +164,62 @@ def process_translation_job(project_id: str):
         source_lang = project.source_language or "English"
         target_lang = project.target_language or "Spanish"
 
-        # =========================
-        # TRANSLATION LOOP
-        # =========================
         for i in range(0, len(texts), BATCH_SIZE):
             batch = texts[i:i + BATCH_SIZE]
 
-            translations = translate_batch(
-                batch,
-                source_lang,
-                target_lang,
-                db=db,
-                project=project
-            )
-
-            if len(translations) != len(batch):
+            try:
+                translations = translate_batch(
+                    batch,
+                    source_lang,
+                    target_lang,
+                    db=db,
+                    project=project
+                )
+            except Exception as e:
+                logger.error(f"Batch failed: {e}")
                 continue
 
-            for j, (src, translated) in enumerate(zip(batch, translations)):
-                seg = segments[i + j]
-                seg.translated_text = translated
+            if not translations or len(translations) != len(batch):
+                logger.warning("Mismatch — skipping batch")
+                continue
 
-                # TM SAVE
+            for j, translated in enumerate(translations):
+                seg = segments[i + j]
+
+                clean = (translated or "").strip()
+
+                if not clean:
+                    continue
+
+                seg.translated_text = clean
+
                 try:
                     store_tm_entry(
                         db=db,
                         team_id=project.team_id,
                         source_language=source_lang,
                         target_language=target_lang,
-                        source_text=src,
-                        translated_text=translated
+                        source_text=seg.source_text,
+                        translated_text=clean
                     )
                 except Exception:
                     pass
 
                 project.translated_segments += 1
 
-                if project.translated_segments % 5 == 0:
-                    progress = int(
-                        (project.translated_segments / project.total_segments) * 100
-                    )
+            db.commit()
 
-                    project.progress_percent = progress
-                    project.last_heartbeat = datetime.utcnow()
-                    db.commit()
+            progress = int(
+                (project.translated_segments / project.total_segments) * 100
+            )
 
-                    try:
-                        asyncio.run(
-                            broadcast_progress(
-                                str(project.id),
-                                {
-                                    "project_id": str(project.id),
-                                    "progress": progress,
-                                    "status": project.status.value
-                                }
-                            )
-                        )
-                    except Exception as e:
-                        logger.warning(f"WS broadcast failed: {e}")
-
+            project.progress_percent = progress
+            project.last_heartbeat = datetime.utcnow()
             db.commit()
 
         project.progress_percent = 100
         project.status = ProjectStatus.COMPLETED
-        project.last_heartbeat = datetime.utcnow()
         db.commit()
-
-        try:
-            asyncio.run(
-                broadcast_progress(
-                    str(project.id),
-                    {
-                        "project_id": str(project.id),
-                        "progress": 100,
-                        "status": ProjectStatus.COMPLETED.value
-                    }
-                )
-            )
-        except Exception as e:
-            logger.warning(f"Final WS broadcast failed: {e}")
 
         output_file = temp_dir / f"translated_{project.file_name}"
         shutil.copyfile(input_file, output_file)
@@ -284,6 +227,23 @@ def process_translation_job(project_id: str):
         output_s3_key = upload_file_to_s3(output_file)
         project.output_file = output_s3_key
         db.commit()
+
+        try:
+            cert_file = temp_dir / f"{project.id}_certification.pdf"
+
+            CertificationService.generate_certification_pdf(
+                output_path=cert_file,
+                user_name="Certified Translator",
+                source_language=source_lang,
+                target_language=target_lang,
+            )
+
+            cert_s3_key = upload_file_to_s3(cert_file)
+            project.certification_file = cert_s3_key
+            db.commit()
+
+        except Exception as e:
+            logger.error(f"Certification failed: {e}")
 
         logger.info("Worker completed")
 

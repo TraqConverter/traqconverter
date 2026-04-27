@@ -5,6 +5,22 @@ Revises: 7d4fb1844c08
 Create Date: 2026-02-23 22:24:10.303470
 
 """
+"""
+ MIGRATION NAME MISMATCH WARNING
+
+Revision ID: 4f778f2bdc59
+Original name: add_credit_wallet_uuid_relation
+
+ACTUAL CHANGE:
+- This migration modifies translation_projects.status
+
+NOTE:
+The filename is misleading due to an earlier development change.
+It has already been applied in environments and MUST NOT be renamed.
+
+This note exists to prevent confusion during audits and debugging.
+"""
+
 from typing import Sequence, Union
 
 from alembic import op
