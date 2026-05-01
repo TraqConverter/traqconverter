@@ -19,18 +19,29 @@ sqs = boto3.client(
 
 QUEUE_URL = settings.SQS_QUEUE_URL
 
-# MUST be > max processing time (set this properly)
+# ============================================================
+# CONFIG
+# ============================================================
+# Must exceed worst-case processing time
 VISIBILITY_TIMEOUT = 300  # 5 minutes
 HEARTBEAT_INTERVAL = 60   # extend every 60 seconds
 
 
 # ============================================================
-# VISIBILITY HEARTBEAT (prevents duplicate processing)
+# VISIBILITY HEARTBEAT
+# Prevents duplicate processing for long jobs
 # ============================================================
-def start_visibility_heartbeat(receipt_handle: str, stop_event: threading.Event):
+def start_visibility_heartbeat(
+    receipt_handle: str,
+    stop_event: threading.Event
+):
     while not stop_event.is_set():
         try:
             time.sleep(HEARTBEAT_INTERVAL)
+
+            # Stop immediately if worker already finished
+            if stop_event.is_set():
+                break
 
             sqs.change_message_visibility(
                 QueueUrl=QUEUE_URL,
@@ -41,14 +52,38 @@ def start_visibility_heartbeat(receipt_handle: str, stop_event: threading.Event)
             logger.info("🔄 Visibility extended")
 
         except Exception as e:
+            # Message may already be deleted / invalid
             logger.warning(f"Heartbeat failed: {e}")
+
+            # Stop heartbeat if receipt handle is invalid
+            break
+
+
+# ============================================================
+# MESSAGE PARSING
+# Handles:
+# - direct JSON
+# - SNS-wrapped JSON
+# ============================================================
+def parse_message_body(raw_body: str) -> dict:
+    body = json.loads(raw_body)
+
+    # SNS wrapper
+    if isinstance(body, dict) and "Message" in body:
+        body = json.loads(body["Message"])
+
+    # Double-encoded edge case
+    elif isinstance(body, str):
+        body = json.loads(body)
+
+    return body
 
 
 # ============================================================
 # WORKER LOOP
 # ============================================================
 def start_worker():
-    logger.info("Worker started")
+    logger.info("🚀 Worker started")
     logger.info(f"Using queue: {QUEUE_URL}")
 
     while True:
@@ -59,7 +94,7 @@ def start_worker():
                 QueueUrl=QUEUE_URL,
                 MaxNumberOfMessages=1,
                 WaitTimeSeconds=20,
-                VisibilityTimeout=VISIBILITY_TIMEOUT  # ✅ FIX
+                VisibilityTimeout=VISIBILITY_TIMEOUT,
             )
 
             messages = response.get("Messages", [])
@@ -70,49 +105,96 @@ def start_worker():
             message = messages[0]
             receipt_handle = message["ReceiptHandle"]
 
-            body = json.loads(message["Body"])
-
-            # 🔥 SNS unwrap support
-            if isinstance(body, str):
-                body = json.loads(body)
-
-            project_id = body.get("project_id")
-
-            if not project_id:
-                logger.warning(f"⚠️ Invalid message: {body}")
-                continue
-
-            logger.info(f"📥 Processing project: {project_id}")
-
-            # ============================================================
-            # START HEARTBEAT THREAD
-            # ============================================================
-            stop_event = threading.Event()
-            heartbeat_thread = threading.Thread(
-                target=start_visibility_heartbeat,
-                args=(receipt_handle, stop_event),
-                daemon=True
-            )
-            heartbeat_thread.start()
-
+            # ====================================================
+            # PARSE MESSAGE
+            # ====================================================
             try:
-                # 🔥 PROCESS JOB
-                process_translation_job(project_id)
+                body = parse_message_body(message["Body"])
 
-                # ✅ SUCCESS → DELETE MESSAGE
+            except Exception:
+                logger.exception("❌ Failed to parse SQS message body")
+
+                # Delete poison message
                 sqs.delete_message(
                     QueueUrl=QUEUE_URL,
                     ReceiptHandle=receipt_handle
                 )
 
-                logger.info(f"✅ Completed project: {project_id}")
+                continue
+
+            project_id = body.get("project_id")
+
+            if not project_id:
+                logger.warning(f"⚠️ Invalid message: {body}")
+
+                # Delete malformed message
+                sqs.delete_message(
+                    QueueUrl=QUEUE_URL,
+                    ReceiptHandle=receipt_handle
+                )
+
+                continue
+
+            logger.info(f"📥 Processing project: {project_id}")
+
+            # ====================================================
+            # START HEARTBEAT
+            # ====================================================
+            stop_event = threading.Event()
+
+            heartbeat_thread = threading.Thread(
+                target=start_visibility_heartbeat,
+                args=(receipt_handle, stop_event),
+                daemon=True
+            )
+
+            heartbeat_thread.start()
+
+            # ====================================================
+            # PROCESS JOB
+            # ====================================================
+            success = False
+
+            try:
+                process_translation_job(project_id)
+                success = True
+
+            except Exception:
+                logger.exception(
+                    f"❌ Worker failed for project: {project_id}"
+                )
 
             finally:
-                # 🔥 STOP HEARTBEAT
+                # Always stop heartbeat
                 stop_event.set()
 
-        except Exception as e:
-            logger.error(f"❌ Worker failed: {str(e)}")
+            # ====================================================
+            # DELETE ONLY ON SUCCESS
+            # ====================================================
+            if success:
+                try:
+                    sqs.delete_message(
+                        QueueUrl=QUEUE_URL,
+                        ReceiptHandle=receipt_handle
+                    )
+
+                    logger.info(
+                        f"✅ Completed project: {project_id}"
+                    )
+
+                except Exception:
+                    logger.exception(
+                        f"❌ Failed deleting SQS message for {project_id}"
+                    )
+
+            else:
+                # Leave message for retry / watchdog
+                logger.warning(
+                    f"⚠️ Job failed, message retained for retry: {project_id}"
+                )
+
+        except Exception:
+            logger.exception("❌ Worker loop failed")
 
         time.sleep(1)
 

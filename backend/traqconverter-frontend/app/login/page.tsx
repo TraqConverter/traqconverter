@@ -119,11 +119,10 @@ export default function LoginPage() {
             Translate, review and certify documents in one place.
           </h2>
           <p className="text-[15px]" style={{ color: "#4a4638" }}>
-            OCR, translation memory, glossary control and signed delivery — running on the same warm cream you actually want to look at.
+            OCR, translation memory, glossary control and signed delivery.
           </p>
         </div>
         <div className="space-y-3">
-          <Bullet text="64% TM leverage on Acme medical work" />
           <Bullet text="ISO 17100 · SOC 2 · 14-day free revisions" />
           <Bullet text="Tab-to-apply matches, keyboard-first editor" />
         </div>

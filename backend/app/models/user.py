@@ -27,4 +27,17 @@ class User(Base):
     certification_file = Column(String, nullable=True)
 
     # ✅ Bidirectional relationship
-    projects = relationship("TranslationProject", back_populates="user")
+    # Disambiguate which FK on TranslationProject this belongs to —
+    # the table now has both `user_id` (creator) and `assignee_id`.
+    projects = relationship(
+        "TranslationProject",
+        back_populates="user",
+        foreign_keys="TranslationProject.user_id",
+    )
+
+    # Projects this user is currently assigned to work on.
+    assigned_projects = relationship(
+        "TranslationProject",
+        foreign_keys="TranslationProject.assignee_id",
+        viewonly=True,
+    )

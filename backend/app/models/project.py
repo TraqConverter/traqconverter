@@ -24,6 +24,12 @@ class TranslationProject(Base):
     # --------------------------------
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     team_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=False)
+    # Optional: which team member is currently working on this project.
+    assignee_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     # --------------------------------
     # File Info
@@ -84,6 +90,12 @@ class TranslationProject(Base):
     model = Column(String, nullable=False, default="balanced")
 
     # --------------------------------
+    # Review pipeline status (post-translation)
+    # DRAFT → IN_REVIEW → CERTIFIED
+    # --------------------------------
+    review_status = Column(String, nullable=False, default="DRAFT")
+
+    # --------------------------------
     # Certification
     # --------------------------------
     certification_override_text = Column(String, nullable=True)
@@ -96,5 +108,6 @@ class TranslationProject(Base):
     # --------------------------------
     # Relationships
     # --------------------------------
-    user = relationship("User", back_populates="projects")
+    user = relationship("User", foreign_keys=[user_id], back_populates="projects")
     team = relationship("Team")
+    assignee = relationship("User", foreign_keys=[assignee_id])

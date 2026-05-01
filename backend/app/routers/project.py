@@ -16,9 +16,11 @@ from fastapi import (
 )
 
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.dependencies.feature_guard import require_feature
 from app.models.project import TranslationProject, ProjectStatus
 from app.models.user import User
 from app.models.team import Team
@@ -215,58 +217,162 @@ async def upload_project(
 
 @router.get("/")
 def list_projects(
+    assignee: str | None = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
+    """List projects scoped to the user's team.
 
-    projects = (
-        db.query(TranslationProject)
-        .filter(TranslationProject.user_id == current_user.id)
-        .order_by(TranslationProject.created_at.desc())
-        .limit(50)
-        .all()
-    )
+    The current_user can see anything they own OR are assigned to. Optional
+    `assignee` query param filters the result to a specific team member's
+    work, or `me` for the current user's assigned-to-them queue.
+    """
+    from app.models.team_member import TeamMember
+    from app.models.team import Team
+
+    # Resolve the team this user belongs to (owner or member)
+    team = db.query(Team).filter(Team.owner_id == current_user.id).first()
+    if not team:
+        membership = (
+            db.query(TeamMember).filter(TeamMember.user_id == current_user.id).first()
+        )
+        if membership:
+            team = db.query(Team).filter(Team.id == membership.team_id).first()
+
+    base = db.query(TranslationProject).order_by(TranslationProject.created_at.desc())
+    if team:
+        base = base.filter(TranslationProject.team_id == team.id)
+    else:
+        base = base.filter(TranslationProject.user_id == current_user.id)
+
+    if assignee == "me":
+        base = base.filter(TranslationProject.assignee_id == current_user.id)
+    elif assignee == "unassigned":
+        base = base.filter(TranslationProject.assignee_id.is_(None))
+    elif assignee:
+        base = base.filter(TranslationProject.assignee_id == assignee)
+
+    projects = base.limit(50).all()
+
+    # Pre-fetch assignee user rows so we can render names/emails without N+1
+    assignee_ids = {p.assignee_id for p in projects if p.assignee_id}
+    assignees = {}
+    if assignee_ids:
+        for u in db.query(User).filter(User.id.in_(assignee_ids)).all():
+            assignees[str(u.id)] = u
 
     result = []
-
     for p in projects:
-
         progress = 0
-
         if p.total_segments and p.total_segments > 0:
-            progress = int(
-                (p.translated_segments / p.total_segments) * 100
-            )
-
-        # fallback (safety)
+            progress = int((p.translated_segments / p.total_segments) * 100)
         if p.status == ProjectStatus.COMPLETED:
             progress = 100
 
+        a = assignees.get(str(p.assignee_id)) if p.assignee_id else None
+
         result.append({
             "id": str(p.id),
-
             "filename": p.file_name,
-
             "status": p.status,
-
             "progress": progress,
-
             "source_lang": p.source_language,
             "target_lang": p.target_language,
-
             "page_count": p.page_count,
             "credits_used": p.credits_used,
             "created_at": p.created_at,
+            "assignee_id": str(p.assignee_id) if p.assignee_id else None,
+            "assignee": (
+                {
+                    "id": str(a.id),
+                    "email": a.email,
+                    "full_name": a.full_name,
+                }
+                if a
+                else None
+            ),
         })
 
     return result
 
 
 # ============================================================
+# ASSIGN PROJECT TO A TEAM MEMBER
+# ============================================================
+
+class _AssignPayload(BaseModel):
+    assignee_id: str | None = None
+
+
+@router.patch("/{project_id}/assign")
+def assign_project(
+    project_id: UUID,
+    data: _AssignPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.models.team_member import TeamMember
+    from app.models.team import Team
+
+    project = (
+        db.query(TranslationProject)
+        .filter(TranslationProject.id == project_id)
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Caller must own the team or be a member of it
+    team = db.query(Team).filter(Team.id == project.team_id).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    is_owner = team.owner_id == current_user.id
+    is_member = (
+        db.query(TeamMember)
+        .filter(TeamMember.team_id == team.id, TeamMember.user_id == current_user.id)
+        .first()
+        is not None
+    )
+    if not (is_owner or is_member):
+        raise HTTPException(status_code=403, detail="You can't assign this project")
+
+    if data.assignee_id is None:
+        project.assignee_id = None
+    else:
+        # Verify the assignee is on the same team
+        target = db.query(User).filter(User.id == data.assignee_id).first()
+        if not target:
+            raise HTTPException(status_code=404, detail="Assignee not found")
+
+        on_team = (
+            target.id == team.owner_id
+            or db.query(TeamMember)
+            .filter(
+                TeamMember.team_id == team.id, TeamMember.user_id == target.id
+            )
+            .first()
+            is not None
+        )
+        if not on_team:
+            raise HTTPException(
+                status_code=400, detail="That user isn't on this team"
+            )
+        project.assignee_id = target.id
+
+    db.commit()
+    db.refresh(project)
+    return {
+        "project_id": str(project.id),
+        "assignee_id": str(project.assignee_id) if project.assignee_id else None,
+    }
+
+
+# ============================================================
 # GET PROJECT STATUS
 # ============================================================
 
-@router.get("/{project_id}", response_model=ProjectStatusResponse)
+@router.get("/{project_id}")
 def get_project_status(
     project_id: UUID,
     db: Session = Depends(get_db),
@@ -286,21 +392,87 @@ def get_project_status(
         raise HTTPException(status_code=404, detail="Project not found")
 
     progress = 0
-
     if project.total_segments and project.total_segments > 0:
         progress = int(
             (project.translated_segments / project.total_segments) * 100
         )
 
+    # Real per-segment counts so the editor toolbar doesn't show fake stats.
+    total = (
+        db.query(TranslationSegment)
+        .filter(TranslationSegment.project_id == project.id)
+        .count()
+    )
+    translated = (
+        db.query(TranslationSegment)
+        .filter(
+            TranslationSegment.project_id == project.id,
+            TranslationSegment.translated_text.isnot(None),
+            TranslationSegment.translated_text != "",
+        )
+        .count()
+    )
+    approved = (
+        db.query(TranslationSegment)
+        .filter(
+            TranslationSegment.project_id == project.id,
+            TranslationSegment.approved.is_(True),
+        )
+        .count()
+    )
+
+    # Average TM match across segments that had a hit.
+    tm_hits = (
+        db.query(TranslationSegment.tm_pct)
+        .filter(
+            TranslationSegment.project_id == project.id,
+            TranslationSegment.tm_pct.isnot(None),
+        )
+        .all()
+    )
+    tm_avg = (
+        round(sum(int(r[0]) for r in tm_hits) / len(tm_hits)) if tm_hits else 0
+    )
+
+    # Resolve assignee user once for the avatar circle.
+    assignee_payload = None
+    if project.assignee_id:
+        a = db.query(User).filter(User.id == project.assignee_id).first()
+        if a:
+            assignee_payload = {
+                "id": str(a.id),
+                "email": a.email,
+                "full_name": a.full_name,
+            }
+
+    # Resolve owner / uploader so the editor can show their initials too.
+    uploader_payload = None
+    owner = db.query(User).filter(User.id == project.user_id).first()
+    if owner:
+        uploader_payload = {
+            "id": str(owner.id),
+            "email": owner.email,
+            "full_name": owner.full_name,
+        }
+
     return {
         "id": str(project.id),
         "status": project.status,
-        "progress_percent": progress,        # ✅ FIXED
-        "retry_count": project.retry_count,  # ✅ REQUIRED
-        "created_at": project.created_at,    # ✅ REQUIRED
+        "review_status": project.review_status or "DRAFT",
+        "progress_percent": progress,
+        "retry_count": project.retry_count,
+        "created_at": project.created_at,
         "file_name": project.file_name,
         "source_language": project.source_language,
         "target_language": project.target_language,
+        "stats": {
+            "total_segments": total,
+            "translated_segments": translated,
+            "approved_segments": approved,
+            "tm_average_pct": tm_avg,
+        },
+        "assignee": assignee_payload,
+        "uploader": uploader_payload,
     }
 
 # ============================================================
@@ -334,28 +506,35 @@ def get_project_segments(
         .all()
     )
 
-    # ✅ FIX: return correct field names
     return [
         {
             "id": str(s.id),
             "segment_index": s.segment_index,
             "source_text": s.source_text,
-            "translated_text": s.translated_text or ""
+            "translated_text": s.translated_text or "",
+            "approved": bool(s.approved),
+            "tm_pct": s.tm_pct,
         }
         for s in segments
     ]
 
+
 # ============================================================
-# EXPORT PROJECT (DOCX)
+# TOGGLE SEGMENT APPROVAL (used by editor's green-tick action)
 # ============================================================
 
-@router.get("/{project_id}/export")
-def export_project(
+class _ApprovePayload(BaseModel):
+    approved: bool
+
+
+@router.patch("/{project_id}/segments/{segment_id}/approve")
+def approve_segment(
     project_id: UUID,
+    segment_id: UUID,
+    data: _ApprovePayload,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # 🔒 Ensure project belongs to user
     project = (
         db.query(TranslationProject)
         .filter(
@@ -364,37 +543,154 @@ def export_project(
         )
         .first()
     )
-
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # 📄 Get segments
+    seg = (
+        db.query(TranslationSegment)
+        .filter(
+            TranslationSegment.id == segment_id,
+            TranslationSegment.project_id == project_id,
+        )
+        .first()
+    )
+    if not seg:
+        raise HTTPException(status_code=404, detail="Segment not found")
+
+    seg.approved = bool(data.approved)
+    db.commit()
+    db.refresh(seg)
+    return {"id": str(seg.id), "approved": seg.approved}
+
+
+# ============================================================
+# UPDATE PROJECT REVIEW STATUS (DRAFT / IN_REVIEW / CERTIFIED)
+# ============================================================
+
+class _ReviewStatusPayload(BaseModel):
+    status: str
+
+
+@router.patch("/{project_id}/review-status")
+def update_review_status(
+    project_id: UUID,
+    data: _ReviewStatusPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    allowed = {"DRAFT", "IN_REVIEW", "CERTIFIED"}
+    new_status = (data.status or "").strip().upper()
+    if new_status not in allowed:
+        raise HTTPException(status_code=400, detail="Invalid review status")
+
+    project = (
+        db.query(TranslationProject)
+        .filter(
+            TranslationProject.id == project_id,
+            TranslationProject.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project.review_status = new_status
+    db.commit()
+    db.refresh(project)
+    return {"id": str(project.id), "review_status": project.review_status}
+
+
+# ============================================================
+# CERTIFY & DELIVER — flips review_status to CERTIFIED. Pro only.
+# ============================================================
+
+@router.post(
+    "/{project_id}/certify",
+    dependencies=[Depends(require_feature("certifications"))],
+)
+def certify_project(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = (
+        db.query(TranslationProject)
+        .filter(
+            TranslationProject.id == project_id,
+            TranslationProject.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if project.status != ProjectStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400,
+            detail="The translation must finish before it can be certified.",
+        )
+
+    project.review_status = "CERTIFIED"
+    db.commit()
+    db.refresh(project)
+    return {
+        "id": str(project.id),
+        "review_status": project.review_status,
+        "certified_at": project.created_at.isoformat()
+        if project.created_at
+        else None,
+    }
+
+
+# ============================================================
+# EXPORT PROJECT (DOCX) — gated on download_translation feature
+# ============================================================
+
+@router.get(
+    "/{project_id}/export",
+    dependencies=[Depends(require_feature("download_translation"))],
+)
+def export_project(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = (
+        db.query(TranslationProject)
+        .filter(
+            TranslationProject.id == project_id,
+            TranslationProject.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
     segments = (
         db.query(TranslationSegment)
         .filter(TranslationSegment.project_id == project_id)
         .order_by(TranslationSegment.segment_index)
         .all()
     )
-
     if not segments:
         raise HTTPException(status_code=404, detail="No segments found")
 
-    # 📄 Generate DOCX
     file_buffer = generate_docx(segments)
-
     return StreamingResponse(
         file_buffer,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={
-            "Content-Disposition": "attachment; filename=translation.docx"
-        }
+        headers={"Content-Disposition": "attachment; filename=translation.docx"},
     )
 
+
 # ============================================================
-# EXPORT PROJECT (PDF)
+# EXPORT PROJECT (PDF) — gated on download_translation feature
 # ============================================================
 
-@router.get("/{project_id}/export/pdf")
+@router.get(
+    "/{project_id}/export/pdf",
+    dependencies=[Depends(require_feature("download_translation"))],
+)
 def export_project_pdf(
     project_id: UUID,
     db: Session = Depends(get_db),
@@ -408,7 +704,6 @@ def export_project_pdf(
         )
         .first()
     )
-
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
@@ -418,31 +713,30 @@ def export_project_pdf(
         .order_by(TranslationSegment.segment_index)
         .all()
     )
-
     if not segments:
         raise HTTPException(status_code=404, detail="No segments found")
 
     file_buffer = generate_pdf(segments)
-
     return StreamingResponse(
         file_buffer,
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": "attachment; filename=translation.pdf"
-        }
+        headers={"Content-Disposition": "attachment; filename=translation.pdf"},
     )
 
+
 # ============================================================
-# DOWNLOAD PROJECT RESULT
+# DOWNLOAD PROJECT RESULT — gated on download_translation feature
 # ============================================================
 
-@router.get("/{project_id}/download")
+@router.get(
+    "/{project_id}/download",
+    dependencies=[Depends(require_feature("download_translation"))],
+)
 def download_project(
     project_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-
     project = (
         db.query(TranslationProject)
         .filter(
@@ -451,27 +745,19 @@ def download_project(
         )
         .first()
     )
-
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
     if project.status != ProjectStatus.COMPLETED:
         raise HTTPException(
-            status_code=400,
-            detail="Project processing not completed yet"
+            status_code=400, detail="Project processing not completed yet"
         )
 
     if not project.output_file:
-        raise HTTPException(
-            status_code=404,
-            detail="Output file not available"
-        )
+        raise HTTPException(status_code=404, detail="Output file not available")
 
     download_url = generate_presigned_download_url(project.output_file)
-
-    return {
-        "download_url": download_url
-    }
+    return {"download_url": download_url}
 
 
 # ============================================================
@@ -484,7 +770,6 @@ def delete_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-
     project = (
         db.query(TranslationProject)
         .filter(
@@ -493,13 +778,10 @@ def delete_project(
         )
         .first()
     )
-
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
     db.delete(project)
     db.commit()
-
-    logger.info(f"Project {project_id} deleted")
 
     return {"message": "Project deleted successfully"}
