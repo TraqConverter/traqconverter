@@ -1,9 +1,11 @@
 from openai import OpenAI
+from sqlalchemy import update
 from app.config import settings
 import re
 
 from app.services.translation_memory_service import get_tm_entries
 from app.services.glossary_service import build_glossary_prompt, get_glossary
+from app.models.glossary import Glossary
 
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
@@ -12,11 +14,64 @@ BATCH_SIZE = 20
 
 # ============================================================
 # GLOSSARY PRE-REPLACEMENT (HARD ENFORCEMENT)
+# Counts matches per glossary entry id and returns the updated text
+# alongside a {entry_id: matches_in_this_text} dict.
 # ============================================================
 def apply_glossary_pre_replace(text, glossary_map):
+    """Backwards-compatible string-only replacement.
+
+    glossary_map is a {source_term: target_term} dict. Returns the rewritten
+    text. Used by call sites that don't track usage counts.
+    """
     for src, tgt in glossary_map.items():
         text = re.sub(rf"\b{re.escape(src)}\b", tgt, text)
     return text
+
+
+def apply_glossary_with_counts(text: str, glossary_entries):
+    """Run glossary substitution and return (text, {term_id: match_count}).
+
+    glossary_entries is a list of Glossary ORM objects. Replacement is the
+    same word-boundary regex as apply_glossary_pre_replace; the only addition
+    is counting how many substitutions happened per entry id.
+    """
+    counts: dict[str, int] = {}
+    for g in glossary_entries:
+        if not g.source_term or not g.target_term:
+            continue
+        text, n = re.subn(
+            rf"\b{re.escape(g.source_term)}\b",
+            g.target_term,
+            text,
+        )
+        if n > 0:
+            counts[str(g.id)] = counts.get(str(g.id), 0) + n
+    return text, counts
+
+
+def flush_glossary_usage(db, counts: dict[str, int]) -> None:
+    """Increment usage_count on each glossary row by the number of matches.
+
+    Called once per batch so we don't issue a query per replacement. Errors
+    are swallowed because counter drift is preferable to a translation
+    failure rolling back over a metric write.
+    """
+    if not counts or db is None:
+        return
+    try:
+        for term_id, n in counts.items():
+            db.execute(
+                update(Glossary)
+                .where(Glossary.id == term_id)
+                .values(usage_count=Glossary.usage_count + n)
+            )
+        db.commit()
+    except Exception as e:
+        print("GLOSSARY USAGE WRITE ERROR:", e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 
 # ============================================================
@@ -66,7 +121,9 @@ def translate_text(
                 for g in glossary_entries
             }
 
-            text = apply_glossary_pre_replace(text, glossary_map)
+            # Replace + count matches so usage_count auto-updates.
+            text, usage_counts = apply_glossary_with_counts(text, glossary_entries)
+            flush_glossary_usage(db, usage_counts)
 
         except Exception as e:
             print("GLOSSARY ERROR:", e)
@@ -173,13 +230,21 @@ def translate_batch(
             print("GLOSSARY ERROR:", e)
 
     # ========================================================
-    # APPLY GLOSSARY BEFORE AI
+    # APPLY GLOSSARY BEFORE AI (and roll up usage counts)
     # ========================================================
     if glossary_map:
-        texts = [
-            apply_glossary_pre_replace(t, glossary_map)
-            for t in texts
-        ]
+        # Use the counting variant so we can credit the underlying glossary
+        # rows. Sum counts across the whole batch and write once at the end.
+        glossary_entries = locals().get("glossary_entries", [])
+        batch_counts: dict[str, int] = {}
+        rewritten: list[str] = []
+        for t in texts:
+            new_t, counts = apply_glossary_with_counts(t, glossary_entries)
+            rewritten.append(new_t)
+            for k, v in counts.items():
+                batch_counts[k] = batch_counts.get(k, 0) + v
+        texts = rewritten
+        flush_glossary_usage(db, batch_counts)
 
     # ========================================================
     # PROMPT

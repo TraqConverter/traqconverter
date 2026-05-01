@@ -122,22 +122,13 @@ function IconDots() {
   )
 }
 
-// Placeholder mock rows used when API has no data yet — keeps the
-// screen looking alive when the backend has zero projects.
-const MOCK_PROJECTS: Project[] = [
-  { id: "m1", name: "Acme Pharma — Patient Consent Pack", domain: "Medical · Certified", words: 4820, source_language: "en-GB", target_language: "it-IT", status: "IN_REVIEW", progress_percent: 76, team: ["NI", "DC", "MR"], due: "Due Fri" },
-  { id: "m2", name: "Lumen Bank — Credit Agreement", domain: "Legal · Sworn", words: 12400, source_language: "it-IT", target_language: "en-US", status: "TRANSLATING", progress_percent: 42, team: ["DC", "SB"], due: "Due 24 Apr" },
-  { id: "m3", name: "Kōso App — iOS Localisation Strings", domain: "Software · TM-heavy", words: 3210, source_language: "en-GB", target_language: "ja-JP", status: "TRANSLATING", progress_percent: 28, team: ["KT", "NL"], due: "Due 28 Apr" },
-  { id: "m4", name: "Firenze Tourism Board — Brochure", domain: "Marketing · Transcreation", words: 2100, source_language: "it-IT", target_language: "fr-FR", status: "DRAFT", progress_percent: 12, team: ["PM"], due: "Due 2 May" },
-  { id: "m5", name: "Nordic Health — Device Instructions", domain: "Medical · Certified", words: 5600, source_language: "sv-SE", target_language: "en-GB", status: "CERTIFIED", progress_percent: 100, team: ["OL", "NI", "DC"], due: "Delivered" },
-]
-
 export default function DashboardPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [projects, setProjects] = useState<Project[]>([])
   const [tab, setTab] = useState<Tab>("all")
-  const [name, setName] = useState<string>("Niki")
+  const [name, setName] = useState<string>("")
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     fetchData()
@@ -145,37 +136,73 @@ export default function DashboardPage() {
 
   const fetchData = async () => {
     try {
+      setError(null)
       const res = await api.get("/projects/")
-      const data = (res.data || []) as Project[]
-      setProjects(data.length > 0 ? data : MOCK_PROJECTS)
-    } catch (err) {
-      console.error(err)
-      setProjects(MOCK_PROJECTS)
+      setProjects((res.data || []) as Project[])
+    } catch (err: any) {
+      console.error("DASHBOARD ERROR:", err)
+      setError(
+        err?.response?.data?.detail ||
+          "Couldn't load your projects — try refreshing in a moment."
+      )
+      setProjects([])
     } finally {
       setLoading(false)
     }
   }
 
-  // KPIs
+  // KPIs — computed from the real /projects/ payload
   const kpis = useMemo(() => {
-    const active = projects.filter((p) => {
+    const isActive = (p: Project) => {
       const s = (p.status || "").toUpperCase()
       return s !== "COMPLETED" && s !== "CERTIFIED" && s !== "FAILED"
+    }
+
+    const active = projects.filter(isActive).length
+
+    const activePagesArray = projects
+      .filter(isActive)
+      .map((p: any) => p.page_count || 0)
+
+    const pagesInFlight = activePagesArray.reduce(
+      (sum: number, n: number) => sum + n,
+      0
+    )
+
+    const activePagesCount = activePagesArray.filter((n: number) => n > 0).length
+
+    const delivered = projects.filter((p) => {
+      const s = (p.status || "").toUpperCase()
+      return s === "COMPLETED" || s === "CERTIFIED"
     }).length
 
-    const wordsInFlight = projects
-      .filter((p) => (p.status || "").toUpperCase() !== "COMPLETED")
-      .reduce((sum, p) => sum + (p.words || p.word_count || 0), 0)
+    const creditsUsed = projects.reduce(
+      (sum, p: any) => sum + (p.credits_used || 0),
+      0
+    )
+
+    const pairs = new Set<string>()
+    for (const p of projects) {
+      const src = p.source_language || (p as any).source_lang
+      const tgt = p.target_language || (p as any).target_lang
+      if (src && tgt) pairs.add(`${src}→${tgt}`)
+    }
 
     return {
       active,
-      wordsInFlight,
+      pagesInFlight,
+      activePagesCount,
+      delivered,
+      creditsUsed,
+      languagePairs: pairs.size,
     }
   }, [projects])
 
   const filtered = useMemo(() => {
     if (tab === "assigned") {
-      return projects.filter((p) => (p.team || []).includes("NL"))
+      // Real assignment data isn't returned by GET /projects/ yet,
+      // so the "Assigned to me" tab simply shows everything for now.
+      return projects
     }
     if (tab === "review") {
       return projects.filter(
@@ -185,11 +212,24 @@ export default function DashboardPage() {
     return projects
   }, [projects, tab])
 
-  // Try to read name from token-backed profile — fallback to "Niki"
+  // Pull the real user name from /auth/me so the greeting isn't hardcoded.
   useEffect(() => {
-    const stored =
-      typeof window !== "undefined" ? localStorage.getItem("userName") : null
-    if (stored) setName(stored)
+    let cancelled = false
+    api
+      .get("/auth/me")
+      .then((res) => {
+        if (cancelled) return
+        const fullName: string | null = res.data?.full_name
+        const email: string | null = res.data?.email
+        if (fullName && fullName.trim()) setName(fullName.split(" ")[0])
+        else if (email) setName(email.split("@")[0])
+      })
+      .catch(() => {
+        /* silent — header just shows "Welcome back" without a name */
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   return (
@@ -205,35 +245,56 @@ export default function DashboardPage() {
           className="text-[34px] font-semibold tracking-tight"
           style={{ color: "#1f2a2e" }}
         >
-          Welcome back, {name}
+          {name ? `Welcome back, ${name}` : "Welcome back"}
         </h1>
       </div>
 
-      {/* KPI CARDS */}
+      {error && (
+        <div
+          className="text-sm rounded-lg px-3 py-2 mb-6"
+          style={{ background: "#f2d4cf", color: "#7a2f24" }}
+        >
+          {error}
+        </div>
+      )}
+
+      {/* KPI CARDS — computed from real /projects/ data */}
       <div className="grid grid-cols-4 gap-5 mb-10">
         <KpiCard
           label="ACTIVE PROJECTS"
-          value={String(kpis.active || 12)}
-          pill={{ text: "+2 this week", color: "#0a7870", bg: "#e1efec" }}
-          footer={`Across ${Math.max(3, Math.min(7, kpis.active || 7))} language pairs`}
-        />
-        <KpiCard
-          label="WORDS IN FLIGHT"
-          value={formatK(kpis.wordsInFlight || 38400)}
-          pill={{ text: "On pace", color: "#0a7870", bg: "#e1efec" }}
-          footer="2 due this week"
-        />
-        <KpiCard
-          label="TM LEVERAGE"
-          value="64%"
-          pill={{ text: "+6%", color: "#b06a2a", bg: "#f6e3c8" }}
-          footer="Saving ~4,200 words / mo"
-        />
-        <KpiCard
-          label="AVG. DELIVERY"
-          value="2.1d"
+          value={String(kpis.active)}
           pill={null}
-          footer="vs. 2.4d last quarter"
+          footer={
+            kpis.languagePairs > 0
+              ? `Across ${kpis.languagePairs} language pair${kpis.languagePairs === 1 ? "" : "s"}`
+              : "No active projects"
+          }
+        />
+        <KpiCard
+          label="PAGES IN FLIGHT"
+          value={formatK(kpis.pagesInFlight)}
+          pill={null}
+          footer={
+            kpis.pagesInFlight > 0
+              ? `${kpis.activePagesCount} project${kpis.activePagesCount === 1 ? "" : "s"} still translating`
+              : "Nothing in the queue"
+          }
+        />
+        <KpiCard
+          label="DELIVERED"
+          value={String(kpis.delivered)}
+          pill={null}
+          footer={
+            kpis.delivered > 0
+              ? "Completed translations on file"
+              : "No deliveries yet"
+          }
+        />
+        <KpiCard
+          label="CREDITS USED"
+          value={formatK(kpis.creditsUsed)}
+          pill={null}
+          footer="Across all your projects"
         />
       </div>
 

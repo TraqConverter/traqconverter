@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Text, ForeignKey
+from sqlalchemy import Column, String, Text, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.database import Base
@@ -17,3 +17,9 @@ class Glossary(Base):
 
     source_term = Column(Text, nullable=False)
     target_term = Column(Text, nullable=False)
+
+    # Free-form note about when/how to use the term.
+    notes = Column(Text, nullable=True)
+
+    # Auto-incremented every time the term is applied in a translation.
+    usage_count = Column(Integer, nullable=False, default=0)

@@ -478,7 +478,7 @@ export default function NewProjectPage() {
             <OptionRow
               icon={<IconDB />}
               title="Use Translation Memory"
-              subtitle="Acme Pharma — Medical (EN↔IT)"
+              subtitle="Reuse approved segments from your past projects"
               checked={useTM}
               onChange={setUseTM}
             />
@@ -486,7 +486,7 @@ export default function NewProjectPage() {
             <OptionRow
               icon={<IconBook />}
               title="Apply Glossary"
-              subtitle="214 approved terms"
+              subtitle="Enforce your team's approved terminology"
               checked={applyGlossary}
               onChange={setApplyGlossary}
             />

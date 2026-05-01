@@ -68,16 +68,17 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "ASSETS",
     items: [
-      { name: "Translation Memory", path: "/editor", match: "/editor", icon: IconMemory },
+      { name: "Translation Memory", path: "/translation-memory", match: "/translation-memory", icon: IconMemory },
       { name: "Glossary", path: "/settings/glossary", match: "/settings/glossary", icon: IconBook },
-      { name: "Certifications", path: "/billing", match: "/billing", icon: IconShield },
+      { name: "Certifications", path: "/certifications", match: "/certifications", icon: IconShield },
     ],
   },
   {
-    label: "TEAM",
+    label: "ACCOUNT",
     items: [
+      { name: "Billing", path: "/billing", match: "/billing", icon: IconCard },
       { name: "Members", path: "/settings", match: "/settings", icon: IconUsers },
-      { name: "Settings", path: "/settings?tab=general", match: "/settings?tab=general", icon: IconSettings },
+      { name: "Settings", path: "/settings/account", match: "/settings/account", icon: IconSettings },
     ],
   },
 ]
@@ -88,6 +89,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   const [loading, setLoading] = useState(true)
   const [credits, setCredits] = useState<number | null>(null)
+  const [wallet, setWallet] = useState<{
+    tier: string
+    trial_days_left: number | null
+    plan_type: string
+    subscription_credits: number
+    purchased_credits: number
+  } | null>(null)
+  const [user, setUser] = useState<{
+    full_name: string | null
+    email: string
+  } | null>(null)
 
   useEffect(() => {
     const token = getToken()
@@ -116,6 +128,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
     if (!token || isAuthPage) {
       setCredits(0)
+      setWallet(null)
+      setUser(null)
       return
     }
 
@@ -123,13 +137,34 @@ export default function AppShell({ children }: { children: ReactNode }) {
       try {
         const res = await api.get("/billing/wallet")
         setCredits(res.data.total_credits)
+        setWallet({
+          tier: (res.data.tier || "").toUpperCase(),
+          trial_days_left: res.data.trial_days_left ?? null,
+          plan_type: res.data.plan_type || "",
+          subscription_credits: res.data.subscription_credits || 0,
+          purchased_credits: res.data.purchased_credits || 0,
+        })
       } catch {
         // Silently fall back — auth-related errors are handled by the interceptor
         setCredits(0)
+        setWallet(null)
+      }
+    }
+
+    const fetchUser = async () => {
+      try {
+        const res = await api.get("/auth/me")
+        setUser({
+          full_name: res.data?.full_name || null,
+          email: res.data?.email || "",
+        })
+      } catch {
+        setUser(null)
       }
     }
 
     fetchCredits()
+    fetchUser()
   }, [pathname])
 
   if (loading) {
@@ -154,9 +189,57 @@ export default function AppShell({ children }: { children: ReactNode }) {
     router.replace("/login")
   }
 
-  const creditsUsed = credits !== null ? Math.max(0, 25000 - credits) : 8420
-  const creditsTotal = 25000
-  const pct = Math.min(100, Math.round((creditsUsed / creditsTotal) * 100))
+  // Sidebar usage card is driven by the real wallet tier returned by
+  // /billing/wallet. Pro = 29 credits, Basic = 19, Trial = 1, plus any
+  // top-ups the user has purchased.
+  const tier = wallet?.tier || ""
+  const planLabel =
+    tier === "PRO"
+      ? "Pro plan"
+      : tier === "BASIC"
+      ? "Basic plan"
+      : tier === "TRIAL"
+      ? "Free trial"
+      : tier === "EXPIRED"
+      ? "Trial ended"
+      : "—"
+
+  const subscriptionAllowance =
+    tier === "PRO" ? 29 : tier === "BASIC" ? 19 : tier === "TRIAL" ? 1 : 0
+  const purchased = wallet?.purchased_credits || 0
+  const remaining = credits ?? 0
+  const creditsTotal = subscriptionAllowance + purchased
+  const creditsUsed = Math.max(0, creditsTotal - remaining)
+  const pct =
+    credits === null || creditsTotal === 0
+      ? 0
+      : Math.min(100, Math.round((creditsUsed / creditsTotal) * 100))
+
+  const planSubtitle = (() => {
+    if (tier === "TRIAL") {
+      const d = wallet?.trial_days_left
+      if (d != null && d > 0)
+        return `${d} day${d === 1 ? "" : "s"} left · ${remaining} credit${
+          remaining === 1 ? "" : "s"
+        }`
+      return "Trial ending today"
+    }
+    if (tier === "EXPIRED") return "Subscribe to continue"
+    if (creditsTotal === 0) return "No credits yet"
+    return `${creditsUsed.toLocaleString()} / ${creditsTotal.toLocaleString()} credits used`
+  })()
+
+  const displayName = user?.full_name?.trim() || user?.email?.split("@")[0] || ""
+  const initials = (() => {
+    const name = user?.full_name?.trim()
+    if (name) {
+      const parts = name.split(/\s+/).filter(Boolean)
+      if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
+      return parts[0].slice(0, 2).toUpperCase()
+    }
+    if (user?.email) return user.email.slice(0, 2).toUpperCase()
+    return "—"
+  })()
 
   return (
     <div className="flex h-screen" style={{ background: "#faf5ee", color: "#1f2a2e" }}>
@@ -250,39 +333,62 @@ export default function AppShell({ children }: { children: ReactNode }) {
           ))}
         </div>
 
-        {/* PRO PLAN CARD */}
+        {/* PLAN CARD — dynamic from wallet.tier */}
         <div className="px-5 pb-5">
           <div
             className="rounded-xl p-4"
-            style={{
-              background: "#ffffff",
-              border: "1px solid #e7ddc5",
-            }}
+            style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
           >
             <div className="flex items-center gap-2 mb-2">
               <div
                 className="w-4 h-4 rounded-full"
                 style={{
                   background:
-                    "conic-gradient(#0a7870 0 65%, #e7ddc5 0 100%)",
+                    tier === "EXPIRED"
+                      ? "#cfc6ad"
+                      : `conic-gradient(${
+                          tier === "PRO"
+                            ? "#0a7870"
+                            : tier === "BASIC"
+                            ? "#0a7870"
+                            : "#c88a1a"
+                        } 0 ${100 - pct}%, #e7ddc5 0 100%)`,
                 }}
               />
-              <span className="font-semibold text-sm" style={{ color: "#1f2a2e" }}>
-                Pro plan
+              <span
+                className="font-semibold text-sm"
+                style={{ color: "#1f2a2e" }}
+              >
+                {planLabel}
               </span>
             </div>
             <div className="text-xs mb-2" style={{ color: "#6b6558" }}>
-              {creditsUsed.toLocaleString()} / {creditsTotal.toLocaleString()} words used this month
+              {planSubtitle}
             </div>
-            <div
-              className="h-1.5 rounded-full overflow-hidden"
-              style={{ background: "#f3ecdb" }}
-            >
+            {creditsTotal > 0 && (
               <div
-                className="h-full rounded-full"
-                style={{ width: `${pct}%`, background: "#d98b5f" }}
-              />
-            </div>
+                className="h-1.5 rounded-full overflow-hidden"
+                style={{ background: "#f3ecdb" }}
+              >
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${pct}%`,
+                    background:
+                      tier === "TRIAL" ? "#c88a1a" : "#d98b5f",
+                  }}
+                />
+              </div>
+            )}
+            {(tier === "TRIAL" || tier === "EXPIRED") && (
+              <button
+                onClick={() => router.push("/billing")}
+                className="mt-3 w-full text-[12px] font-semibold py-1.5 rounded-full transition"
+                style={{ background: "#0a7870", color: "#fff" }}
+              >
+                Upgrade to Pro
+              </button>
+            )}
             <button
               onClick={handleLogout}
               className="mt-3 text-[11px] hover:underline"
@@ -296,22 +402,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
       {/* ==================== MAIN ==================== */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* TOP HEADER */}
         <header
           className="px-8 pt-6 pb-4 flex items-center justify-between"
           style={{ background: "#faf5ee" }}
         >
-          {/* BREADCRUMB + WELCOME handled per-page; header shows search + avatar */}
           <div className="flex-1" />
 
           <div className="flex items-center gap-4">
-            {/* SEARCH */}
             <div
               className="flex items-center gap-2 px-4 py-2 rounded-full w-80"
-              style={{
-                background: "#ffffff",
-                border: "1px solid #e7ddc5",
-              }}
+              style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
             >
               <span style={{ color: "#9a9178" }}>{IconSearch}</span>
               <input
@@ -321,7 +421,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
               />
             </div>
 
-            {/* BELL */}
             <button
               className="w-10 h-10 rounded-full flex items-center justify-center transition"
               style={{
@@ -334,22 +433,26 @@ export default function AppShell({ children }: { children: ReactNode }) {
               {IconBell}
             </button>
 
-            {/* AVATAR */}
             <div className="flex items-center gap-2">
               <div
                 className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold"
                 style={{ background: "#cfe6e2", color: "#0a7870" }}
+                title={user?.email || ""}
               >
-                NL
+                {initials}
               </div>
-              <div className="text-sm font-medium" style={{ color: "#1f2a2e" }}>
-                Niki
-              </div>
+              {displayName && (
+                <div
+                  className="text-sm font-medium"
+                  style={{ color: "#1f2a2e" }}
+                >
+                  {displayName}
+                </div>
+              )}
             </div>
           </div>
         </header>
 
-        {/* PAGE CONTENT */}
         <main className="flex-1 overflow-y-auto px-8 pb-10">
           {children}
         </main>

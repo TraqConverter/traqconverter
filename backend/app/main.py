@@ -70,7 +70,10 @@ from app.routers import billing
 from app.routers import segments
 from app.routers import segment_comments
 from app.routers import export
-from app.routers import glossary  
+from app.routers import glossary
+from app.routers import translation_memory
+from app.routers import members
+from app.routers import certifications
 from app.routers import ws
 
 
@@ -86,7 +89,10 @@ app.include_router(billing.router)
 app.include_router(segments.router)
 app.include_router(segment_comments.router)
 app.include_router(export.router)
-app.include_router(glossary.router)   
+app.include_router(glossary.router)
+app.include_router(translation_memory.router)
+app.include_router(members.router)
+app.include_router(certifications.router)
 app.include_router(ws.router)
 
 logger.info("All routers registered successfully")

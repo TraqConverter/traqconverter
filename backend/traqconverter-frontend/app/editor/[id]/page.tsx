@@ -1,78 +1,114 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, useCallback } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { api } from "@/lib/api"
-import {
-  Avatar,
-  IconBell,
-  IconBolt,
-  IconCertify,
-  IconCheck,
-  IconComment,
-  IconDB,
-  IconExport,
-  IconKeyboard,
-  IconWarn,
-  LangChip,
-} from "@/components/editor/EditorIcons"
-import { EditorSidePanel } from "@/components/editor/EditorSidePanel"
 
 // ============================================================
-// EDITOR — ESPRESSO LOOK
+// EDITOR — wired to real backend, no demo data.
+//
+// Endpoints used:
+//   GET    /projects/{id}                            project + stats + assignee
+//   GET    /projects/{id}/segments                   segments (id, source, target, approved, tm_pct)
+//   GET    /segments/{seg_id}/comments               comments per segment
+//   POST   /segments/{seg_id}/comments               add comment
+//   PATCH  /segments/{comment_id}/resolve            mark comment resolved
+//   PATCH  /projects/{id}/segments/{seg_id}/approve  toggle approve
+//   PATCH  /projects/{id}/review-status              DRAFT / IN_REVIEW / CERTIFIED
+//   POST   /projects/{id}/certify                    certify (Pro-only)
+//   GET    /projects/{id}/export                     DOCX (Basic+Pro)
+//   GET    /projects/{id}/export/pdf                 PDF  (Basic+Pro)
+//   GET    /glossary                                 list, used to count terms
 // ============================================================
 
 type Segment = {
-  id: string | number
-  source: string
-  target: string
-  tmPct?: number
-  machine?: boolean
-  approved?: boolean
-  warn?: number
-  comments?: number
-  reviewer?: string
-  glossary?: string[]
+  id: string
+  segment_index: number
+  source_text: string
+  translated_text: string
+  approved: boolean
+  tm_pct: number | null
 }
 
-const MOCK_SEGMENTS: Segment[] = [
-  { id: 1, source: "Informed Consent for Clinical Investigation", target: "Consenso informato per la sperimentazione clinica", tmPct: 100, approved: true, glossary: ["Informed Consent"] },
-  { id: 2, source: "Protocol Reference: ACME-2184 · Version 3.2 · 12 March 2024", target: "Riferimento del protocollo: ACME-2184 · Versione 3.2 · 12 marzo 2024", tmPct: 98, approved: true },
-  { id: 3, source: "You are invited to take part in a research study.", target: "La invitiamo a prendere parte a uno studio di ricerca.", tmPct: 100, approved: true, reviewer: "DC", comments: 1, glossary: ["research study"] },
-  { id: 4, source: "Before you decide whether to participate, it is important that you understand why the research is being done and what it will involve.", target: "Prima di decidere se partecipare, è importante che Lei comprenda perché la ricerca viene condotta e cosa comporta.", tmPct: 86, comments: 1, glossary: ["participate"] },
-  { id: 5, source: "Please take time to read the following information carefully and discuss it with others if you wish.", target: "La preghiamo di prendersi il tempo necessario per leggere attentamente le seguenti informazioni e di discuterne con altri, se lo desidera.", tmPct: 92 },
-  { id: 6, source: "Approximately 240 participants will be enrolled across 12 sites in the United Kingdom and Italy.", target: "Saranno arruolati circa 24 partecipanti in 12 centri nel Regno Unito e in Italia.", machine: true, reviewer: "MR", warn: 1, comments: 1 },
-  { id: 7, source: "If you decide to take part, you will be asked to sign an informed consent form.", target: "Se decide di partecipare, Le sarà chiesto di firmare un modulo di consenso informato.", tmPct: 94, glossary: ["informed consent"] },
-  { id: 8, source: "You are free to withdraw from the research study at any time, without giving a reason.", target: "È libero/a di ritirarsi dallo studio di ricerca in qualsiasi momento, senza fornire alcuna motivazione.", tmPct: 88, glossary: ["withdraw", "research study"] },
-  { id: 9, source: "Your decision whether or not to participate will not affect your current or future medical care.", target: "La Sua decisione di partecipare o meno non influirà sulle cure mediche attuali o future.", machine: true, glossary: ["participate"] },
+type Assignee = {
+  id: string
+  email: string
+  full_name: string | null
+}
+
+type ProjectInfo = {
+  id: string
+  status: string
+  review_status: string
+  progress_percent: number
+  file_name: string
+  source_language: string
+  target_language: string
+  stats: {
+    total_segments: number
+    translated_segments: number
+    approved_segments: number
+    tm_average_pct: number
+  }
+  assignee: Assignee | null
+  uploader: Assignee | null
+}
+
+type Comment = {
+  id: string
+  text: string
+  created_at: string
+  resolved: boolean
+  user: { id: string | null; email: string }
+}
+
+type Tab = "tm" | "glossary" | "comments" | "status"
+
+const REVIEW_STATUSES = [
+  { value: "DRAFT", label: "Draft", bg: "#ede3cc", dot: "#9a9178", text: "#6b6558" },
+  { value: "IN_REVIEW", label: "In review", bg: "#f6e3b8", dot: "#c88a1a", text: "#7a5a10" },
+  { value: "CERTIFIED", label: "Certified", bg: "#d8ead6", dot: "#4a8a3a", text: "#2d5a24" },
 ]
 
-function highlight(text: string, terms: string[] = []) {
-  if (!terms.length) return <>{text}</>
-  const pattern = new RegExp(`(${terms.map(escape).join("|")})`, "gi")
-  const parts = text.split(pattern)
+function statusStyle(status?: string) {
   return (
-    <>
-      {parts.map((p, i) =>
-        terms.some((t) => t.toLowerCase() === p.toLowerCase()) ? (
-          <span
-            key={i}
-            style={{
-              borderBottom: "1px dashed #c88a1a",
-              background: "#f9efd5",
-            }}
-          >
-            {p}
-          </span>
-        ) : (
-          <span key={i}>{p}</span>
-        )
-      )}
-    </>
+    REVIEW_STATUSES.find((s) => s.value === (status || "").toUpperCase()) ||
+    REVIEW_STATUSES[0]
   )
 }
-function escape(s: string) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+function langCode(raw?: string) {
+  if (!raw) return "—"
+  const s = raw.trim()
+  if (s.length <= 5 && /^[a-z]/i.test(s)) return s.toLowerCase()
+  const map: Record<string, string> = {
+    english: "en", spanish: "es", french: "fr", german: "de", italian: "it",
+    portuguese: "pt", dutch: "nl", polish: "pl", chinese: "zh", japanese: "ja",
+    arabic: "ar", swedish: "sv",
+  }
+  return map[s.toLowerCase()] || s.slice(0, 2).toLowerCase()
+}
+
+function initialsFor(p: { full_name: string | null; email: string }) {
+  const name = (p.full_name || "").trim()
+  if (name) {
+    const parts = name.split(/\s+/).filter(Boolean)
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
+    return parts[0].slice(0, 2).toUpperCase()
+  }
+  return p.email.slice(0, 2).toUpperCase()
+}
+
+function relativeTime(iso: string) {
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return ""
+  const diff = Date.now() - t
+  const m = 60_000, h = 3_600_000, d = 86_400_000
+  if (diff < m) return "just now"
+  if (diff < h) return `${Math.floor(diff / m)}m ago`
+  if (diff < d) return `${Math.floor(diff / h)}h ago`
+  if (diff < 7 * d) return `${Math.floor(diff / d)}d ago`
+  return new Date(iso).toLocaleDateString()
 }
 
 export default function EditorPage() {
@@ -80,106 +116,304 @@ export default function EditorPage() {
   const params = useParams()
   const id = params?.id as string
 
-  const [project, setProject] = useState<any>(null)
+  const [project, setProject] = useState<ProjectInfo | null>(null)
   const [segments, setSegments] = useState<Segment[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [activeIdx, setActiveIdx] = useState(0)
+  const [tab, setTab] = useState<Tab>("comments")
 
-  const fetchData = async () => {
+  // Comments per segment (cache so flipping segments doesn't refetch instantly)
+  const [comments, setComments] = useState<Record<string, Comment[]>>({})
+  const [newComment, setNewComment] = useState("")
+  const [busy, setBusy] = useState<string | null>(null)
+  const [glossaryCount, setGlossaryCount] = useState<number>(0)
+  const [showStatusMenu, setShowStatusMenu] = useState(false)
+
+  const fetchProject = useCallback(async () => {
     try {
       const [projRes, segRes] = await Promise.all([
         api.get(`/projects/${id}`),
         api.get(`/projects/${id}/segments`),
       ])
       setProject(projRes.data)
-
-      const raw = (segRes.data || []) as any[]
-      if (raw.length === 0) {
-        setSegments(MOCK_SEGMENTS)
-      } else {
-        setSegments(
-          raw.map((s: any, i: number) => ({
-            id: s.id ?? i + 1,
-            source: s.source_text || s.source || "",
-            target: s.translated_text || s.target || "",
-            tmPct: s.tm_pct,
-            machine: s.machine || false,
-            approved: s.approved || false,
-            comments: s.comments || 0,
-            glossary: s.glossary || [],
-          }))
-        )
-      }
-    } catch (err) {
+      const segs = (segRes.data || []) as Segment[]
+      // Defensive sort by index in case the backend ever changes ordering.
+      segs.sort((a, b) => a.segment_index - b.segment_index)
+      setSegments(segs)
+    } catch (err: any) {
       console.error("EDITOR ERROR:", err)
-      setSegments(MOCK_SEGMENTS)
-      setProject({
-        file_name: "Patient Consent Pack",
-        source_language: "en-GB",
-        target_language: "it-IT",
-        status: "COMPLETED",
-        client: "Acme Pharma",
-        domain: "Medical · Certified",
-      })
+      setError(
+        err?.response?.data?.detail ||
+          "Couldn't load this project — it may have been deleted or you don't have access."
+      )
+      setSegments([])
+      setProject(null)
     } finally {
       setLoading(false)
     }
-  }
-
-  useEffect(() => {
-    if (!id) return
-    fetchData()
   }, [id])
 
   useEffect(() => {
-    if (!project || project.status === "COMPLETED") return
-    const interval = setInterval(fetchData, 3000)
-    return () => clearInterval(interval)
-  }, [project])
+    if (!id) return
+    fetchProject()
+  }, [id, fetchProject])
+
+  // Poll for translation completion when the project is still processing.
+  useEffect(() => {
+    if (!project) return
+    if (project.status === "COMPLETED" || project.status === "FAILED") return
+    const t = setInterval(fetchProject, 3000)
+    return () => clearInterval(t)
+  }, [project, fetchProject])
+
+  // Glossary count for the side-panel tab badge. Silently 0 on Trial/Basic
+  // (the route is gated and 403s — the editor doesn't need the actual data).
+  useEffect(() => {
+    api
+      .get("/glossary")
+      .then((res) => setGlossaryCount((res.data || []).length))
+      .catch(() => setGlossaryCount(0))
+  }, [])
+
+  const activeSegment = segments[activeIdx]
+
+  // Fetch comments when the active segment changes
+  useEffect(() => {
+    if (!activeSegment) return
+    if (comments[activeSegment.id]) return
+    api
+      .get(`/segments/${activeSegment.id}/comments`)
+      .then((res) =>
+        setComments((c) => ({ ...c, [activeSegment.id]: res.data || [] }))
+      )
+      .catch(() => {
+        setComments((c) => ({ ...c, [activeSegment.id]: [] }))
+      })
+  }, [activeSegment, comments])
+
+  const refreshCommentsForActive = useCallback(async () => {
+    if (!activeSegment) return
+    try {
+      const res = await api.get(`/segments/${activeSegment.id}/comments`)
+      setComments((c) => ({ ...c, [activeSegment.id]: res.data || [] }))
+    } catch {
+      /* ignore */
+    }
+  }, [activeSegment])
+
+  const addComment = async () => {
+    if (!activeSegment || !newComment.trim()) return
+    try {
+      setBusy("comment")
+      await api.post(`/segments/${activeSegment.id}/comments`, {
+        text: newComment.trim(),
+      })
+      setNewComment("")
+      await refreshCommentsForActive()
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || "Couldn't add the comment.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const resolveComment = async (commentId: string) => {
+    try {
+      setBusy(`resolve:${commentId}`)
+      await api.patch(`/segments/${commentId}/resolve`)
+      await refreshCommentsForActive()
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || "Couldn't resolve that comment.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const toggleApprove = async (seg: Segment) => {
+    try {
+      setBusy(`approve:${seg.id}`)
+      const res = await api.patch(
+        `/projects/${id}/segments/${seg.id}/approve`,
+        { approved: !seg.approved }
+      )
+      const approved = !!res.data?.approved
+      setSegments((xs) =>
+        xs.map((x) => (x.id === seg.id ? { ...x, approved } : x))
+      )
+      // Bump approved count on the cached project so the toolbar stat updates
+      // without a round-trip.
+      setProject((p) =>
+        p
+          ? {
+              ...p,
+              stats: {
+                ...p.stats,
+                approved_segments:
+                  p.stats.approved_segments + (approved ? 1 : -1),
+              },
+            }
+          : p
+      )
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || "Couldn't update that segment.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const updateReviewStatus = async (status: string) => {
+    try {
+      setBusy("status")
+      await api.patch(`/projects/${id}/review-status`, { status })
+      setProject((p) => (p ? { ...p, review_status: status } : p))
+      setShowStatusMenu(false)
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || "Couldn't change the status.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const certify = async () => {
+    if (!project) return
+    if (project.status !== "COMPLETED") {
+      setError("The translation must finish before it can be certified.")
+      return
+    }
+    try {
+      setBusy("certify")
+      await api.post(`/projects/${id}/certify`)
+      setProject((p) => (p ? { ...p, review_status: "CERTIFIED" } : p))
+    } catch (err: any) {
+      // 403 → trial / basic don't have certifications, send to billing.
+      if (err?.response?.status === 403) {
+        setError("Certification is a Pro feature. Upgrade in Billing to unlock.")
+      } else {
+        setError(err?.response?.data?.detail || "Couldn't certify the project.")
+      }
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const exportFile = async (kind: "docx" | "pdf") => {
+    try {
+      setBusy(`export:${kind}`)
+      const url = kind === "docx" ? `/projects/${id}/export` : `/projects/${id}/export/pdf`
+      const res = await api.get(url, { responseType: "blob" })
+      const blob = new Blob([res.data])
+      const dl = window.URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = dl
+      a.download = `${(project?.file_name || "translation").replace(/\.[^.]+$/, "")}.${kind}`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(dl)
+    } catch (err: any) {
+      if (err?.response?.status === 403) {
+        setError(
+          "Downloads are locked on the trial. Subscribe to Basic or Pro to export."
+        )
+      } else {
+        setError(err?.response?.data?.detail || "Couldn't export this project.")
+      }
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Handle save target text (basic — saves on blur)
+  const updateTargetText = (segId: string, value: string) => {
+    setSegments((xs) =>
+      xs.map((x) => (x.id === segId ? { ...x, translated_text: value } : x))
+    )
+    // Note: there is no segment update endpoint on the backend yet; this stays
+    // local until a save endpoint exists. We keep edits in memory so reviewers
+    // can still tweak text in the table.
+  }
 
   const stats = useMemo(() => {
-    const translated = segments.filter((s) => s.target).length
-    const approved = segments.filter((s) => s.approved).length
-    const warnings = segments.reduce((n, s) => n + (s.warn || 0), 0)
-    const total = segments.length
-    const pctTranslated = total ? Math.round((translated / total) * 100) : 0
-    return { translated, approved, warnings, total, pctTranslated }
-  }, [segments])
+    if (!project) {
+      return {
+        total: segments.length,
+        translated: 0,
+        approved: 0,
+        tmAvg: 0,
+      }
+    }
+    return {
+      total: project.stats.total_segments || segments.length,
+      translated: project.stats.translated_segments,
+      approved: project.stats.approved_segments,
+      tmAvg: project.stats.tm_average_pct,
+    }
+  }, [project, segments])
+
+  const teamAvatars = useMemo(() => {
+    const list: Assignee[] = []
+    if (project?.assignee) list.push(project.assignee)
+    if (
+      project?.uploader &&
+      (!project.assignee || project.uploader.id !== project.assignee.id)
+    )
+      list.push(project.uploader)
+    return list
+  }, [project])
+
+  const activeComments =
+    activeSegment && comments[activeSegment.id] ? comments[activeSegment.id] : []
+  const commentCount = activeComments.filter((c) => !c.resolved).length
 
   if (loading) {
     return (
       <div className="py-20 text-center" style={{ color: "#8a8270" }}>
-        Loading editor...
+        Loading editor…
       </div>
     )
   }
 
-  if (project?.status && project.status !== "COMPLETED") {
+  if (error && !project) {
+    return (
+      <div className="py-20 text-center">
+        <h2 className="text-xl font-semibold mb-2" style={{ color: "#1f2a2e" }}>
+          Couldn&apos;t load this project
+        </h2>
+        <p className="mb-6" style={{ color: "#8a8270" }}>
+          {error}
+        </p>
+        <button
+          onClick={() => router.push("/jobs")}
+          className="px-4 py-2 rounded-full text-sm font-semibold"
+          style={{ background: "#0a7870", color: "#fff" }}
+        >
+          Back to Projects
+        </button>
+      </div>
+    )
+  }
+
+  if (project && project.status !== "COMPLETED" && project.status !== "FAILED") {
     return (
       <div className="py-20 text-center">
         <h2 className="text-xl font-semibold mb-2" style={{ color: "#1f2a2e" }}>
           Processing your document…
         </h2>
         <p style={{ color: "#8a8270" }}>
-          This usually takes under a minute. Polling for updates…
+          {project.progress_percent || 0}% complete · polling every 3 seconds
         </p>
       </div>
     )
   }
 
-  const title =
-    project?.file_name ||
-    project?.filename ||
-    project?.title ||
-    "Patient Consent Pack"
-  const client = project?.client || "Acme Pharma"
-  const domain = project?.domain || "Medical · Certified"
-  const src = project?.source_language || "en-GB"
-  const tgt = project?.target_language || "it-IT"
+  if (!project) return null
+
+  const stStyle = statusStyle(project.review_status)
 
   return (
-    <div className="max-w-[1400px] mx-auto">
-      {/* TOP META ROW (breadcrumb-ish back + status pill + bell + avatar) */}
+    <div className="max-w-[1400px] mx-auto pb-12" onClick={() => setShowStatusMenu(false)}>
+      {/* TOP META ROW */}
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-start gap-6">
           <button
@@ -191,282 +425,657 @@ export default function EditorPage() {
           </button>
           <div>
             <div className="text-sm" style={{ color: "#8a8270" }}>
-              {client} <span className="mx-2">›</span> {domain}
+              {project.source_language || "—"}{" "}
+              <span className="mx-1" style={{ color: "#cfc6ad" }}>
+                →
+              </span>{" "}
+              {project.target_language || "—"}
             </div>
             <h1
               className="text-[30px] font-semibold tracking-tight"
               style={{ color: "#1f2a2e" }}
             >
-              {title}
+              {project.file_name}
             </h1>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 mt-2">
-          <span
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs"
-            style={{ background: "#f6e3b8", color: "#7a5a10" }}
-          >
-            <span
-              className="w-1.5 h-1.5 rounded-full"
-              style={{ background: "#c88a1a" }}
-            />
-            In review
-          </span>
-          <button
-            className="w-10 h-10 rounded-full flex items-center justify-center"
-            style={{
-              background: "#ffffff",
-              border: "1px solid #e7ddc5",
-              color: "#6b6558",
-            }}
-          >
-            {IconBell}
-          </button>
-          <Avatar initials="NL" size={36} />
+        <div
+          className="flex items-center gap-3 mt-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* STATUS PILL with dropdown */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowStatusMenu((v) => !v)}
+              className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full"
+              style={{ background: stStyle.bg, color: stStyle.text }}
+            >
+              <span
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ background: stStyle.dot }}
+              />
+              {stStyle.label}
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+            {showStatusMenu && (
+              <div
+                className="absolute right-0 mt-2 w-48 rounded-xl py-1 z-20"
+                style={{
+                  background: "#ffffff",
+                  border: "1px solid #e7ddc5",
+                  boxShadow: "0 8px 24px rgba(30,30,20,0.12)",
+                }}
+              >
+                {REVIEW_STATUSES.map((s) => (
+                  <button
+                    key={s.value}
+                    type="button"
+                    onClick={() => updateReviewStatus(s.value)}
+                    disabled={busy === "status"}
+                    className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition"
+                    style={{
+                      color: "#1f2a2e",
+                      background:
+                        s.value === project.review_status ? "#faf5ee" : "transparent",
+                    }}
+                    onMouseEnter={(e) =>
+                      (e.currentTarget.style.background = "#faf5ee")
+                    }
+                    onMouseLeave={(e) =>
+                      (e.currentTarget.style.background =
+                        s.value === project.review_status ? "#faf5ee" : "transparent")
+                    }
+                  >
+                    <span
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{ background: s.dot }}
+                    />
+                    <span className="flex-1">{s.label}</span>
+                    {s.value === project.review_status && (
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="#0a7870"
+                        strokeWidth="2.4"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="m5 12 5 5 10-10" />
+                      </svg>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {error && (
+        <div
+          className="text-sm rounded-lg px-3 py-2 mb-4"
+          style={{ background: "#f2d4cf", color: "#7a2f24" }}
+        >
+          {error}
+        </div>
+      )}
 
       {/* TOOLBAR */}
       <div
-        className="flex items-center justify-between gap-4 px-5 py-3 rounded-2xl mb-5"
-        style={{
-          background: "#ffffff",
-          border: "1px solid #e7ddc5",
-          boxShadow: "0 1px 2px rgba(30,30,20,0.03)",
-        }}
+        className="flex items-center gap-4 px-5 py-3 rounded-2xl mb-4 flex-wrap"
+        style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
       >
-        <div className="flex items-center gap-3 flex-wrap">
-          <LangChip code={src} />
-          <span style={{ color: "#b9ac8e" }}>→</span>
-          <LangChip code={tgt} active />
-          <span className="mx-2" style={{ color: "#e7ddc5" }}>
-            |
-          </span>
-          <Stat label="translated" value={`${stats.pctTranslated || 86}%`} />
-          <Stat
-            label="approved"
-            value={`${stats.approved || 3} of ${stats.total || 14}`}
-          />
-          <Stat label="TM" value="64%" color="#0a7870" />
-          <Stat
-            label="QA"
-            value={String(stats.warnings || 3)}
-            color="#b06a2a"
-            icon={IconWarn}
-          />
+        <LangChip text={langCode(project.source_language)} />
+        <span style={{ color: "#cfc6ad" }}>→</span>
+        <LangChip text={langCode(project.target_language)} />
+        <div className="h-6 w-px mx-1" style={{ background: "#f1e8d1" }} />
+        <Stat
+          label="translated"
+          value={`${stats.total === 0 ? 0 : Math.round((stats.translated / stats.total) * 100)}%`}
+        />
+        <Stat
+          label="approved"
+          value={`${stats.approved} of ${stats.total}`}
+        />
+        <Stat label="TM" value={`${stats.tmAvg}%`} accent />
+        <div className="flex-1" />
+
+        {/* Team avatars (real assignee + uploader) */}
+        <div className="flex items-center -space-x-1">
+          {teamAvatars.map((u) => (
+            <div
+              key={u.id}
+              title={u.email}
+              className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold border-2"
+              style={{ background: "#cfe6e2", color: "#0a7870", borderColor: "#fff" }}
+            >
+              {initialsFor(u)}
+            </div>
+          ))}
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex -space-x-2">
-            <Avatar initials="NL" />
-            <Avatar initials="DC" />
-            <Avatar initials="MR" />
-          </div>
-          <button
-            className="w-9 h-9 rounded-md flex items-center justify-center"
-            style={{
-              background: "#ffffff",
-              border: "1px solid #e7ddc5",
-              color: "#6b6558",
-            }}
-            title="Keyboard shortcuts"
-          >
-            {IconKeyboard}
-          </button>
-          <button
-            className="flex items-center gap-2 px-4 py-2 rounded-full text-sm"
-            style={{
-              background: "#ffffff",
-              border: "1px solid #e7ddc5",
-              color: "#4a4638",
-            }}
-          >
-            {IconExport}
-            Export
-          </button>
-          <button
-            className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-white transition"
-            style={{ background: "#0a7870" }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "#0a645d")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "#0a7870")}
-          >
-            {IconCertify}
-            Certify & deliver
-          </button>
-        </div>
-      </div>
-
-      {/* MAIN GRID: SEGMENTS | SIDE PANEL */}
-      <div
-        className="grid gap-6"
-        style={{ gridTemplateColumns: "minmax(0, 1fr) 340px" }}
-      >
-        {/* SEGMENTS TABLE */}
-        <section
-          className="rounded-2xl overflow-hidden"
+        {/* Action buttons */}
+        <button
+          type="button"
+          onClick={() => exportFile("docx")}
+          disabled={busy === "export:docx"}
+          className="px-3 py-2 rounded-full text-sm font-semibold flex items-center gap-1.5 transition"
           style={{
             background: "#ffffff",
+            color: "#1f2a2e",
             border: "1px solid #e7ddc5",
-            boxShadow: "0 1px 2px rgba(30,30,20,0.03)",
           }}
         >
-          {/* COL HEADER */}
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          {busy === "export:docx" ? "Preparing…" : "Export DOCX"}
+        </button>
+        <button
+          type="button"
+          onClick={() => exportFile("pdf")}
+          disabled={busy === "export:pdf"}
+          className="px-3 py-2 rounded-full text-sm font-semibold flex items-center gap-1.5 transition"
+          style={{
+            background: "#ffffff",
+            color: "#1f2a2e",
+            border: "1px solid #e7ddc5",
+          }}
+        >
+          {busy === "export:pdf" ? "Preparing…" : "Export PDF"}
+        </button>
+        <button
+          type="button"
+          onClick={certify}
+          disabled={busy === "certify" || project.review_status === "CERTIFIED"}
+          className="px-4 py-2 rounded-full text-sm font-semibold flex items-center gap-1.5 transition"
+          style={{
+            background: project.review_status === "CERTIFIED" ? "#9bc9c5" : "#0a7870",
+            color: "#fff",
+          }}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6Z" />
+            <path d="m9 12 2 2 4-4" />
+          </svg>
+          {project.review_status === "CERTIFIED"
+            ? "Certified"
+            : busy === "certify"
+            ? "Certifying…"
+            : "Certify & deliver"}
+        </button>
+      </div>
+
+      {/* SEGMENTS + SIDEBAR */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4">
+        {/* SEGMENTS TABLE */}
+        <div
+          className="rounded-2xl overflow-hidden"
+          style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
+        >
           <div
-            className="grid px-5 py-3 text-[11px] font-semibold tracking-[0.12em]"
+            className="grid items-center text-[11px] font-semibold tracking-[0.14em] px-5 py-3"
             style={{
-              color: "#9a9178",
+              gridTemplateColumns: "60px 1fr 1fr 80px 60px",
+              background: "#faf5ee",
               borderBottom: "1px solid #f1e8d1",
-              gridTemplateColumns: "40px minmax(0,1fr) minmax(0,1fr) 110px",
+              color: "#9a9178",
             }}
           >
-            <div />
-            <div>SOURCE · ENGLISH (UK)</div>
-            <div>TARGET · ITALIAN</div>
-            <div />
+            <div>#</div>
+            <div>SOURCE · {project.source_language?.toUpperCase() || ""}</div>
+            <div>TARGET · {project.target_language?.toUpperCase() || ""}</div>
+            <div className="text-right">TM</div>
+            <div className="text-right">✓</div>
           </div>
 
-          {segments.map((seg, i) => (
-            <SegmentRow
-              key={seg.id}
-              seg={seg}
-              index={i + 1}
-              active={i === activeIdx}
-              onClick={() => setActiveIdx(i)}
-            />
-          ))}
-        </section>
+          {segments.length === 0 ? (
+            <div className="px-5 py-12 text-center text-sm" style={{ color: "#8a8270" }}>
+              This project has no translated segments yet.
+            </div>
+          ) : (
+            segments.map((seg, idx) => {
+              const isActive = idx === activeIdx
+              return (
+                <div
+                  key={seg.id}
+                  onClick={() => setActiveIdx(idx)}
+                  className="grid items-start px-5 py-4 text-sm cursor-pointer transition"
+                  style={{
+                    gridTemplateColumns: "60px 1fr 1fr 80px 60px",
+                    borderBottom: "1px solid #f4ecd6",
+                    background: isActive ? "#faf5ee" : "#ffffff",
+                    color: "#1f2a2e",
+                  }}
+                >
+                  <div
+                    className="font-mono text-[11px] tabular-nums pt-1"
+                    style={{ color: "#9a9178" }}
+                  >
+                    {String(seg.segment_index).padStart(2, "0")}
+                  </div>
+                  <div
+                    className="leading-relaxed pr-3"
+                    style={{ color: "#4a4638" }}
+                  >
+                    {seg.source_text}
+                  </div>
+                  <textarea
+                    value={seg.translated_text}
+                    onChange={(e) => updateTargetText(seg.id, e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    rows={Math.max(1, Math.ceil(seg.translated_text.length / 60))}
+                    className="bg-transparent outline-none resize-none leading-relaxed font-medium pr-3"
+                    style={{ color: "#1f2a2e" }}
+                  />
+                  <div className="text-right text-xs tabular-nums pt-1">
+                    {seg.tm_pct != null ? (
+                      <span
+                        className="inline-flex items-center px-1.5 py-0.5 rounded-md font-semibold"
+                        style={{
+                          background:
+                            seg.tm_pct >= 95
+                              ? "#d8ead6"
+                              : seg.tm_pct >= 80
+                              ? "#f6e3b8"
+                              : "#f3ecdb",
+                          color:
+                            seg.tm_pct >= 95
+                              ? "#2d5a24"
+                              : seg.tm_pct >= 80
+                              ? "#7a5a10"
+                              : "#6b6558",
+                        }}
+                      >
+                        {seg.tm_pct}%
+                      </span>
+                    ) : (
+                      <span style={{ color: "#cfc6ad" }}>—</span>
+                    )}
+                  </div>
+                  <div className="flex justify-end pt-0.5">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        toggleApprove(seg)
+                      }}
+                      disabled={busy === `approve:${seg.id}`}
+                      aria-label={seg.approved ? "Unapprove" : "Approve"}
+                      title={seg.approved ? "Unapprove" : "Approve"}
+                      className="w-6 h-6 rounded-full flex items-center justify-center transition"
+                      style={{
+                        background: seg.approved ? "#0a7870" : "#f3ecdb",
+                        color: seg.approved ? "#fff" : "#9a9178",
+                        border: `1px solid ${
+                          seg.approved ? "#0a645d" : "#e7ddc5"
+                        }`,
+                      }}
+                    >
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="m5 12 5 5 10-10" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
 
-        {/* RIGHT PANEL */}
-        <EditorSidePanel activeSegment={activeIdx + 1} />
+        {/* SIDEBAR */}
+        <aside
+          className="rounded-2xl overflow-hidden flex flex-col h-fit sticky top-4"
+          style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
+        >
+          <div
+            className="grid grid-cols-3"
+            style={{ borderBottom: "1px solid #f1e8d1" }}
+          >
+            <SideTab
+              label="Comments"
+              count={commentCount}
+              active={tab === "comments"}
+              onClick={() => setTab("comments")}
+            />
+            <SideTab
+              label="Glossary"
+              count={glossaryCount}
+              active={tab === "glossary"}
+              onClick={() => setTab("glossary")}
+            />
+            <SideTab
+              label="Status"
+              active={tab === "status"}
+              onClick={() => setTab("status")}
+            />
+          </div>
+
+          <div className="p-5 min-h-[260px]">
+            {tab === "comments" && activeSegment && (
+              <>
+                <div
+                  className="text-[10px] font-semibold tracking-[0.14em] mb-3"
+                  style={{ color: "#9a9178" }}
+                >
+                  COMMENTS ON SEGMENT #{String(activeSegment.segment_index).padStart(2, "0")}
+                </div>
+
+                {activeComments.length === 0 ? (
+                  <div
+                    className="text-sm text-center py-8"
+                    style={{ color: "#8a8270" }}
+                  >
+                    No comments on this segment yet.
+                  </div>
+                ) : (
+                  <div className="space-y-3 mb-4">
+                    {activeComments.map((c) => (
+                      <div
+                        key={c.id}
+                        className="rounded-xl p-3"
+                        style={{
+                          background: c.resolved ? "#f3ecdb" : "#fbf7ee",
+                          border: `1px solid ${c.resolved ? "#e7ddc5" : "#f1e8d1"}`,
+                          opacity: c.resolved ? 0.65 : 1,
+                        }}
+                      >
+                        <div className="flex items-center justify-between mb-1.5 gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div
+                              className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0"
+                              style={{ background: "#cfe6e2", color: "#0a7870" }}
+                            >
+                              {(c.user.email || "??").slice(0, 2).toUpperCase()}
+                            </div>
+                            <div
+                              className="text-[12px] font-medium truncate"
+                              style={{ color: "#1f2a2e" }}
+                            >
+                              {c.user.email}
+                            </div>
+                          </div>
+                          <div
+                            className="text-[10px] shrink-0"
+                            style={{ color: "#9a9178" }}
+                          >
+                            {relativeTime(c.created_at)}
+                          </div>
+                        </div>
+                        <div
+                          className="text-sm leading-relaxed mb-2"
+                          style={{
+                            color: "#1f2a2e",
+                            textDecoration: c.resolved ? "line-through" : "none",
+                          }}
+                        >
+                          {c.text}
+                        </div>
+                        {!c.resolved ? (
+                          <button
+                            type="button"
+                            onClick={() => resolveComment(c.id)}
+                            disabled={busy === `resolve:${c.id}`}
+                            className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full transition"
+                            style={{
+                              background: "#cfe6e2",
+                              color: "#0a5e58",
+                              border: "1px solid #b7dad4",
+                            }}
+                          >
+                            {busy === `resolve:${c.id}`
+                              ? "Resolving…"
+                              : "Mark as revised"}
+                          </button>
+                        ) : (
+                          <span
+                            className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full inline-flex items-center gap-1"
+                            style={{ background: "#d8ead6", color: "#2d5a24" }}
+                          >
+                            <svg
+                              width="11"
+                              height="11"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="3"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="m5 12 5 5 10-10" />
+                            </svg>
+                            Revised
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* New comment box */}
+                <div
+                  className="rounded-xl p-3"
+                  style={{
+                    background: "#faf5ee",
+                    border: "1px solid #e7ddc5",
+                  }}
+                >
+                  <textarea
+                    value={newComment}
+                    onChange={(e) => setNewComment(e.target.value)}
+                    placeholder="Leave a note for the reviewer…"
+                    rows={2}
+                    className="bg-transparent outline-none w-full text-sm resize-none leading-relaxed"
+                    style={{ color: "#1f2a2e" }}
+                  />
+                  <div className="flex justify-end mt-2">
+                    <button
+                      type="button"
+                      onClick={addComment}
+                      disabled={busy === "comment" || !newComment.trim()}
+                      className="px-3 py-1.5 rounded-full text-[12px] font-semibold transition"
+                      style={{
+                        background:
+                          busy === "comment" || !newComment.trim()
+                            ? "#9bc9c5"
+                            : "#0a7870",
+                        color: "#fff",
+                        cursor:
+                          busy === "comment" || !newComment.trim()
+                            ? "not-allowed"
+                            : "pointer",
+                      }}
+                    >
+                      {busy === "comment" ? "Posting…" : "Add comment"}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {tab === "glossary" && (
+              <>
+                <div
+                  className="text-[10px] font-semibold tracking-[0.14em] mb-3"
+                  style={{ color: "#9a9178" }}
+                >
+                  GLOSSARY
+                </div>
+                <div
+                  className="text-sm text-center py-8"
+                  style={{ color: "#8a8270" }}
+                >
+                  {glossaryCount > 0
+                    ? `${glossaryCount} approved term${glossaryCount === 1 ? "" : "s"} available across the team.`
+                    : "No glossary terms yet — add them from the Glossary page."}
+                </div>
+              </>
+            )}
+
+            {tab === "status" && (
+              <>
+                <div
+                  className="text-[10px] font-semibold tracking-[0.14em] mb-3"
+                  style={{ color: "#9a9178" }}
+                >
+                  PROJECT STATUS
+                </div>
+                <div className="space-y-3">
+                  <StatusRow label="Translation" value={project.status} />
+                  <StatusRow label="Review" value={stStyle.label} />
+                  <StatusRow
+                    label="Translated"
+                    value={`${stats.translated} / ${stats.total} segments`}
+                  />
+                  <StatusRow
+                    label="Approved"
+                    value={`${stats.approved} / ${stats.total} segments`}
+                  />
+                  <StatusRow label="Avg. TM match" value={`${stats.tmAvg}%`} />
+                </div>
+              </>
+            )}
+          </div>
+        </aside>
       </div>
     </div>
+  )
+}
+
+// ============================================================
+// Local subcomponents
+// ============================================================
+
+function LangChip({ text }: { text: string }) {
+  return (
+    <span
+      className="inline-flex items-center text-[11px] font-semibold tracking-[0.04em] px-2 py-0.5 rounded-md uppercase"
+      style={{
+        background: "#cfe6e2",
+        color: "#0a5e58",
+        border: "1px solid #b7dad4",
+      }}
+    >
+      {text}
+    </span>
   )
 }
 
 function Stat({
   label,
   value,
-  color = "#1f2a2e",
-  icon,
+  accent,
 }: {
   label: string
   value: string
-  color?: string
-  icon?: React.ReactNode
+  accent?: boolean
 }) {
   return (
-    <span className="flex items-center gap-1.5 text-sm">
-      {icon}
-      <span className="font-semibold" style={{ color }}>
+    <div className="flex items-baseline gap-1.5">
+      <span
+        className="text-sm font-semibold tabular-nums"
+        style={{ color: accent ? "#b06a2a" : "#1f2a2e" }}
+      >
         {value}
       </span>
-      <span style={{ color: "#8a8270" }}>{label}</span>
-    </span>
+      <span className="text-[11px]" style={{ color: "#8a8270" }}>
+        {label}
+      </span>
+    </div>
   )
 }
 
-function SegmentRow({
-  seg,
-  index,
+function SideTab({
+  label,
+  count,
   active,
   onClick,
 }: {
-  seg: Segment
-  index: number
+  label: string
+  count?: number
   active: boolean
   onClick: () => void
 }) {
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
-      className="grid items-stretch cursor-pointer"
+      className="py-3 text-center transition"
       style={{
-        gridTemplateColumns: "40px minmax(0,1fr) minmax(0,1fr) 110px",
-        borderBottom: "1px solid #f1e8d1",
-        background: active ? "#fbf7ee" : "transparent",
-        borderLeft: active ? "3px solid #0a7870" : "3px solid transparent",
+        borderBottom: active ? "2px solid #0a7870" : "2px solid transparent",
+        color: active ? "#0a7870" : "#8a8270",
       }}
     >
-      {/* index + status dot */}
-      <div className="flex flex-col items-center pt-5 gap-3 relative">
-        <div
-          className="text-xs font-mono"
-          style={{ color: active ? "#0a7870" : "#9a9178" }}
-        >
-          {String(index).padStart(2, "0")}
-        </div>
-        <div
-          className="w-2 h-2 rounded-full"
-          style={{
-            background: seg.approved
-              ? "#4a8a3a"
-              : seg.machine
-              ? "#c88a1a"
-              : "#0a7870",
-          }}
-        />
-        {seg.reviewer && (
-          <div className="absolute left-1 top-16">
-            <Avatar initials={seg.reviewer} size={22} />
-          </div>
+      <div className="text-xs font-semibold flex items-center justify-center gap-1">
+        {label}
+        {typeof count === "number" && (
+          <span
+            className="text-[10px] tabular-nums px-1 rounded-full"
+            style={{ color: "#9a9178" }}
+          >
+            · {count}
+          </span>
         )}
       </div>
+    </button>
+  )
+}
 
-      {/* source */}
-      <div className="py-5 pr-5" style={{ color: "#1f2a2e" }}>
-        <div className="text-[15px] leading-relaxed">
-          {highlight(seg.source, seg.glossary)}
-        </div>
+function StatusRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      className="flex items-center justify-between py-2"
+      style={{ borderBottom: "1px solid #f1e8d1" }}
+    >
+      <div className="text-sm" style={{ color: "#6b6558" }}>
+        {label}
       </div>
-
-      {/* target */}
-      <div className="py-5 pl-5 pr-4 relative" style={{ color: "#1f2a2e" }}>
-        <textarea
-          defaultValue={seg.target}
-          rows={2}
-          className="w-full resize-none bg-transparent outline-none leading-relaxed text-[15px]"
-          style={{
-            color: "#1f2a2e",
-            minHeight: 48,
-          }}
-        />
-        {(seg.warn || seg.comments) && (
-          <div className="absolute bottom-1 right-4 flex items-center gap-3 text-xs" style={{ color: "#9a9178" }}>
-            {seg.warn ? (
-              <span className="flex items-center gap-1" style={{ color: "#b06a2a" }}>
-                {IconWarn} {seg.warn}
-              </span>
-            ) : null}
-            {seg.comments ? (
-              <span className="flex items-center gap-1">
-                {IconComment} {seg.comments}
-              </span>
-            ) : null}
-          </div>
-        )}
-      </div>
-
-      {/* right mini status */}
-      <div className="flex flex-col items-end justify-center pr-4 py-5 gap-2">
-        {typeof seg.tmPct === "number" ? (
-          <span
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px]"
-            style={{ background: "#f6e3c8", color: "#8a5316" }}
-          >
-            <span style={{ color: "#b06a2a" }}>{IconDB}</span>
-            {seg.tmPct}% TM
-          </span>
-        ) : seg.machine ? (
-          <span
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px]"
-            style={{ background: "#f6e3c8", color: "#8a5316" }}
-          >
-            {IconBolt}
-            MT
-          </span>
-        ) : null}
-        {seg.approved && IconCheck}
+      <div className="text-sm font-semibold" style={{ color: "#1f2a2e" }}>
+        {value}
       </div>
     </div>
   )

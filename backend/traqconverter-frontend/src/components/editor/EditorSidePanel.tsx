@@ -17,34 +17,11 @@ export type TmMatch = {
 
 type Tab = "tm" | "glossary" | "comments" | "status"
 
-const DEFAULT_MATCHES: TmMatch[] = [
-  {
-    pct: 100,
-    source: "Acme Pharma TM",
-    date: "2024-11",
-    author: "Danilo C.",
-    src: "Informed Consent for Clinical Investigation",
-    tgt: "Consenso informato per la sperimentazione clinica",
-  },
-  {
-    pct: 86,
-    source: "Medical · EN→IT",
-    date: "2024-08",
-    src: "Informed Consent for Clinical Investigation",
-    tgt: "Variant from medical TM — fuzzy match",
-  },
-  {
-    pct: 74,
-    source: "Generic TM",
-    date: "2023-12",
-    src: "Generic phrasing from another project.",
-    tgt: "Versione generica dal glossario generale.",
-  },
-]
-
+// Real TM matches come from the backend — no fake placeholder data here.
+// The panel renders an empty state if `matches` is missing or empty.
 export function EditorSidePanel({
   activeSegment,
-  matches = DEFAULT_MATCHES,
+  matches = [],
 }: {
   activeSegment: number
   matches?: TmMatch[]
@@ -100,11 +77,21 @@ export function EditorSidePanel({
             >
               MATCHES FOR SEGMENT #{activeSegment}
             </div>
-            <div className="space-y-4">
-              {matches.map((m, i) => (
-                <MatchCard key={i} match={m} />
-              ))}
-            </div>
+            {matches.length === 0 ? (
+              <div
+                className="text-sm text-center py-12"
+                style={{ color: "#8a8270" }}
+              >
+                No TM matches yet — your translation memory will populate as
+                you approve segments.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {matches.map((m, i) => (
+                  <MatchCard key={i} match={m} />
+                ))}
+              </div>
+            )}
           </>
         )}
 
@@ -116,11 +103,12 @@ export function EditorSidePanel({
             >
               GLOSSARY TERMS IN #{activeSegment}
             </div>
-            <GlossaryRow
-              term="Informed Consent"
-              translation="Consenso informato"
-              approved
-            />
+            <div
+              className="text-sm text-center py-12"
+              style={{ color: "#8a8270" }}
+            >
+              No glossary terms detected in this segment.
+            </div>
           </>
         )}
 
@@ -131,11 +119,11 @@ export function EditorSidePanel({
         )}
 
         {tab === "status" && (
-          <div className="space-y-3">
-            <StatusRow label="Translated" value="12 / 14 segments" />
-            <StatusRow label="Approved" value="3 / 14 segments" />
-            <StatusRow label="TM leverage" value="64%" />
-            <StatusRow label="QA warnings" value="3" warn />
+          <div
+            className="text-sm text-center py-12"
+            style={{ color: "#8a8270" }}
+          >
+            Project-wide stats will appear here once segments are translated.
           </div>
         )}
       </div>
@@ -215,67 +203,6 @@ function MatchCard({ match }: { match: TmMatch }) {
         style={{ color: "#1f2a2e" }}
       >
         {match.tgt}
-      </div>
-    </div>
-  )
-}
-
-function GlossaryRow({
-  term,
-  translation,
-  approved,
-}: {
-  term: string
-  translation: string
-  approved?: boolean
-}) {
-  return (
-    <div
-      className="rounded-xl p-4 flex items-center justify-between"
-      style={{ background: "#fbf7ee", border: "1px solid #f1e8d1" }}
-    >
-      <div>
-        <div className="text-sm font-medium" style={{ color: "#1f2a2e" }}>
-          {term}
-        </div>
-        <div className="text-xs" style={{ color: "#8a8270" }}>
-          → {translation}
-        </div>
-      </div>
-      {approved && (
-        <span
-          className="text-[10px] font-semibold tracking-[0.1em] px-2 py-1 rounded-full"
-          style={{ background: "#d8ead6", color: "#2d5a24" }}
-        >
-          APPROVED
-        </span>
-      )}
-    </div>
-  )
-}
-
-function StatusRow({
-  label,
-  value,
-  warn,
-}: {
-  label: string
-  value: string
-  warn?: boolean
-}) {
-  return (
-    <div
-      className="flex items-center justify-between py-3"
-      style={{ borderBottom: "1px solid #f1e8d1" }}
-    >
-      <div className="text-sm" style={{ color: "#6b6558" }}>
-        {label}
-      </div>
-      <div
-        className="text-sm font-semibold"
-        style={{ color: warn ? "#b06a2a" : "#1f2a2e" }}
-      >
-        {value}
       </div>
     </div>
   )
