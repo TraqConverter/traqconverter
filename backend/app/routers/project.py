@@ -643,89 +643,10 @@ def certify_project(
 
 
 # ============================================================
-# EXPORT PROJECT (DOCX) — gated on download_translation feature
-# ============================================================
-
-@router.get(
-    "/{project_id}/export",
-    dependencies=[Depends(require_feature("download_translation"))],
-)
-def export_project(
-    project_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    project = (
-        db.query(TranslationProject)
-        .filter(
-            TranslationProject.id == project_id,
-            TranslationProject.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    segments = (
-        db.query(TranslationSegment)
-        .filter(TranslationSegment.project_id == project_id)
-        .order_by(TranslationSegment.segment_index)
-        .all()
-    )
-    if not segments:
-        raise HTTPException(status_code=404, detail="No segments found")
-
-    file_buffer = generate_docx(segments)
-    return StreamingResponse(
-        file_buffer,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": "attachment; filename=translation.docx"},
-    )
-
-
-# ============================================================
-# EXPORT PROJECT (PDF) — gated on download_translation feature
-# ============================================================
-
-@router.get(
-    "/{project_id}/export/pdf",
-    dependencies=[Depends(require_feature("download_translation"))],
-)
-def export_project_pdf(
-    project_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    project = (
-        db.query(TranslationProject)
-        .filter(
-            TranslationProject.id == project_id,
-            TranslationProject.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    segments = (
-        db.query(TranslationSegment)
-        .filter(TranslationSegment.project_id == project_id)
-        .order_by(TranslationSegment.segment_index)
-        .all()
-    )
-    if not segments:
-        raise HTTPException(status_code=404, detail="No segments found")
-
-    file_buffer = generate_pdf(segments)
-    return StreamingResponse(
-        file_buffer,
-        media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=translation.pdf"},
-    )
-
-
-# ============================================================
-# DOWNLOAD PROJECT RESULT — gated on download_translation feature
+# DOWNLOAD PROJECT RESULT — gated on download_translation feature.
+# DOCX/PDF export endpoints live in app.routers.export to avoid
+# duplicate routes — they consume the layout-preserving rebuild
+# that the worker uploads to S3.
 # ============================================================
 
 @router.get(

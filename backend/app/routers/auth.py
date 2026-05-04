@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from typing import Optional
 
 from datetime import datetime, timedelta
 
@@ -27,6 +29,100 @@ def me(current_user: User = Depends(get_current_user)):
         "subscription_plan": current_user.subscription_plan,
         "subscription_status": current_user.subscription_status,
     }
+
+
+# ============================================================
+# UPDATE PROFILE
+# ============================================================
+class ProfileUpdate(BaseModel):
+    full_name: Optional[str] = None
+
+
+@router.patch("/me")
+def update_me(
+    payload: ProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if payload.full_name is not None:
+        name = payload.full_name.strip()
+        if name and len(name) > 200:
+            raise HTTPException(status_code=400, detail="Name is too long")
+        current_user.full_name = name or None
+
+    db.commit()
+    db.refresh(current_user)
+    return {
+        "id": str(current_user.id),
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "role": current_user.role,
+    }
+
+
+# ============================================================
+# CHANGE PASSWORD
+# ============================================================
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/change-password")
+def change_password(
+    payload: PasswordChange,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not verify_password(payload.current_password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if len(payload.new_password) < 6:
+        raise HTTPException(
+            status_code=400, detail="New password must be at least 6 characters"
+        )
+    if payload.current_password == payload.new_password:
+        raise HTTPException(
+            status_code=400,
+            detail="New password must be different from the current one",
+        )
+
+    current_user.password_hash = hash_password(payload.new_password)
+    db.commit()
+    return {"status": "password_updated"}
+
+
+# ============================================================
+# DELETE ACCOUNT
+# ============================================================
+class DeleteAccount(BaseModel):
+    password: str
+    # Type the literal word "DELETE" to confirm. Frontend enforces too.
+    confirm: str
+
+
+@router.post("/delete-account")
+def delete_account(
+    payload: DeleteAccount,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if payload.confirm.strip().upper() != "DELETE":
+        raise HTTPException(
+            status_code=400, detail='Type "DELETE" to confirm account deletion'
+        )
+    if not verify_password(payload.password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="Password is incorrect")
+
+    # Cascade: drop the user's owned team (and via the FK ondelete CASCADE
+    # we set on team_members and credit_wallets, the wallet/members go too).
+    team = db.query(Team).filter(Team.owner_id == current_user.id).first()
+    if team:
+        db.query(CreditWallet).filter(CreditWallet.team_id == team.id).delete()
+        db.delete(team)
+
+    db.delete(current_user)
+    db.commit()
+    return {"status": "deleted"}
 
 
 # ✅ REGISTER
