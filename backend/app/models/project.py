@@ -95,6 +95,10 @@ class TranslationProject(Base):
     # --------------------------------
     review_status = Column(String, nullable=False, default="DRAFT")
 
+    # Detected on upload — drives which rebuild path runs at export time.
+    # PDF / DOCX / IMAGE / TXT
+    source_kind = Column(String, nullable=True)
+
     # --------------------------------
     # Certification
     # --------------------------------

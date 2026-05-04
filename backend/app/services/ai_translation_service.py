@@ -247,63 +247,64 @@ def translate_batch(
         flush_glossary_usage(db, batch_counts)
 
     # ========================================================
-    # PROMPT
+    # PROMPT — uses an unambiguous delimiter so segments containing
+    # newlines (PDF blocks, multi-line OCR) align correctly with the
+    # model's response.
     # ========================================================
-    prompt = f"""
-You are a professional translator.
+    DELIM = "<<<SEG>>>"
 
-Translate from {source_lang} to {target_lang}.
+    rules = f"""You are a professional human translator producing certified translations.
 
-STRICT RULES:
-- Glossary terms are FINAL and MUST NOT be changed
-- If a term is already translated, DO NOT modify it
-- Maintain exact meaning and structure
+Task: Translate every input segment from {source_lang} to {target_lang}.
+
+ABSOLUTE RULES — these are non-negotiable for legal and identity documents:
+- Preserve all proper nouns, personal names, place names and organisation names exactly as written.
+- Preserve all dates, numbers, codes, ID numbers, passport numbers, IBAN/SWIFT codes, postal codes and reference numbers verbatim — do NOT reformat or localise them.
+- Preserve currency symbols and amounts exactly.
+- Preserve internal line breaks inside a segment. If the input segment has 3 lines, the output must have 3 lines.
+- Do NOT add commentary, do NOT add or remove punctuation, do NOT renumber or reorder.
+- If a segment is already in {target_lang} (already translated, or untranslatable like an ID number), return it unchanged.
+- Translate idiomatically and accurately — no calques, no machine artefacts.
 """
 
     if glossary_prompt:
-        prompt += f"""
-MANDATORY GLOSSARY:
-{glossary_prompt}
-"""
+        rules += (
+            "\nMANDATORY GLOSSARY (these mappings override any other choice):\n"
+            f"{glossary_prompt}\n"
+        )
 
     if tm_context:
-        prompt += f"""
-REFERENCE TRANSLATIONS:
-{tm_context}
-"""
+        rules += (
+            "\nREFERENCE TRANSLATIONS (use these verbatim if the segment matches):\n"
+            f"{tm_context}\n"
+        )
 
-    prompt += """
-Return ONLY translated lines in the SAME ORDER.
-No numbering. No explanations.
-"""
-
-    for t in texts:
-        prompt += f"\n{t}"
-
-    # ========================================================
-    # OPENAI CALL
-    # ========================================================
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0
+    rules += (
+        f"\nINPUT FORMAT: Segments are separated by the literal delimiter `{DELIM}`."
+        f"\nOUTPUT FORMAT: Return only the translated segments separated by the same `{DELIM}` delimiter, in the same order."
+        " No numbering, no labels, no commentary. The number of segments in your output must match the input exactly.\n"
     )
 
-    output = response.choices[0].message.content
+    prompt = rules + "\nINPUT:\n" + ("\n" + DELIM + "\n").join(texts)
 
-    # ========================================================
-    # CLEAN OUTPUT
-    # ========================================================
-    translations = []
+    response = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+    )
 
-    for line in output.split("\n"):
-        line = line.strip()
-        if not line:
-            continue
+    output = response.choices[0].message.content or ""
 
-        line = re.sub(r"^\d+\.\s*", "", line)
-        translations.append(line)
+    raw = [chunk.strip("\n").strip() for chunk in output.split(DELIM)]
+    translations = [chunk for chunk in raw if chunk]
+
+    if len(translations) != len(texts):
+        fallback = [
+            re.sub(r"^\d+\.\s*", "", line.strip())
+            for line in output.split("\n")
+            if line.strip()
+        ]
+        if len(fallback) == len(texts):
+            translations = fallback
 
     return translations

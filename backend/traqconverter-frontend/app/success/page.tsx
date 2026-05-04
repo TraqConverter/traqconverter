@@ -1,57 +1,96 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { api } from "@/lib/api"
 
 // ============================================================
-// Stripe redirects here after a successful checkout. We poll the
-// wallet for the new tier (the webhook lands a few seconds after
-// payment confirmation) and bounce the user to /billing once we see it.
+// Stripe redirects here after a successful checkout. Flow:
+//
+// 1. Read ?session_id=... from the URL (added to success_url server-side).
+// 2. POST /subscription/sync-session — applies the upgrade directly so
+//    we don't have to wait for the Stripe webhook. Idempotent.
+// 3. Poll /billing/wallet a few times in case the user is on a slow
+//    network and the sync hasn't propagated yet.
+// 4. Once tier === BASIC or PRO, route them to /billing.
 // ============================================================
 
 const POLL_INTERVAL_MS = 1500
-const MAX_POLLS = 20 // ~30s total before we stop polling
+const MAX_POLLS = 20 // ~30s total
 
 export default function CheckoutSuccessPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const sessionId = searchParams?.get("session_id")
+
   const [tier, setTier] = useState<string | null>(null)
   const [tries, setTries] = useState(0)
   const [stillWaiting, setStillWaiting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
 
-    const poll = async () => {
-      try {
-        const res = await api.get("/billing/wallet")
-        if (cancelled) return
-        const t = (res.data?.tier || "").toUpperCase()
-        setTier(t)
-
-        if (t === "PRO" || t === "BASIC") {
-          // Webhook applied. Send them to billing so they see the new state.
-          setTimeout(() => router.push("/billing"), 800)
-          return
-        }
-
-        setTries((n) => n + 1)
-      } catch {
-        // Ignore — try again. The interceptor handles auth.
-      }
-
-      if (!cancelled) {
-        timer = setTimeout(poll, POLL_INTERVAL_MS)
+    const settle = (t: string) => {
+      if (cancelled) return
+      setTier(t)
+      if (t === "PRO" || t === "BASIC") {
+        setTimeout(() => router.push("/billing"), 800)
       }
     }
 
-    poll()
+    const apply = async () => {
+      // Step 1 — sync the session with the backend (fast path, no webhook).
+      if (sessionId) {
+        try {
+          const res = await api.post(
+            "/subscription/sync-session",
+            null,
+            { params: { session_id: sessionId } }
+          )
+          const t = (res.data?.tier || "").toUpperCase()
+          if (t === "PRO" || t === "BASIC") {
+            settle(t)
+            return
+          }
+        } catch (err: any) {
+          // If sync fails for any reason fall back to polling — the
+          // webhook may still land independently.
+          console.warn("sync-session failed:", err?.response?.data?.detail)
+        }
+      }
+
+      // Step 2 — poll the wallet. The webhook may have already fired even if
+      // sync-session didn't or wasn't called.
+      const poll = async () => {
+        try {
+          const res = await api.get("/billing/wallet")
+          if (cancelled) return
+          const t = (res.data?.tier || "").toUpperCase()
+          setTier(t)
+          if (t === "PRO" || t === "BASIC") {
+            setTimeout(() => router.push("/billing"), 800)
+            return
+          }
+          setTries((n) => n + 1)
+        } catch {
+          /* try again */
+        }
+        if (!cancelled) {
+          timer = setTimeout(poll, POLL_INTERVAL_MS)
+        }
+      }
+      poll()
+    }
+
+    apply()
+
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)
     }
-  }, [router])
+  }, [router, sessionId])
 
   useEffect(() => {
     if (tries >= MAX_POLLS) setStillWaiting(true)
@@ -109,9 +148,18 @@ export default function CheckoutSuccessPage() {
           {upgraded
             ? "Your credits are loaded and your features are unlocked. Redirecting you to billing…"
             : stillWaiting
-            ? "Stripe usually confirms payments within a few seconds. If your plan still doesn't update, refresh this page or check your Stripe dashboard."
+            ? "Stripe usually confirms within a few seconds. If your plan still doesn't update, refresh this page or check your Stripe dashboard."
             : "We're confirming your subscription with Stripe — this normally takes 5–10 seconds."}
         </p>
+
+        {error && (
+          <div
+            className="text-sm rounded-lg px-3 py-2 mb-4 text-left"
+            style={{ background: "#f2d4cf", color: "#7a2f24" }}
+          >
+            {error}
+          </div>
+        )}
 
         {!upgraded && !stillWaiting && (
           <div className="flex items-center justify-center gap-2">

@@ -57,6 +57,10 @@ from app.services.s3_service import (
 from app.services.ai_translation_service import translate_batch
 from app.services.translation_memory_service import store_tm_entry
 from app.services.certification_service import CertificationService
+from app.services.layout_translator import (
+    extract_segments,
+    rebuild_output,
+)
 from app.routers.ws import broadcast_progress
 
 from docx import Document
@@ -223,23 +227,15 @@ def process_translation_job(project_id: str):
         )
 
         # ====================================================
-        # EXTRACT
+        # EXTRACT — block/paragraph aware so we can rebuild later.
         # ====================================================
-        text = extract_file_text(str(input_file))
+        source_kind, extracted = extract_segments(str(input_file))
 
-        if not text or not text.strip():
+        if not extracted:
             raise Exception("No text extracted from file")
 
-        text = re.sub(r"\s+", " ", text)
-
-        sentences = [
-            s.strip()
-            for s in re.split(r"[.\n]+", text)
-            if s.strip() and len(s.strip()) > 2
-        ]
-
-        if not sentences:
-            raise Exception("No valid segments extracted")
+        project.source_kind = source_kind
+        db.commit()
 
         # ====================================================
         # RESET SEGMENTS
@@ -251,16 +247,17 @@ def process_translation_job(project_id: str):
         db.commit()
 
         # ====================================================
-        # CREATE SEGMENTS
+        # CREATE SEGMENTS — preserve layout metadata.
         # ====================================================
         segments = []
 
-        for i, s in enumerate(sentences):
+        for i, item in enumerate(extracted):
             seg = TranslationSegment(
                 project_id=project_uuid,
                 segment_index=i,
-                source_text=s,
-                translated_text=""
+                source_text=item.text,
+                translated_text="",
+                layout_meta=item.layout,
             )
 
             db.add(seg)
@@ -272,7 +269,7 @@ def process_translation_job(project_id: str):
 
         db.commit()
 
-        logger.info(f"{len(segments)} segments created")
+        logger.info(f"{len(segments)} segments created (kind={source_kind})")
 
         # ====================================================
         # TRANSLATE
@@ -367,13 +364,31 @@ def process_translation_job(project_id: str):
         )
 
         # ====================================================
-        # OUTPUT FILE
+        # OUTPUT FILE — rebuild a layout-preserving copy with the
+        # translated text in place of the source.
         # ====================================================
         output_file = temp_dir / f"translated_{project.file_name}"
 
-        shutil.copyfile(input_file, output_file)
+        try:
+            pairs = [
+                (s.translated_text or s.source_text, dict(s.layout_meta or {}))
+                for s in segments
+            ]
+            written_path = rebuild_output(
+                source_kind=source_kind,
+                original_path=str(input_file),
+                output_path=str(output_file),
+                pairs=pairs,
+            )
+            output_to_upload = Path(written_path)
+        except Exception as e:
+            # Fall back to the original file so the user still gets a
+            # download — but log loudly so this gets fixed.
+            logger.exception(f"Layout-preserving rebuild failed: {e}")
+            shutil.copyfile(input_file, output_file)
+            output_to_upload = output_file
 
-        output_s3_key = upload_file_to_s3(output_file)
+        output_s3_key = upload_file_to_s3(output_to_upload)
 
         project.output_file = output_s3_key
 
@@ -429,7 +444,6 @@ def process_translation_job(project_id: str):
                     "Failed marking project as FAILED"
                 )
 
-        # 🔥 CRITICAL:
         # Re-raise so SQS worker knows this failed
         raise
 
