@@ -3,25 +3,27 @@ from app.models.glossary import Glossary
 
 
 # ============================================================
-# 🔥 FIXED: USE user_id INSTEAD OF team_id
+# Fetch glossary by team (audit HIGH-2: column was misnamed
+# `user_id` while actually FK'ing teams.id).
+# Callers may still pass a positional `team_id` value.
 # ============================================================
 
 def get_glossary(
     db: Session,
-    user_id,
+    team_id,
     source_language,
     target_language,
 ):
-    return db.query(Glossary).filter(
-        Glossary.user_id == user_id,
-        Glossary.source_language == source_language,
-        Glossary.target_language == target_language
-    ).all()
+    return (
+        db.query(Glossary)
+        .filter(
+            Glossary.team_id == team_id,
+            Glossary.source_language == source_language,
+            Glossary.target_language == target_language,
+        )
+        .all()
+    )
 
-
-# ============================================================
-# 🔥 IMPROVED PROMPT (STRONGER ENFORCEMENT)
-# ============================================================
 
 def build_glossary_prompt(glossary_entries):
     if not glossary_entries:
@@ -33,5 +35,4 @@ def build_glossary_prompt(glossary_entries):
         prompt += f"{g.source_term} → {g.target_term}\n"
 
     prompt += "\nYou MUST use these exact translations when matches occur.\n"
-
     return prompt

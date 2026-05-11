@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/stripe", tags=["Stripe"])
 
 stripe.api_key = settings.stripe_secret_key
+# Audit medium fix: enable automatic retry on idempotent calls so a
+# transient blip doesn't drop a webhook event. The Stripe SDK's default
+# socket timeout (80 s) is fine for our use cases.
+stripe.max_network_retries = 3
 
 
 # ============================================================
@@ -334,6 +338,25 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         return {"status": "ignored"}
 
     except Exception:
+        # Audit CRIT-5: previously this returned 200 + "error_handled" which
+        # told Stripe everything was fine and the event would never retry,
+        # leaving paying customers stuck on the trial. Roll back the half
+        # write, drop the idempotency row so Stripe's retry can re-process,
+        # and return 500 so Stripe's exponential-backoff retry kicks in.
         logger.exception("Stripe webhook failed")
-        db.commit()
-        return {"status": "error_handled"}
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        try:
+            stale = (
+                db.query(StripeEvent).filter(StripeEvent.id == event_id).first()
+            )
+            if stale:
+                db.delete(stale)
+                db.commit()
+        except Exception:
+            db.rollback()
+        raise HTTPException(
+            status_code=500, detail="Webhook processing failed; will be retried"
+        )

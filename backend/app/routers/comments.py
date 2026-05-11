@@ -1,78 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from uuid import UUID
-from pydantic import BaseModel
+"""Deprecated. Replaced by app.routers.segment_comments which is auth-scoped.
 
-from app.database import get_db
-from app.models.segment_comment import SegmentComment
-from app.models.translation_segment import TranslationSegment
-from app.models.user import User
+The previous implementation in this file accepted a `user_id` from the
+request body and had no authentication, allowing any anonymous caller to
+post comments as any user. The audit flagged it as CRIT-4. The router
+was never registered in main.py, but the file remained as a footgun.
 
+We now expose a stub router that intentionally raises 410 Gone on every
+call so any leftover client code (or future accidental import) fails
+loudly instead of silently exposing the data.
+"""
+from fastapi import APIRouter, HTTPException
 
-router = APIRouter(
-    prefix="/comments",
-    tags=["comments"]
-)
-
-
-class CommentCreate(BaseModel):
-    comment: str
-    user_id: UUID
+router = APIRouter(prefix="/comments", tags=["comments-deprecated"])
 
 
-# --------------------------------
-# Add comment to segment
-# --------------------------------
-@router.post("/{segment_id}")
-def add_comment(
-    segment_id: UUID,
-    data: CommentCreate,
-    db: Session = Depends(get_db)
-):
-
-    # Verify segment exists
-    segment = db.query(TranslationSegment).filter(
-        TranslationSegment.id == segment_id
-    ).first()
-
-    if not segment:
-        raise HTTPException(status_code=404, detail="Segment not found")
-
-    # Verify user exists
-    user = db.query(User).filter(
-        User.id == data.user_id
-    ).first()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    new_comment = SegmentComment(
-        segment_id=segment_id,
-        user_id=data.user_id,
-        comment=data.comment
+@router.api_route("/{rest:path}", methods=["GET", "POST", "PATCH", "DELETE"])
+def gone(rest: str):
+    raise HTTPException(
+        status_code=410,
+        detail="This endpoint is removed. Use /segments/{id}/comments instead.",
     )
-
-    db.add(new_comment)
-    db.commit()
-    db.refresh(new_comment)
-
-    return {
-        "id": new_comment.id,
-        "segment_id": new_comment.segment_id,
-        "user_id": new_comment.user_id,
-        "comment": new_comment.comment,
-        "created_at": new_comment.created_at
-    }
-
-
-# --------------------------------
-# Get comments for a segment
-# --------------------------------
-@router.get("/{segment_id}")
-def get_comments(segment_id: UUID, db: Session = Depends(get_db)):
-
-    comments = db.query(SegmentComment).filter(
-        SegmentComment.segment_id == segment_id
-    ).order_by(SegmentComment.created_at).all()
-
-    return comments

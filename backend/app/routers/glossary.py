@@ -6,7 +6,10 @@ from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
+from app.dependencies.tenant import team_ids_for
 from app.models.user import User
+from app.models.team import Team
+from app.models.team_member import TeamMember
 from app.models.glossary import Glossary
 
 router = APIRouter(
@@ -28,6 +31,18 @@ def _serialize(term: Glossary) -> dict:
     }
 
 
+def _user_team_id(db: Session, user: User):
+    """Glossary is team-scoped. The owner's team is canonical; members
+    fall back to the team they joined."""
+    team = db.query(Team).filter(Team.owner_id == user.id).first()
+    if team:
+        return team.id
+    membership = (
+        db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
+    )
+    return membership.team_id if membership else None
+
+
 class GlossaryCreate(BaseModel):
     source_language: str
     target_language: str
@@ -45,20 +60,22 @@ class GlossaryUpdate(BaseModel):
 
 
 # =========================================
-# GET ALL TERMS
+# GET ALL TERMS — every team the caller belongs to
 # =========================================
 @router.get("")
 def get_terms(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    allowed_teams = team_ids_for(db, current_user)
+    if not allowed_teams:
+        return []
     terms = (
         db.query(Glossary)
-        .filter(Glossary.user_id == current_user.id)
+        .filter(Glossary.team_id.in_(allowed_teams))
         .order_by(Glossary.usage_count.desc())
         .all()
     )
-
     return [_serialize(t) for t in terms]
 
 
@@ -71,8 +88,12 @@ def create_term(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    team_id = _user_team_id(db, current_user)
+    if not team_id:
+        raise HTTPException(status_code=400, detail="No team found for this user")
+
     term = Glossary(
-        user_id=current_user.id,
+        team_id=team_id,
         source_language=data.source_language,
         target_language=data.target_language,
         source_term=data.source_term,
@@ -80,16 +101,14 @@ def create_term(
         notes=data.notes,
         usage_count=0,
     )
-
     db.add(term)
     db.commit()
     db.refresh(term)
-
     return _serialize(term)
 
 
 # =========================================
-# UPDATE TERM (notes / wording)
+# UPDATE TERM
 # =========================================
 @router.patch("/{term_id}")
 def update_term(
@@ -98,12 +117,13 @@ def update_term(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    allowed_teams = team_ids_for(db, current_user)
     term = (
         db.query(Glossary)
-        .filter(Glossary.id == term_id, Glossary.user_id == current_user.id)
-        .first()
+        .filter(Glossary.id == term_id, Glossary.team_id.in_(allowed_teams))
+        .first(
+        )
     )
-
     if not term:
         raise HTTPException(status_code=404, detail="Term not found")
 
@@ -113,7 +133,6 @@ def update_term(
 
     db.commit()
     db.refresh(term)
-
     return _serialize(term)
 
 
@@ -126,16 +145,15 @@ def delete_term(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    allowed_teams = team_ids_for(db, current_user)
     term = (
         db.query(Glossary)
-        .filter(Glossary.id == term_id, Glossary.user_id == current_user.id)
+        .filter(Glossary.id == term_id, Glossary.team_id.in_(allowed_teams))
         .first()
     )
-
     if not term:
         raise HTTPException(status_code=404, detail="Term not found")
 
     db.delete(term)
     db.commit()
-
     return {"status": "deleted"}

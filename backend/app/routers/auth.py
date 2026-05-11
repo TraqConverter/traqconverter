@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.dependencies.rate_limit import rate_limit
 from app.models.user import User
 from app.models.team import Team
 from app.models.credit import CreditWallet
@@ -17,8 +18,16 @@ from app.routers.members import auto_accept_invites
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# Audit CRIT-7 — per-IP throttles on auth endpoints. Generous enough for
+# real shared/NAT users, tight enough that a brute-force script gets
+# 429'd within a second.
+_login_limit = rate_limit("auth_login", max_requests=10, per_seconds=60)
+_register_limit = rate_limit("auth_register", max_requests=5, per_seconds=300)
 
-# ✅ CURRENT USER (used by frontend to render the avatar / greeting)
+
+# ============================================================
+# CURRENT USER
+# ============================================================
 @router.get("/me")
 def me(current_user: User = Depends(get_current_user)):
     return {
@@ -76,9 +85,9 @@ def change_password(
 ):
     if not verify_password(payload.current_password, current_user.password_hash):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
-    if len(payload.new_password) < 6:
+    if len(payload.new_password) < 8:
         raise HTTPException(
-            status_code=400, detail="New password must be at least 6 characters"
+            status_code=400, detail="New password must be at least 8 characters"
         )
     if payload.current_password == payload.new_password:
         raise HTTPException(
@@ -87,8 +96,20 @@ def change_password(
         )
 
     current_user.password_hash = hash_password(payload.new_password)
+    # Audit CRIT-8: invalidate every previously-issued JWT.
+    current_user.token_version = (
+        int(getattr(current_user, "token_version", 0) or 0) + 1
+    )
     db.commit()
-    return {"status": "password_updated"}
+    db.refresh(current_user)
+
+    # Mint a fresh token for the device that initiated the change so the
+    # user isn't immediately logged out from this page.
+    new_token = create_access_token(
+        {"sub": str(current_user.id)},
+        token_version=int(current_user.token_version),
+    )
+    return {"status": "password_updated", "access_token": new_token}
 
 
 # ============================================================
@@ -96,7 +117,6 @@ def change_password(
 # ============================================================
 class DeleteAccount(BaseModel):
     password: str
-    # Type the literal word "DELETE" to confirm. Frontend enforces too.
     confirm: str
 
 
@@ -113,8 +133,6 @@ def delete_account(
     if not verify_password(payload.password, current_user.password_hash):
         raise HTTPException(status_code=400, detail="Password is incorrect")
 
-    # Cascade: drop the user's owned team (and via the FK ondelete CASCADE
-    # we set on team_members and credit_wallets, the wallet/members go too).
     team = db.query(Team).filter(Team.owner_id == current_user.id).first()
     if team:
         db.query(CreditWallet).filter(CreditWallet.team_id == team.id).delete()
@@ -125,33 +143,36 @@ def delete_account(
     return {"status": "deleted"}
 
 
-# ✅ REGISTER
-@router.post("/register", response_model=TokenResponse)
+# ============================================================
+# REGISTER (rate limited)
+# ============================================================
+@router.post(
+    "/register",
+    response_model=TokenResponse,
+    dependencies=[Depends(_register_limit)],
+)
 def register(user_data: UserRegister, db: Session = Depends(get_db)):
-    # Check if user already exists
     existing = db.query(User).filter(User.email == user_data.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # 🔹 Create user
     user = User(
         email=user_data.email,
         password_hash=hash_password(user_data.password),
         full_name=user_data.full_name,
     )
     db.add(user)
-    db.flush()  # ensures user.id is available
+    db.flush()
 
-    # 🔹 Create team
     team = Team(
         name=f"{user.full_name or user.email}'s Team",
-        owner_id=user.id
+        owner_id=user.id,
     )
     db.add(team)
     db.flush()
 
-    # 🔹 Create wallet — start a 7-day trial with 1 credit. The download is
-    #    blocked at the route level (see feature_guard's TRIAL config).
+    # 7-day trial with 1 credit. Download is gated at the route level
+    # (feature_guard's TRIAL config).
     wallet = CreditWallet(
         team_id=team.id,
         subscription_credits=TRIAL_CREDITS,
@@ -162,46 +183,49 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     )
     db.add(wallet)
 
-    # Mirror the trial state on the user record so the existing
-    # user.subscription_plan / status fields stay consistent.
     user.subscription_plan = "TRIAL"
     user.subscription_status = "TRIAL"
 
     db.commit()
     db.refresh(user)
 
-    # Auto-accept any pending team invites that were sent to this email.
     try:
         auto_accept_invites(db, user)
     except Exception:
         pass
 
-    # 🔐 Create JWT
-    token = create_access_token({"sub": str(user.id)})
-
+    # Embed token_version so password changes can revoke older tokens
+    # (audit CRIT-8).
+    token = create_access_token(
+        {"sub": str(user.id)},
+        token_version=int(getattr(user, "token_version", 0) or 0),
+    )
     return TokenResponse(access_token=token)
 
 
-# ✅ LOGIN
-@router.post("/login", response_model=TokenResponse)
+# ============================================================
+# LOGIN (rate limited)
+# ============================================================
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    dependencies=[Depends(_login_limit)],
+)
 def login(user_data: UserLogin, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == user_data.email).first()
-
     if not user:
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
-    # 🔐 Verify password
     if not verify_password(user_data.password, user.password_hash):
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
-    # Auto-accept any pending team invites — covers users who already had an
-    # account when they were invited.
     try:
         auto_accept_invites(db, user)
     except Exception:
         pass
 
-    # 🔐 Create JWT
-    token = create_access_token({"sub": str(user.id)})
-
+    token = create_access_token(
+        {"sub": str(user.id)},
+        token_version=int(getattr(user, "token_version", 0) or 0),
+    )
     return TokenResponse(access_token=token)

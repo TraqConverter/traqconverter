@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/subscription", tags=["subscription"])
 
 stripe.api_key = settings.stripe_secret_key
+# Audit medium fix: retry idempotent calls (Session.create, retrieve)
+# automatically on transient network errors.
+stripe.max_network_retries = 3
 
 
 # ============================================================

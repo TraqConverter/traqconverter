@@ -1,59 +1,10 @@
-from pydantic_settings import BaseSettings
-from pydantic import ConfigDict
+"""Single source of truth for settings.
 
+This module previously defined its own `Settings` class which conflicted with
+`app/config.py` — Stripe routes called `getattr(settings, ...)` on keys that
+weren't present here, causing 500s in production. We now re-export the
+canonical instance from `app.config` so there is exactly one Settings class.
+"""
+from app.config import settings, Settings
 
-class Settings(BaseSettings):
-
-    # --------------------------------
-    # App
-    # --------------------------------
-    app_name: str = "TraqConverter"
-    environment: str = "development"
-
-    # --------------------------------
-    # Database
-    # --------------------------------
-    database_url: str
-
-    # --------------------------------
-    # Security
-    # --------------------------------
-    secret_key: str
-    algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60
-
-    # --------------------------------
-    # Stripe
-    # --------------------------------
-    stripe_secret_key: str | None = None
-    stripe_webhook_secret: str | None = None
-
-    # --------------------------------
-    # AWS
-    # --------------------------------
-    AWS_ACCESS_KEY_ID: str
-    AWS_SECRET_ACCESS_KEY: str
-    AWS_REGION: str = "us-east-1"
-
-    # --------------------------------
-    # Storage
-    # --------------------------------
-    S3_BUCKET_NAME: str
-
-    # --------------------------------
-    # Queue
-    # --------------------------------
-    SQS_QUEUE_URL: str
-
-    # --------------------------------
-    # OpenAI
-    # --------------------------------
-    openai_api_key: str | None = None
-
-    model_config = ConfigDict(
-        env_file=".env",
-        extra="ignore"
-    )
-
-
-settings = Settings()
+__all__ = ["settings", "Settings"]

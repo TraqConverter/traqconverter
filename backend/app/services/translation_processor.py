@@ -282,22 +282,30 @@ def process_translation_job(project_id: str):
         for i in range(0, len(texts), BATCH_SIZE):
             batch = texts[i:i + BATCH_SIZE]
 
+            # Audit HIGH-6: batch failures used to `continue` silently,
+            # leaving the project marked COMPLETED with empty translations
+            # and the user's credits already burned. Now we raise so the
+            # outer except marks the project FAILED, which trips the
+            # downstream credit-refund and error broadcast paths.
             try:
                 translations = translate_batch(
                     batch,
                     source_lang,
                     target_lang,
                     db=db,
-                    project=project
+                    project=project,
                 )
-
             except Exception as e:
-                logger.error(f"Batch failed: {e}")
-                continue
+                logger.exception(f"Batch failed (segments {i}..{i + len(batch)}): {e}")
+                raise
 
             if not translations or len(translations) != len(batch):
-                logger.warning("Mismatch — skipping batch")
-                continue
+                logger.error(
+                    "Translation count mismatch (expected %d, got %d) — failing the job",
+                    len(batch),
+                    len(translations) if translations else 0,
+                )
+                raise Exception("Translator returned wrong number of segments")
 
             # =================================================
             # STORE
@@ -370,15 +378,20 @@ def process_translation_job(project_id: str):
         output_file = temp_dir / f"translated_{project.file_name}"
 
         try:
-            pairs = [
-                (s.translated_text or s.source_text, dict(s.layout_meta or {}))
-                for s in segments
-            ]
+            pairs = []
+            for s in segments:
+                # Carry source_text into layout so rebuilders that produce
+                # a side-by-side view (e.g. the IMAGE rebuild for ID/passport
+                # translations) can render both columns.
+                meta = dict(s.layout_meta or {})
+                meta["source_text"] = s.source_text
+                pairs.append((s.translated_text or s.source_text, meta))
             written_path = rebuild_output(
                 source_kind=source_kind,
                 original_path=str(input_file),
                 output_path=str(output_file),
                 pairs=pairs,
+                target_lang=target_lang,
             )
             output_to_upload = Path(written_path)
         except Exception as e:

@@ -1,41 +1,17 @@
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+"""Deprecated. The job-creation flow is `/projects/upload`.
 
-from app.database import get_db
-from app.database import SessionLocal
-from app.dependencies import get_current_user
-from app.models.user import User
-from app.models.team import Team
-from app.models.credit import CreditWallet
-from app.schemas.job import JobCreate, JobResponse
-from app.services.job_service import create_translation_job
+This file used to declare `@router.post(...)` without ever defining
+`router`, so it threw a NameError on first import (audit HIGH-4). It was
+never registered in main.py either. Replaced with an explicit stub so any
+accidental import or registration fails loudly instead of silently."""
+from fastapi import APIRouter, HTTPException
 
-@router.post("/", response_model=JobResponse)
-def create_job(
-    job_data: JobCreate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    team = db.query(Team).filter(Team.owner_id == current_user.id).first()
+router = APIRouter(prefix="/jobs", tags=["jobs-deprecated"])
 
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
 
-    job = create_translation_job(
-        db=db,
-        team_id=team.id,
-        user_id=current_user.id,
-        source_language=job_data.source_language,
-        target_language=job_data.target_language,
-        page_count=job_data.page_count,
-    )
-
-    return JobResponse(
-        id=str(job.id),
-        source_language=job.source_language,
-        target_language=job.target_language,
-        page_count=job.page_count,
-        credits_used=job.credits_used,
-        status=job.status,
+@router.api_route("/{rest:path}", methods=["GET", "POST", "PATCH", "DELETE"])
+def gone(rest: str):
+    raise HTTPException(
+        status_code=410,
+        detail="This endpoint is removed. Use /projects/upload instead.",
     )
