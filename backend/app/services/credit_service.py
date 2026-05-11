@@ -93,9 +93,14 @@ class CreditService:
         remaining = amount
 
         # ====================================================
-        # DEDUCT SUBSCRIPTION FIRST (ONLY IF ACTIVE)
+        # DEDUCT SUBSCRIPTION FIRST (ACTIVE *or* TRIAL).
+        # The expiry handler above already zeroes subscription_credits
+        # for expired subs, so any positive balance here is spendable.
+        # Previously this only matched "ACTIVE", which crashed TRIAL
+        # users with "Credit integrity violation" because the deduction
+        # fell through to purchased_credits (which is 0).
         # ====================================================
-        if wallet.subscription_status == "ACTIVE":
+        if wallet.subscription_status in ("ACTIVE", "TRIAL"):
             if wallet.subscription_credits >= remaining:
                 wallet.subscription_credits -= remaining
                 remaining = 0

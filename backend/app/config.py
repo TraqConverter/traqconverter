@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
-from pydantic import ConfigDict
-from typing import Optional
+from pydantic import ConfigDict, field_validator
+from typing import List, Optional
 
 
 class Settings(BaseSettings):
@@ -12,6 +12,21 @@ class Settings(BaseSettings):
     secret_key: str
     algorithm: str
     access_token_expire_minutes: int
+
+    # --- CORS (audit medium fix) ---
+    # Comma-separated list of allowed origins for the frontend. Defaults
+    # to local dev. Set CORS_ORIGINS in production to your real frontend
+    # domain(s). Star ("*") falls back to development behaviour and is
+    # NOT permitted with credentials.
+    CORS_ORIGINS: str = "http://localhost:3000"
+
+    @property
+    def cors_origins(self) -> List[str]:
+        return [
+            o.strip()
+            for o in self.CORS_ORIGINS.split(",")
+            if o.strip()
+        ]
 
     # --- OpenAI ---
     OPENAI_API_KEY: str
@@ -31,6 +46,10 @@ class Settings(BaseSettings):
 
     # NEW: CREDIT PRICING
     CREDIT_PRICE_CENTS: int = 100
+
+    # --- Observability (optional; if set, Sentry init runs at startup) ---
+    SENTRY_DSN: Optional[str] = None
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.1
 
     # --- AWS (IAM compatible) ---
     AWS_ACCESS_KEY_ID: Optional[str] = None

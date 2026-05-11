@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
+from app.dependencies.tenant import get_user_project_or_404
 from app.models.project import TranslationProject, ProjectStatus
 from app.models.user import User
 from app.models.team import Team
@@ -185,7 +186,8 @@ async def upload_project(
         db.rollback()
 
         logger.exception("Upload failed")
-        print("🔥 REAL ERROR:", str(e))  # 👈 CRITICAL
+        # Audit Low fix: was a print-with-emoji; use the logger instead.
+        logger.error("Upload failed: %s", e)
 
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
@@ -535,16 +537,9 @@ def approve_segment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = (
-        db.query(TranslationProject)
-        .filter(
-            TranslationProject.id == project_id,
-            TranslationProject.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Audit HIGH-3: scope by team, not creator. Assigned teammates can
+    # see/approve/certify/download projects too.
+    project = get_user_project_or_404(db, project_id, current_user)
 
     seg = (
         db.query(TranslationSegment)
@@ -583,16 +578,9 @@ def update_review_status(
     if new_status not in allowed:
         raise HTTPException(status_code=400, detail="Invalid review status")
 
-    project = (
-        db.query(TranslationProject)
-        .filter(
-            TranslationProject.id == project_id,
-            TranslationProject.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Audit HIGH-3: scope by team, not creator. Assigned teammates can
+    # see/approve/certify/download projects too.
+    project = get_user_project_or_404(db, project_id, current_user)
 
     project.review_status = new_status
     db.commit()
@@ -613,16 +601,9 @@ def certify_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = (
-        db.query(TranslationProject)
-        .filter(
-            TranslationProject.id == project_id,
-            TranslationProject.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Audit HIGH-3: scope by team, not creator. Assigned teammates can
+    # see/approve/certify/download projects too.
+    project = get_user_project_or_404(db, project_id, current_user)
 
     if project.status != ProjectStatus.COMPLETED:
         raise HTTPException(
@@ -658,16 +639,9 @@ def download_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = (
-        db.query(TranslationProject)
-        .filter(
-            TranslationProject.id == project_id,
-            TranslationProject.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Audit HIGH-3: scope by team, not creator. Assigned teammates can
+    # see/approve/certify/download projects too.
+    project = get_user_project_or_404(db, project_id, current_user)
 
     if project.status != ProjectStatus.COMPLETED:
         raise HTTPException(
@@ -691,16 +665,9 @@ def delete_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = (
-        db.query(TranslationProject)
-        .filter(
-            TranslationProject.id == project_id,
-            TranslationProject.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Audit HIGH-3: scope by team, not creator. Assigned teammates can
+    # see/approve/certify/download projects too.
+    project = get_user_project_or_404(db, project_id, current_user)
 
     db.delete(project)
     db.commit()

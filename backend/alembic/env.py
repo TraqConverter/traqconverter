@@ -17,12 +17,22 @@ if config.config_file_name is not None:
 
 from app.database import Base
 
-# Import ALL model modules so metadata is registered
-import app.models.user
-import app.models.team
-import app.models.job
-import app.models.credit
-import app.models.glossary
+# Import ALL model modules so autogenerate sees every table.
+# Audit medium fix: this list previously had only 5 of the 13+ models,
+# which meant `alembic revision --autogenerate` silently missed schema
+# changes for the rest.
+import app.models.user  # noqa: F401
+import app.models.team  # noqa: F401
+import app.models.team_member  # noqa: F401
+import app.models.job  # noqa: F401
+import app.models.credit  # noqa: F401
+import app.models.glossary  # noqa: F401
+import app.models.project  # noqa: F401
+import app.models.translation_segment  # noqa: F401
+import app.models.translation_memory  # noqa: F401
+import app.models.segment_comment  # noqa: F401
+import app.models.stripe_event  # noqa: F401
+import app.models.certification  # noqa: F401
 
 target_metadata = Base.metadata
 

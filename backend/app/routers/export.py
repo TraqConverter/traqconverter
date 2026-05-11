@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
+from app.dependencies.tenant import get_user_project_or_404
 from app.models.translation_segment import TranslationSegment
 from app.models.project import TranslationProject
 from app.models.user import User
@@ -27,13 +28,9 @@ def export_docx_route(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = (
-        db.query(TranslationProject)
-        .filter(TranslationProject.id == project_id)
-        .first()
-    )
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Tenant guard — IDOR-safe (CRIT-2): only return projects on the
+    # caller's team, otherwise 404 (don't reveal existence cross-tenant).
+    project = get_user_project_or_404(db, project_id, current_user)
 
     segments = (
         db.query(TranslationSegment)
@@ -44,11 +41,24 @@ def export_docx_route(
     if not segments:
         raise HTTPException(status_code=404, detail="No segments found")
 
+    # Only approved segments make it into the export — that's how the
+    # editor signals "ready to ship". Edits to translated_text done in
+    # the editor land in the DB before this point, so they're picked up
+    # automatically.
     valid_segments = [
-        s for s in segments if s.translated_text and s.translated_text.strip()
+        s for s in segments
+        if s.translated_text
+        and s.translated_text.strip()
+        and bool(s.approved)
     ]
     if not valid_segments:
-        raise HTTPException(status_code=400, detail="No translated content available")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No approved segments yet. Approve segments in the editor "
+                "(green tick) before exporting."
+            ),
+        )
 
     try:
         file_buffer = generate_docx(valid_segments, current_user.email, project=project)
@@ -76,13 +86,9 @@ def export_pdf_route(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = (
-        db.query(TranslationProject)
-        .filter(TranslationProject.id == project_id)
-        .first()
-    )
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Tenant guard — IDOR-safe (CRIT-2): only return projects on the
+    # caller's team, otherwise 404 (don't reveal existence cross-tenant).
+    project = get_user_project_or_404(db, project_id, current_user)
 
     segments = (
         db.query(TranslationSegment)
@@ -93,11 +99,22 @@ def export_pdf_route(
     if not segments:
         raise HTTPException(status_code=404, detail="No segments found")
 
+    # Only approved segments make it into the export — see the DOCX route
+    # above for the full reasoning.
     valid_segments = [
-        s for s in segments if s.translated_text and s.translated_text.strip()
+        s for s in segments
+        if s.translated_text
+        and s.translated_text.strip()
+        and bool(s.approved)
     ]
     if not valid_segments:
-        raise HTTPException(status_code=400, detail="No translated content available")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No approved segments yet. Approve segments in the editor "
+                "(green tick) before exporting."
+            ),
+        )
 
     try:
         file_buffer = generate_pdf(valid_segments, current_user.email, project=project)

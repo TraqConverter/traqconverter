@@ -10,7 +10,13 @@ class Glossary(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    user_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"), nullable=False)
+    # Audit HIGH-2: this column was literally named `user_id` while
+    # FK'ing to `teams.id`. Renamed to match what it actually points at.
+    team_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("teams.id", ondelete="CASCADE"),
+        nullable=False,
+    )
 
     source_language = Column(String, nullable=False)
     target_language = Column(String, nullable=False)
@@ -18,8 +24,5 @@ class Glossary(Base):
     source_term = Column(Text, nullable=False)
     target_term = Column(Text, nullable=False)
 
-    # Free-form note about when/how to use the term.
     notes = Column(Text, nullable=True)
-
-    # Auto-incremented every time the term is applied in a translation.
     usage_count = Column(Integer, nullable=False, default=0)

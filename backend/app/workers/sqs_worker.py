@@ -10,12 +10,15 @@ from app.config import settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-sqs = boto3.client(
-    "sqs",
-    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-    region_name=settings.AWS_REGION
-)
+# Build the SQS client. If explicit creds are present in env, use them;
+# otherwise fall through to boto3's default credential chain
+# (~/.aws/credentials, IAM instance role, etc.) — same pattern as s3_service.
+_sqs_kwargs = {"region_name": settings.AWS_REGION}
+if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
+    _sqs_kwargs["aws_access_key_id"] = settings.AWS_ACCESS_KEY_ID
+    _sqs_kwargs["aws_secret_access_key"] = settings.AWS_SECRET_ACCESS_KEY
+
+sqs = boto3.client("sqs", **_sqs_kwargs)
 
 QUEUE_URL = settings.SQS_QUEUE_URL
 

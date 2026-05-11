@@ -3,6 +3,7 @@ import uuid
 import logging
 from pathlib import Path
 from botocore.exceptions import ClientError
+from botocore.config import Config
 
 from app.config import settings
 
@@ -11,12 +12,19 @@ logger = logging.getLogger(__name__)
 
 # ============================================================
 # S3 CLIENT (IAM compatible)
+# ----------------------------------------------------------------
+# Audit medium fix: explicit retries (3 with adaptive backoff) and
+# socket timeouts so a slow S3 endpoint can't hang a translation job.
 # ============================================================
 
-s3_client = boto3.client(
-    "s3",
-    region_name=settings.AWS_REGION
+_s3_config = Config(
+    region_name=settings.AWS_REGION,
+    retries={"max_attempts": 3, "mode": "adaptive"},
+    connect_timeout=10,
+    read_timeout=60,
 )
+
+s3_client = boto3.client("s3", config=_s3_config)
 
 BUCKET_NAME = settings.S3_BUCKET_NAME
 

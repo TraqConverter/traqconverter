@@ -1,3 +1,6 @@
+import logging
+import time
+
 from openai import OpenAI
 from sqlalchemy import update
 from app.config import settings
@@ -7,9 +10,82 @@ from app.services.translation_memory_service import get_tm_entries
 from app.services.glossary_service import build_glossary_prompt, get_glossary
 from app.models.glossary import Glossary
 
-client = OpenAI(api_key=settings.OPENAI_API_KEY)
+logger = logging.getLogger(__name__)
+
+# Audit medium fix: previously OpenAI calls had no timeout and no retry,
+# so any blip aborted the whole batch. The OpenAI SDK accepts a default
+# timeout (seconds) and max_retries that handles 429/5xx with backoff.
+client = OpenAI(
+    api_key=settings.OPENAI_API_KEY,
+    timeout=60.0,
+    max_retries=3,
+)
 
 BATCH_SIZE = 20
+
+
+# ============================================================
+# LANGUAGE CODE → HUMAN-READABLE NAME
+# ----------------------------------------------------------------
+# The frontend sends BCP-47 codes (de-DE, it-IT, en-GB). Passing those
+# raw to the LLM produced inconsistent output — the model would
+# sometimes ignore them. Mapping to plain names ("German", "Italian")
+# makes the prompt unambiguous and dramatically improves accuracy.
+# ============================================================
+LANGUAGE_NAMES = {
+    "auto": "the document's source language (auto-detect)",
+    # Latin-script
+    "en": "English",
+    "en-GB": "English (UK)",
+    "en-US": "English (US)",
+    "de": "German", "de-DE": "German",
+    "fr": "French", "fr-FR": "French",
+    "it": "Italian", "it-IT": "Italian",
+    "es": "Spanish", "es-ES": "Spanish",
+    "pt": "Portuguese", "pt-PT": "Portuguese",
+    "pt-BR": "Portuguese (Brazilian)",
+    "nl": "Dutch", "nl-NL": "Dutch",
+    "sv": "Swedish", "sv-SE": "Swedish",
+    "da": "Danish", "da-DK": "Danish",
+    "no": "Norwegian", "no-NO": "Norwegian",
+    "fi": "Finnish", "fi-FI": "Finnish",
+    "pl": "Polish", "pl-PL": "Polish",
+    "cs": "Czech", "cs-CZ": "Czech",
+    "ro": "Romanian", "ro-RO": "Romanian",
+    "hu": "Hungarian", "hu-HU": "Hungarian",
+    "tr": "Turkish", "tr-TR": "Turkish",
+    "vi": "Vietnamese", "vi-VN": "Vietnamese",
+    "id": "Indonesian", "id-ID": "Indonesian",
+    # Other scripts
+    "ja": "Japanese", "ja-JP": "Japanese",
+    "zh": "Chinese (Simplified)",
+    "zh-CN": "Chinese (Simplified)",
+    "zh-TW": "Chinese (Traditional)",
+    "ko": "Korean", "ko-KR": "Korean",
+    "ru": "Russian", "ru-RU": "Russian",
+    "uk": "Ukrainian", "uk-UA": "Ukrainian",
+    "el": "Greek", "el-GR": "Greek",
+    "ar": "Arabic", "ar-SA": "Arabic",
+    "he": "Hebrew", "he-IL": "Hebrew",
+    "hi": "Hindi", "hi-IN": "Hindi",
+    "th": "Thai", "th-TH": "Thai",
+}
+
+
+def humanize_lang(code: str | None) -> str:
+    """Return a human-readable language name for a BCP-47 code.
+
+    Falls back to the bare language part (e.g. "fr" from "fr-CA") then to
+    the literal value, so unknown codes still produce something sensible.
+    """
+    if not code:
+        return "the source language"
+    if code in LANGUAGE_NAMES:
+        return LANGUAGE_NAMES[code]
+    base = code.split("-", 1)[0].lower()
+    if base in LANGUAGE_NAMES:
+        return LANGUAGE_NAMES[base]
+    return code
 
 
 # ============================================================
@@ -128,6 +204,9 @@ def translate_text(
         except Exception as e:
             print("GLOSSARY ERROR:", e)
 
+    src_name = humanize_lang(source_lang)
+    tgt_name = humanize_lang(target_lang)
+
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
@@ -136,12 +215,14 @@ def translate_text(
                 "content": f"""
 You are a professional translator.
 
-Translate from {source_lang} to {target_lang}.
+Translate from {src_name} to {tgt_name}.
+The output MUST be written in {tgt_name}.
 
 STRICT RULES:
 - You MUST follow glossary mappings exactly
 - Do NOT change glossary terms
 - Do NOT re-translate already translated terms
+- The entire output must be in {tgt_name}.
 
 {glossary_prompt}
 
@@ -253,9 +334,12 @@ def translate_batch(
     # ========================================================
     DELIM = "<<<SEG>>>"
 
+    src_name = humanize_lang(source_lang)
+    tgt_name = humanize_lang(target_lang)
+
     rules = f"""You are a professional human translator producing certified translations.
 
-Task: Translate every input segment from {source_lang} to {target_lang}.
+Task: Translate every input segment from {src_name} to {tgt_name}. The output MUST be written entirely in {tgt_name}.
 
 ABSOLUTE RULES — these are non-negotiable for legal and identity documents:
 - Preserve all proper nouns, personal names, place names and organisation names exactly as written.
@@ -263,8 +347,8 @@ ABSOLUTE RULES — these are non-negotiable for legal and identity documents:
 - Preserve currency symbols and amounts exactly.
 - Preserve internal line breaks inside a segment. If the input segment has 3 lines, the output must have 3 lines.
 - Do NOT add commentary, do NOT add or remove punctuation, do NOT renumber or reorder.
-- If a segment is already in {target_lang} (already translated, or untranslatable like an ID number), return it unchanged.
-- Translate idiomatically and accurately — no calques, no machine artefacts.
+- If a segment is already in {tgt_name} (already translated, or untranslatable like an ID number), return it unchanged.
+- Translate idiomatically and accurately into {tgt_name} — no calques, no machine artefacts. Do not output any other language.
 """
 
     if glossary_prompt:
