@@ -98,13 +98,16 @@ def _try_layout_docx_from_project(project) -> BytesIO | None:
 
 
 def _build_layout_pdf_live(segments, project):
-    """Rebuild a layout-preserving PDF from CURRENT segment data.
+    """Build the export PDF in the new STRUCTURED format:
 
-    The pre-built `output_file` in S3 is created once at translation time,
-    so it can't reflect (a) edits the user makes in the editor or
-    (b) approval-state filtering. This function ignores S3 and runs the
-    rebuild fresh against the segments the caller passed in (which the
-    export router has already filtered to `approved=True`).
+        Page 1+      : original document (image or PDF) verbatim
+        Pages N+     : clean structured translation
+        Final page   : certification block (optional company logo)
+
+    Replaces the old in-place overlay (which produced bilingual residue
+    on image documents) with a professionally-typeset translation that
+    preserves alignment, bold/italic emphasis, placeholders for
+    non-text elements, and source page breaks.
     """
     if project is None or not segments:
         return None
@@ -112,18 +115,19 @@ def _build_layout_pdf_live(segments, project):
     if kind not in ("PDF", "IMAGE"):
         return None
 
-    # Need the original input file to provide page sizes / OCR seed.
     file_key = getattr(project, "file_path", None)
     if not file_key:
         return None
 
-    import tempfile
     import os
+    import tempfile
+    from datetime import datetime
     from pathlib import Path
     from app.services.s3_service import generate_presigned_download_url
-    from app.services.layout_translator import rebuild_output
+    from app.services.structured_translation_renderer import (
+        render_structured_export,
+    )
     import requests
-    import fitz
 
     try:
         url = generate_presigned_download_url(file_key)
@@ -135,16 +139,16 @@ def _build_layout_pdf_live(segments, project):
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="traqexport_"))
     try:
-        # Match the source extension so layout_translator picks the right path.
-        ext = ".pdf" if kind == "PDF" else os.path.splitext(file_key)[1] or ".jpg"
+        ext = (
+            ".pdf"
+            if kind == "PDF"
+            else os.path.splitext(file_key)[1] or ".jpg"
+        )
         src_path = tmp_dir / f"source{ext}"
         with open(src_path, "wb") as f:
             f.write(r.content)
 
-        out_path = tmp_dir / "rebuilt.pdf"
-
-        # Build (translated_text, layout_meta) pairs, threading source_text
-        # so noise-filter heuristics work consistently with the worker.
+        # Build (translated, layout) pairs from current segments.
         pairs = []
         for s in segments:
             if not s.translated_text or not s.translated_text.strip():
@@ -156,47 +160,70 @@ def _build_layout_pdf_live(segments, project):
         if not pairs:
             return None
 
-        written = rebuild_output(
+        # Resolve a company logo: per-user S3 logo first, then optional
+        # global default from settings.
+        logo_path = None
+        user_logo_key = getattr(project, "_export_user_logo_key", None)
+        if user_logo_key:
+            try:
+                from app.services.s3_service import (
+                    generate_presigned_download_url as _gen_url,
+                )
+                logo_url = _gen_url(user_logo_key)
+                lr = requests.get(logo_url, timeout=10)
+                if lr.ok:
+                    logo_ext = (
+                        os.path.splitext(user_logo_key)[1].lower() or ".png"
+                    )
+                    user_logo_file = tmp_dir / f"logo{logo_ext}"
+                    with open(user_logo_file, "wb") as f:
+                        f.write(lr.content)
+                    logo_path = str(user_logo_file)
+            except Exception as e:
+                logger.warning("Couldn't fetch user logo: %s", e)
+        if not logo_path:
+            try:
+                from app.config import settings as _s
+                cand = getattr(_s, "COMPANY_LOGO_PATH", None)
+                if cand and os.path.isfile(cand):
+                    logo_path = cand
+            except Exception:
+                logo_path = None
+
+        translator_email = getattr(project, "_export_user_email", "") or ""
+
+        project_meta = {
+            "title": (
+                getattr(project, "file_name", None)
+                or "Certified Translation"
+            ),
+            "file_name": getattr(project, "file_name", None) or "",
+            "source_language": getattr(project, "source_language", "") or "",
+            "target_language": getattr(project, "target_language", "") or "",
+            "translator_email": translator_email,
+            "certification_date": datetime.utcnow().strftime(
+                "%Y-%m-%d %H:%M UTC"
+            ),
+        }
+
+        pdf_bytes = render_structured_export(
             source_kind=kind,
             original_path=str(src_path),
-            output_path=str(out_path),
             pairs=pairs,
-            target_lang=getattr(project, "target_language", None),
+            project_meta=project_meta,
+            company_logo_path=logo_path,
         )
 
-        with open(written, "rb") as f:
-            rebuilt_bytes = f.read()
-
-        # Prepend the certification page.
-        cert_buf = BytesIO()
-        cert_doc = SimpleDocTemplate(cert_buf)
-        styles = getSampleStyleSheet()
-        cert_content = []
-        for line in build_certification(
-            getattr(project, "_export_user_email", "")
-        ):
-            cert_content.append(Paragraph(line, styles["Normal"]))
-            cert_content.append(Spacer(1, 10))
-        cert_doc.build(cert_content)
-        cert_buf.seek(0)
-
-        # Document first, certification page appended at the end —
-        # standard certified-translation layout (signed/dated cert sits
-        # *after* the translated body it attests to).
-        rebuilt = fitz.open(stream=rebuilt_bytes, filetype="pdf")
-        cert_pdf = fitz.open(stream=cert_buf.getvalue(), filetype="pdf")
-        rebuilt.insert_pdf(cert_pdf)
         out = BytesIO()
-        rebuilt.save(out)
-        rebuilt.close()
-        cert_pdf.close()
+        out.write(pdf_bytes)
         out.seek(0)
         return out
     except Exception as e:
-        logger.warning(f"Live layout rebuild failed: {e}", exc_info=True)
+        logger.warning(
+            "Structured export rendering failed: %s", e, exc_info=True
+        )
         return None
     finally:
-        # Best-effort cleanup of the temp dir.
         try:
             import shutil
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -204,10 +231,13 @@ def _build_layout_pdf_live(segments, project):
             pass
 
 
-def generate_docx(segments, user_email, project=None):
+def generate_docx(segments, user_email, project=None, user=None):
     if project is not None:
         try:
             project._export_user_email = user_email
+            project._export_user_logo_key = (
+                getattr(user, "logo_s3_key", None) if user else None
+            )
         except Exception:
             pass
         layout_doc = _try_layout_docx_from_project(project)
@@ -229,10 +259,13 @@ def generate_docx(segments, user_email, project=None):
     return buffer
 
 
-def generate_pdf(segments, user_email, project=None):
+def generate_pdf(segments, user_email, project=None, user=None):
     if project is not None:
         try:
             project._export_user_email = user_email
+            project._export_user_logo_key = (
+                getattr(user, "logo_s3_key", None) if user else None
+            )
         except Exception:
             pass
         # Always rebuild from the live segments so edits + approval

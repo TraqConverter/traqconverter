@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     # --- OpenAI ---
     OPENAI_API_KEY: str
 
+    # --- Anthropic / Claude Vision (optional) ---
+    # When set, image documents (passports, IDs, scans) are OCR'd with
+    # Claude Vision instead of pytesseract — much better on stylised
+    # fonts, low-contrast scans, holograms, and photographic backgrounds.
+    # Leave empty to keep the tesseract pipeline.
+    ANTHROPIC_API_KEY: Optional[str] = None
+    ANTHROPIC_VISION_MODEL: str = "claude-sonnet-4-6"
+
     # --- Stripe ---
     stripe_secret_key: str
     stripe_publishable_key: str
@@ -44,8 +52,18 @@ class Settings(BaseSettings):
     STRIPE_SUCCESS_URL: str = "http://localhost:3000/success"
     STRIPE_CANCEL_URL: str = "http://localhost:3000/cancel"
 
+    # Optional company logo / header used on the certification page of
+    # every exported translation. Should be an absolute path to a PNG
+    # or JPG on the server's filesystem. Leave unset to skip the logo.
+    COMPANY_LOGO_PATH: Optional[str] = None
+
     # NEW: CREDIT PRICING
     CREDIT_PRICE_CENTS: int = 100
+
+    # NEW: CREDIT PACK PRICE IDs (one-time purchases from Stripe dashboard)
+    STRIPE_PRICE_CREDITS_10: Optional[str] = None
+    STRIPE_PRICE_CREDITS_25: Optional[str] = None
+    STRIPE_PRICE_CREDITS_50: Optional[str] = None
 
     # --- Observability (optional; if set, Sentry init runs at startup) ---
     SENTRY_DSN: Optional[str] = None

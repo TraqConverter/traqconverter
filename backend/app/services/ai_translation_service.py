@@ -179,7 +179,11 @@ def translate_text(
     glossary_prompt = ""
     glossary_map = {}
 
-    if db and project:
+    project_apply_glossary = (
+        bool(getattr(project, "apply_glossary", True)) if project else True
+    )
+
+    if db and project and project_apply_glossary:
         try:
             scope_id = get_project_scope(project)
 
@@ -258,10 +262,16 @@ def translate_batch(
     # 🔧 STANDARDIZED SCOPE
     scope_id = get_project_scope(project) if project else None
 
+    # Per-project opt-out flags from the new-project page toggles.
+    project_use_tm = bool(getattr(project, "use_tm", True)) if project else True
+    project_apply_glossary = (
+        bool(getattr(project, "apply_glossary", True)) if project else True
+    )
+
     # ========================================================
-    # LOAD TM (TEAM SCOPED)
+    # LOAD TM (TEAM SCOPED) — skipped when project opted out.
     # ========================================================
-    if db and project and scope_id:
+    if db and project and scope_id and project_use_tm:
         try:
             tm_entries = []
 
@@ -289,9 +299,9 @@ def translate_batch(
             print("TM ERROR:", e)
 
     # ========================================================
-    # LOAD GLOSSARY (TEAM SCOPED)
+    # LOAD GLOSSARY (TEAM SCOPED) — skipped when project opted out.
     # ========================================================
-    if db and project and scope_id:
+    if db and project and scope_id and project_apply_glossary:
         try:
             glossary_entries = get_glossary(
                 db,

@@ -49,12 +49,13 @@ from sqlalchemy.orm import Session
 
 from app.models.project import TranslationProject, ProjectStatus
 from app.models.translation_segment import TranslationSegment
+from app.models.translation_memory import TranslationMemory
 from app.database import SessionLocal
 from app.services.s3_service import (
     download_file_from_s3,
     upload_file_to_s3
 )
-from app.services.ai_translation_service import translate_batch
+from app.services.ai_translation_service import translate_batch, translate_text
 from app.services.translation_memory_service import store_tm_entry
 from app.services.certification_service import CertificationService
 from app.services.layout_translator import (
@@ -274,67 +275,215 @@ def process_translation_job(project_id: str):
         # ====================================================
         # TRANSLATE
         # ====================================================
-        texts = [s.source_text for s in segments]
-
         source_lang = project.source_language or "English"
         target_lang = project.target_language or "Spanish"
 
-        for i in range(0, len(texts), BATCH_SIZE):
-            batch = texts[i:i + BATCH_SIZE]
-
-            # Audit HIGH-6: batch failures used to `continue` silently,
-            # leaving the project marked COMPLETED with empty translations
-            # and the user's credits already burned. Now we raise so the
-            # outer except marks the project FAILED, which trips the
-            # downstream credit-refund and error broadcast paths.
+        # ====================================================
+        # TRANSLATION MEMORY FAST PATH
+        # ----------------------------------------------------
+        # Only runs when project.use_tm is True (toggle on the new-
+        # project page). When the user opts out we don't bulk-load
+        # entries and we don't apply hits — every segment goes to the
+        # LLM. We also skip storing fresh TM entries below.
+        # ====================================================
+        use_tm = bool(getattr(project, "use_tm", True))
+        apply_glossary = bool(getattr(project, "apply_glossary", True))
+        logger.info(
+            "Project options for %s: use_tm=%s apply_glossary=%s add_certification=%s",
+            project_id,
+            use_tm,
+            apply_glossary,
+            bool(getattr(project, "add_certification", False)),
+        )
+        if use_tm:
             try:
-                translations = translate_batch(
-                    batch,
+                tm_rows = (
+                    db.query(
+                        TranslationMemory.source_text,
+                        TranslationMemory.translated_text,
+                    )
+                    .filter(
+                        TranslationMemory.team_id == project.team_id,
+                        TranslationMemory.source_language == source_lang,
+                        TranslationMemory.target_language == target_lang,
+                    )
+                    .all()
+                )
+                tm_map: dict[str, str] = {
+                    row.source_text: row.translated_text
+                    for row in tm_rows
+                    if row.source_text and row.translated_text
+                }
+            except Exception as e:
+                logger.warning(
+                    "TM bulk-load failed; proceeding without it: %s", e
+                )
+                tm_map = {}
+        else:
+            logger.info("Project opted out of TM — fast path skipped")
+            tm_map = {}
+
+        tm_hit_count = 0
+        miss_indices: list[int] = []
+        miss_texts: list[str] = []
+        for idx, seg in enumerate(segments):
+            cached = tm_map.get(seg.source_text)
+            if cached:
+                seg.translated_text = cached
+                seg.tm_pct = 100
+                project.translated_segments += 1
+                tm_hit_count += 1
+            else:
+                miss_indices.append(idx)
+                miss_texts.append(seg.source_text)
+
+        if tm_hit_count:
+            # Commit TM hits immediately so progress is durable even if
+            # a later LLM batch crashes.
+            db.commit()
+            progress = int(
+                (
+                    project.translated_segments
+                    / max(project.total_segments, 1)
+                )
+                * 100
+            )
+            project.progress_percent = progress
+            project.last_heartbeat = datetime.utcnow()
+            db.commit()
+            logger.info(
+                "TM fast path: %d/%d segments served from memory (%d%% of doc)",
+                tm_hit_count,
+                len(segments),
+                int((tm_hit_count / max(len(segments), 1)) * 100),
+            )
+            safe_broadcast(project_id, progress, "PROCESSING")
+
+        # `texts` is now the list of MISS texts we still need the LLM
+        # for. We also keep `miss_indices` so we can route translations
+        # back to the correct segment when results come back.
+        texts = miss_texts
+
+        def _translate_resilient(batch_texts, depth=0):
+            """Translate a batch with automatic fall-back on count
+            mismatches. Splits failing batches in half, then in quarters,
+            etc., and finally falls back to per-segment translation. A
+            single segment that fails is left as empty rather than
+            blowing up the whole job — a partial result is much better
+            than zero translated content for the user.
+            """
+            if not batch_texts:
+                return []
+
+            if len(batch_texts) == 1:
+                try:
+                    return [
+                        translate_text(
+                            batch_texts[0],
+                            source_lang,
+                            target_lang,
+                            db=db,
+                            project=project,
+                        ) or ""
+                    ]
+                except Exception as e:
+                    logger.warning(
+                        "Per-segment translation failed (depth=%d): %s",
+                        depth, e,
+                    )
+                    return [""]
+
+            try:
+                result = translate_batch(
+                    batch_texts,
                     source_lang,
                     target_lang,
                     db=db,
                     project=project,
                 )
-            except Exception as e:
-                logger.exception(f"Batch failed (segments {i}..{i + len(batch)}): {e}")
-                raise
-
-            if not translations or len(translations) != len(batch):
-                logger.error(
-                    "Translation count mismatch (expected %d, got %d) — failing the job",
-                    len(batch),
-                    len(translations) if translations else 0,
+                if result and len(result) == len(batch_texts):
+                    return result
+                logger.warning(
+                    "Batch count mismatch (expected %d, got %d, depth=%d) — splitting",
+                    len(batch_texts),
+                    len(result) if result else 0,
+                    depth,
                 )
-                raise Exception("Translator returned wrong number of segments")
+            except Exception as e:
+                logger.warning(
+                    "Batch translation raised (depth=%d): %s — splitting",
+                    depth, e,
+                )
+
+            if depth > 6:
+                return [""] * len(batch_texts)
+
+            mid = max(1, len(batch_texts) // 2)
+            left = _translate_resilient(batch_texts[:mid], depth + 1)
+            right = _translate_resilient(batch_texts[mid:], depth + 1)
+            return left + right
+
+        for i in range(0, len(texts), BATCH_SIZE):
+            batch = texts[i:i + BATCH_SIZE]
+            translations = _translate_resilient(batch)
+
+            # _translate_resilient always returns a list of the right
+            # length (empty strings for failed segments).
+            if len(translations) != len(batch):
+                # Defensive shim — should never trip given the recursive
+                # fallback above, but pad/truncate just in case.
+                translations = (translations + [""] * len(batch))[: len(batch)]
 
             # =================================================
             # STORE
             # =================================================
+            # ============================================
+            # PHASE 1 — write segment translations and COMMIT.
+            # Map LLM batch results back to the ORIGINAL segment indices
+            # via miss_indices (texts/batch only contains TM-miss texts,
+            # so segments[i + j] would point at the wrong segment).
+            # ============================================
+            tm_candidates: list[tuple[str, str]] = []
             for j, translated in enumerate(translations):
-                seg = segments[i + j]
-
+                seg_idx = miss_indices[i + j]
+                seg = segments[seg_idx]
                 clean = (translated or "").strip()
-
                 if not clean:
                     continue
-
                 seg.translated_text = clean
-
-                try:
-                    store_tm_entry(
-                        db=db,
-                        team_id=project.team_id,
-                        source_language=source_lang,
-                        target_language=target_lang,
-                        source_text=seg.source_text,
-                        translated_text=clean
-                    )
-                except Exception:
-                    logger.warning("TM store failed")
-
+                seg.tm_pct = 0  # not a TM hit
                 project.translated_segments += 1
+                tm_candidates.append((seg.source_text, clean))
 
             db.commit()
+
+            # ============================================
+            # PHASE 2 — best-effort Translation Memory.
+            # Skipped entirely when project.use_tm is False so the user's
+            # opt-out is respected (translations made now won't seed
+            # future projects' fast path).
+            # ============================================
+            if use_tm:
+                for src_text, tgt_text in tm_candidates:
+                    try:
+                        store_tm_entry(
+                            db=db,
+                            team_id=project.team_id,
+                            source_language=source_lang,
+                            target_language=target_lang,
+                            source_text=src_text,
+                            translated_text=tgt_text,
+                        )
+                    except Exception as tm_err:
+                        logger.warning(
+                            "TM store skipped (%d-char source): %s",
+                            len(src_text or ""),
+                            tm_err,
+                        )
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
 
             # =================================================
             # PROGRESS

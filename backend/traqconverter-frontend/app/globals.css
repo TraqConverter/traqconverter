@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+/* =========================
+   DESIGN TOKENS — Espresso cream/teal
+========================= */
+:root {
+  --background: #faf5ee;        /* warm cream main bg */
+  --surface: #ffffff;           /* card surface */
+  --surface-muted: #f3ecdb;     /* sidebar / chip bg */
+  --border: #e7ddc5;            /* hairline border */
+  --border-subtle: #f1e8d1;     /* table divider */
+  --foreground: #1f2a2e;        /* heading / body */
+  --muted: #6b6558;             /* secondary text */
+  --muted-2: #8a8270;           /* tertiary text */
+  --muted-3: #9a9178;           /* label / icon tint */
+  --accent: #0a7870;            /* primary teal */
+  --accent-soft: #cfe6e2;       /* teal tint */
+  --amber: #c88a1a;
+  --amber-soft: #f6e3b8;
+  --sage: #4a8a3a;
+  --sage-soft: #d8ead6;
+  --rust: #b14a3a;
+  --rust-soft: #f2d4cf;
+}
+
+/* =========================
+   BASE STYLES
+========================= */
+html, body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbars inside the cream theme */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #e7ddc5;
+  border-radius: 999px;
+  border: 2px solid var(--background);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #d5c9ab;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Placeholder & selection polish */
+::placeholder {
+  color: #a79e87;
+}
+::selection {
+  background: #cfe6e2;
+  color: #0a5e58;
+}

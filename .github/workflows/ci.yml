@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff
+
+      - name: Syntax check (ast.parse every .py)
+        run: |
+          python - <<'PY'
+          import ast, pathlib, sys
+          fails = 0
+          for p in pathlib.Path('.').rglob('*.py'):
+              if 'venv' in p.parts or 'node_modules' in p.parts:
+                  continue
+              try:
+                  ast.parse(p.read_text(encoding='utf-8', errors='replace'))
+              except SyntaxError as e:
+                  print(f'SYNTAX FAIL: {p}:{e.lineno}: {e.msg}')
+                  fails += 1
+          sys.exit(1 if fails else 0)
+          PY
+
+      - name: Lint
+        run: ruff check app worker || true   # advisory until baseline is clean
+
+      - name: Smoke import
+        env:
+          # Minimum env so app.config doesn't reject startup at import time.
+          app_name: TraqConverter
+          environment: test
+          database_url: sqlite:///:memory:
+          secret_key: testsecretkey1234567890
+          algorithm: HS256
+          access_token_expire_minutes: "60"
+          OPENAI_API_KEY: sk-test
+          stripe_secret_key: sk_test_test
+          stripe_publishable_key: pk_test_test
+          stripe_webhook_secret: whsec_test
+          STRIPE_PRICE_PRO: price_test_pro
+          S3_BUCKET_NAME: test
+          SQS_QUEUE_URL: ""
+        run: python -c "import app.main; print('OK')"
+
+  frontend:
+    name: Frontend (Next.js)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: traqconverter-frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: traqconverter-frontend/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: TypeScript
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npx next lint || true
+
+      - name: Build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+        run: npm run build

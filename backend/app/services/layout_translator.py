@@ -402,15 +402,73 @@ def _merge_overlapping_segments(
     return merged_all
 
 
-def _extract_pdf(file_path: str) -> list[ExtractedSegment]:
-    """Use PyMuPDF blocks. Each block becomes one segment.
+def _map_pdf_font(font_name: str | None, flags: int) -> str:
+    """Map an arbitrary PDF font name + style flags to one of PyMuPDF's
+    14 built-in font names (so glyphs render without needing to embed
+    a TTF).
 
-    For scanned PDFs (CamScanner-style: a page-filling image plus a noisy
-    OCR text layer) we IGNORE the embedded text layer and re-OCR the
-    rendered pages ourselves. The CamScanner OCR is unreliable for
-    stylised text, watermarks, microprint and curved fonts, and that
-    unreliability is what produces the "renee ceraacennen" gibberish
-    blocks the user keeps seeing.
+    PyMuPDF span flag bits:
+        bit 0 (1)   superscript
+        bit 1 (2)   italic
+        bit 2 (4)   serif
+        bit 3 (8)   monospaced
+        bit 4 (16)  bold
+    """
+    is_bold = bool(flags & 16)
+    is_italic = bool(flags & 2)
+    is_serif = bool(flags & 4)
+    is_mono = bool(flags & 8)
+
+    fn = (font_name or "").lower()
+
+    # Monospaced → Courier family
+    if is_mono or any(k in fn for k in ("courier", "mono", "consolas")):
+        if is_bold and is_italic:
+            return "cobi"
+        if is_bold:
+            return "cobo"
+        if is_italic:
+            return "coit"
+        return "cour"
+
+    # Serif → Times family
+    serif_hits = ("times", "garamond", "georgia", "serif", "roman", "minion", "cambria")
+    if is_serif or any(k in fn for k in serif_hits):
+        if is_bold and is_italic:
+            return "tibi"
+        if is_bold:
+            return "tibo"
+        if is_italic:
+            return "tiit"
+        return "tiro"
+
+    # Default → Helvetica family
+    if is_bold and is_italic:
+        return "hebi"
+    if is_bold:
+        return "hebo"
+    if is_italic:
+        return "heit"
+    return "helv"
+
+
+def _extract_pdf(file_path: str) -> list[ExtractedSegment]:
+    """Extract source text at LINE level (not block level).
+
+    Why per-line
+    ------------
+    PyMuPDF text blocks group several visually-consecutive lines into one
+    rectangle. Translating block by block and redrawing the whole block
+    inside its bounding rect loses the original line spacing, alignment,
+    and breaks. Per-line extraction preserves:
+      * the exact bbox of every physical line (so we redact and redraw
+        in-place — no drift)
+      * the line's dominant font, size, colour, bold/italic flags (so
+        the translation visually matches)
+
+    Scanned PDFs (CamScanner-style: image-only pages plus a noisy OCR
+    text layer) are detected and routed through fresh pytesseract OCR
+    so we never trust an unreliable embedded OCR.
     """
     import fitz
 
@@ -429,43 +487,61 @@ def _extract_pdf(file_path: str) -> list[ExtractedSegment]:
             data = page.get_text("dict")
             for block in data.get("blocks", []):
                 if block.get("type") != 0:
-                    continue  # skip image blocks for now
-                lines = block.get("lines", [])
-                texts: list[str] = []
-                font_size = 11.0
-                color = 0
-                for line in lines:
+                    continue  # skip image blocks
+
+                for line in block.get("lines", []):
                     spans = line.get("spans", [])
                     if not spans:
                         continue
-                    if spans[0].get("size"):
-                        font_size = float(spans[0]["size"])
-                    if spans[0].get("color") is not None:
-                        color = int(spans[0]["color"])
-                    line_text = "".join(s.get("text", "") for s in spans)
-                    if line_text.strip():
-                        texts.append(line_text)
-                text = "\n".join(texts).strip()
-                if not text:
-                    continue
-                bbox = list(block.get("bbox", [0, 0, 0, 0]))
-                out.append(
-                    ExtractedSegment(
-                        text=text,
-                        layout={
-                            "kind": "pdf_block",
-                            "page": page_index,
-                            "bbox": bbox,
-                            "font_size": font_size,
-                            "color": color,
-                        },
+
+                    # Concatenate span text in order; pick the
+                    # dominant font properties from the span that
+                    # covers the most characters (so a 1-char span
+                    # in a different font doesn't override the line).
+                    line_text = ""
+                    dominant_span = max(
+                        spans,
+                        key=lambda s: len(s.get("text", "") or ""),
                     )
-                )
+                    for s in spans:
+                        line_text += s.get("text", "") or ""
+                    line_text = line_text.strip()
+                    if not line_text:
+                        continue
+
+                    font_size = float(dominant_span.get("size") or 11.0)
+                    color = int(dominant_span.get("color") or 0)
+                    font_name = dominant_span.get("font") or ""
+                    flags = int(dominant_span.get("flags") or 0)
+                    ascender = float(dominant_span.get("ascender") or 0.8)
+                    descender = float(dominant_span.get("descender") or -0.2)
+
+                    bbox = list(line.get("bbox", [0, 0, 0, 0]))
+                    out.append(
+                        ExtractedSegment(
+                            text=line_text,
+                            layout={
+                                "kind": "pdf_line",
+                                "page": page_index,
+                                "bbox": bbox,
+                                "font_size": font_size,
+                                "color": color,
+                                "font_name": font_name,
+                                "flags": flags,
+                                "ascender": ascender,
+                                "descender": descender,
+                            },
+                        )
+                    )
     finally:
         try:
             doc.close()
         except Exception:
             pass
+
+    if not out:
+        out = _extract_pdf_via_ocr(file_path)
+    return out
 
     # Fallback OCR if nothing extracted at all.
     if not out:
@@ -622,63 +698,213 @@ def _extract_docx(file_path: str) -> list[ExtractedSegment]:
     return out
 
 
-def _extract_image(file_path: str) -> list[ExtractedSegment]:
-    """Word-level OCR with bounding boxes — perfect for IDs/passports.
+def _looks_like_mrz(text: str) -> bool:
+    """Detect Machine-Readable Zone lines (passport / ID card bottom).
+    These are encoded data, not real language, and translating them
+    produces nonsense. Pattern: long line of caps + digits + '<' chars."""
+    s = (text or "").strip().replace(" ", "")
+    if len(s) < 20:
+        return False
+    # MRZ lines use only A-Z, 0-9, and < ; have ≥2 chevron fillers.
+    if s.count("<") >= 2 and all(c.isalnum() or c == "<" for c in s):
+        return True
+    return False
 
-    Each text line becomes a segment whose layout has the line's bbox so
-    the rebuilder can paint the translated text into the same area.
+
+def _extract_image_via_claude(file_path: str) -> list[ExtractedSegment] | None:
+    """Try Claude Vision OCR first. Returns None to signal 'fall back'."""
+    try:
+        from app.services.claude_vision_ocr import is_available, ocr_image
+    except Exception:
+        return None
+    if not is_available():
+        return None
+    try:
+        lines = ocr_image(file_path)
+    except Exception as e:
+        logger.warning("Claude Vision OCR raised: %s", e)
+        return None
+    if not lines:
+        return None
+
+    out: list[ExtractedSegment] = []
+    for idx, line in enumerate(lines):
+        text = (line.get("text") or "").strip()
+        if not text:
+            continue
+        if _looks_like_mrz(text):
+            continue
+        bbox = line.get("bbox")
+        if not bbox or len(bbox) != 4:
+            continue
+        x0, y0, x1, y1 = bbox
+        h = max(1.0, y1 - y0)
+        # Map Claude's relative "size" hint to an approximate point
+        # size so the renderer keeps hierarchy (title vs body vs
+        # footer fine print).
+        rel_size = (line.get("size") or "normal").lower()
+        size_map = {
+            "small": 8.0,
+            "normal": 10.5,
+            "large": 13.0,
+            "xlarge": 16.0,
+        }
+        font_size = size_map.get(rel_size, max(7.0, min(12.0, h * 0.7)))
+        # Bold/italic via PyMuPDF span-flag bits so the existing
+        # rendering paths read it the same way as PDF segments.
+        flags = 0
+        if line.get("bold"):
+            flags |= 16
+        if line.get("italic"):
+            flags |= 2
+        out.append(
+            ExtractedSegment(
+                text=text,
+                layout={
+                    "kind": "image_line",
+                    "page": 0,
+                    "bbox": [float(x0), float(y0), float(x1), float(y1)],
+                    "line": idx,
+                    "font_size": font_size,
+                    "ocr_source": "claude",
+                    "claude_kind": line.get("kind") or "text",
+                    "placeholder_kind": line.get("placeholder_kind"),
+                    "alignment": line.get("alignment") or "left",
+                    "bold": bool(line.get("bold")),
+                    "italic": bool(line.get("italic")),
+                    "all_caps": bool(line.get("all_caps")),
+                    "size_hint": rel_size,
+                    "flags": flags,
+                    # Claude's font-family classification used by the
+                    # renderer to pick Times / Helvetica / Courier.
+                    "font_family": line.get("font_family") or "",
+                },
+            )
+        )
+    return out if out else None
+
+
+def _extract_image(file_path: str) -> list[ExtractedSegment]:
+    """OCR an image into translatable line segments.
+
+    Pipeline:
+      1. Try Claude Vision OCR first (cleaner reads on ID/passport/
+         certificate documents). Only runs when ANTHROPIC_API_KEY is set.
+      2. Fall back to tesseract when Claude isn't available or returns
+         nothing usable.
+
+    The tesseract path is the same proven implementation as before:
+      * 2400px upscale before OCR
+      * per-word confidence filter (conf < 55 dropped)
+      * MRZ pattern skip
+      * median-word-height font sizing capped 7-12pt
     """
+    claude_segs = _extract_image_via_claude(file_path)
+    if claude_segs:
+        return claude_segs
+
     import pytesseract
     from PIL import Image
 
     image = Image.open(file_path).convert("RGB")
+    orig_w, orig_h = image.size
+
+    # ----------------------------------------------------------------
+    # 1. Upscale for better OCR. Tesseract's accuracy improves
+    # substantially on inputs ≥ 2000px on the long edge.
+    # ----------------------------------------------------------------
+    long_edge = max(orig_w, orig_h)
+    if long_edge < 2400:
+        scale = 2400 / long_edge
+        new_w = int(orig_w * scale)
+        new_h = int(orig_h * scale)
+        ocr_img = image.resize((new_w, new_h), Image.LANCZOS)
+    else:
+        scale = 1.0
+        ocr_img = image
+
     try:
         data = pytesseract.image_to_data(
-            image, output_type=pytesseract.Output.DICT
+            ocr_img, output_type=pytesseract.Output.DICT
         )
     except Exception as e:
         raise Exception(f"OCR failed: {e}")
 
+    inv_scale = 1.0 / scale  # rendered → source coords
+
+    # ----------------------------------------------------------------
+    # 2. Group words → lines, applying confidence filter.
+    # ----------------------------------------------------------------
     lines: dict[tuple, dict] = {}
     n = len(data.get("text", []))
+    MIN_CONF = 55  # tesseract returns -1 for "no confidence" entries
     for i in range(n):
         txt = (data["text"][i] or "").strip()
         if not txt:
             continue
-        key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+        try:
+            conf = int(data.get("conf", [-1])[i])
+        except Exception:
+            conf = -1
+        if conf >= 0 and conf < MIN_CONF:
+            continue  # low-confidence noise — drop word
+        key = (
+            data["block_num"][i],
+            data["par_num"][i],
+            data["line_num"][i],
+        )
+        x = int(data["left"][i])
+        y = int(data["top"][i])
+        w = int(data["width"][i])
+        h = int(data["height"][i])
         entry = lines.setdefault(
             key,
             {
                 "words": [],
-                "x": int(data["left"][i]),
-                "y": int(data["top"][i]),
-                "right": int(data["left"][i] + data["width"][i]),
-                "bottom": int(data["top"][i] + data["height"][i]),
+                "x": x,
+                "y": y,
+                "right": x + w,
+                "bottom": y + h,
+                "heights": [],
             },
         )
         entry["words"].append(txt)
-        entry["x"] = min(entry["x"], int(data["left"][i]))
-        entry["y"] = min(entry["y"], int(data["top"][i]))
-        entry["right"] = max(
-            entry["right"], int(data["left"][i] + data["width"][i])
-        )
-        entry["bottom"] = max(
-            entry["bottom"], int(data["top"][i] + data["height"][i])
-        )
+        entry["x"] = min(entry["x"], x)
+        entry["y"] = min(entry["y"], y)
+        entry["right"] = max(entry["right"], x + w)
+        entry["bottom"] = max(entry["bottom"], y + h)
+        entry["heights"].append(h)
 
     out: list[ExtractedSegment] = []
     for line_idx, info in enumerate(lines.values()):
         line_text = " ".join(info["words"]).strip()
         if not line_text:
             continue
+        if _looks_like_mrz(line_text):
+            continue  # MRZ codes are not translatable text
+
+        # Convert from upscaled-image coords back to source-image coords.
+        x0 = info["x"] * inv_scale
+        y0 = info["y"] * inv_scale
+        x1 = info["right"] * inv_scale
+        y1 = info["bottom"] * inv_scale
+
+        # Font size — use median word-height to stay robust against
+        # one tall ascender skewing the bbox. Cap tightly so the
+        # rebuild never paints absurdly-large translations.
+        heights = sorted(info["heights"]) or [16]
+        med_h = heights[len(heights) // 2] * inv_scale
+        font_size = max(7.0, min(12.0, med_h * 0.7))
+
         out.append(
             ExtractedSegment(
                 text=line_text,
                 layout={
                     "kind": "image_line",
                     "page": 0,
-                    "bbox": [info["x"], info["y"], info["right"], info["bottom"]],
+                    "bbox": [x0, y0, x1, y1],
                     "line": line_idx,
+                    "font_size": font_size,
                 },
             )
         )
@@ -907,7 +1133,7 @@ def _rebuild_pdf(
     gibberish are skipped so we don't paint mistranslated junk where the
     original showed decorative noise.
     """
-    logger.info("[pdf-rebuild v5] in-place overlay (preserve font size)")
+    logger.info("[pdf-rebuild v6] line-level overlay with font matching")
     import fitz
 
     # Open the original — we modify a COPY of every page rather than building
@@ -927,14 +1153,83 @@ def _rebuild_pdf(
         registered_fonts: dict[int, str] = {}
 
         # Pre-render every page once so background sampling reads the
-        # ORIGINAL pixels (before any of our white-out rectangles paint
-        # over things).
+        # ORIGINAL pixels (before any of our redactions remove text).
         page_pixmaps = {}
         for idx, p in enumerate(doc):
             try:
                 page_pixmaps[idx] = p.get_pixmap(dpi=72)
             except Exception:
                 page_pixmaps[idx] = None
+
+        # ============================================================
+        # PASS 1 — REDACT the source text for every bbox we plan to
+        # paint over. add_redact_annot physically removes the text from
+        # the PDF stream (not just paints over it) so the output PDF
+        # contains ONLY the translation, not Italian + English overlaid.
+        #
+        # CRITICAL: apply_redactions defaults to removing images and
+        # vector graphics within the rectangle too. For form-heavy
+        # documents (Italian tax forms, certificates) that would strip
+        # the box outlines, dividers and field borders along with the
+        # text — leaving an empty skeleton. We pass IMAGE_NONE +
+        # LINE_ART_NONE so the redaction only touches text and the
+        # form structure is preserved.
+        # ============================================================
+        pages_with_redactions: set[int] = set()
+        redact_count = 0
+        for translated_text, layout in pairs:
+            page_idx = int((layout or {}).get("page", 0))
+            bbox = (layout or {}).get("bbox")
+            if bbox is None or page_idx >= len(doc):
+                continue
+            page = doc[page_idx]
+            rect = fitz.Rect(*bbox)
+            # Pad by 2pt (was 1pt) so descenders and kerning that fall
+            # just outside the line bbox still get redacted. This is
+            # the difference between a clean rebuild and visible
+            # bilingual residue.
+            mask_rect = fitz.Rect(
+                rect.x0 - 2, rect.y0 - 2, rect.x1 + 2, rect.y1 + 2
+            )
+            try:
+                page.add_redact_annot(mask_rect)
+                pages_with_redactions.add(page_idx)
+                redact_count += 1
+            except Exception as e:
+                logger.debug(
+                    "add_redact_annot failed on page %d bbox %s: %s",
+                    page_idx, bbox, e,
+                )
+
+        logger.info(
+            "[pdf-rebuild v6] queued %d redactions across %d pages",
+            redact_count, len(pages_with_redactions),
+        )
+
+        # Apply queued redactions per page with text-only semantics.
+        # Older PyMuPDF builds may not have these enum constants, so we
+        # fall back to the default if the kwargs are rejected.
+        redaction_failures: dict[int, str] = {}
+        for page_idx in pages_with_redactions:
+            page = doc[page_idx]
+            try:
+                page.apply_redactions(
+                    images=getattr(fitz, "PDF_REDACT_IMAGE_NONE", 0),
+                    graphics=getattr(fitz, "PDF_REDACT_LINE_ART_NONE", 0),
+                )
+            except TypeError:
+                try:
+                    page.apply_redactions()
+                except Exception as e:
+                    redaction_failures[page_idx] = str(e)
+                    logger.warning(
+                        "apply_redactions failed on page %d: %s", page_idx, e
+                    )
+            except Exception as e:
+                redaction_failures[page_idx] = str(e)
+                logger.warning(
+                    "apply_redactions failed on page %d: %s", page_idx, e
+                )
 
         for translated_text, layout in pairs:
             page_idx = int((layout or {}).get("page", 0))
@@ -943,76 +1238,118 @@ def _rebuild_pdf(
                 continue
             page = doc[page_idx]
             rect = fitz.Rect(*bbox)
-            page_h_pt = page.rect.height
             pix_for_page = page_pixmaps.get(page_idx)
 
             src = (layout or {}).get("source_text", "")
             font_size = float((layout or {}).get("font_size") or 11.0)
 
-            # Sample the original background color around the source bbox
-            # so the fill blends with off-white scans / cream pages /
-            # tinted backgrounds rather than standing out as pure white.
-            bg = _sample_background_color(page, rect, pix=pix_for_page)
-
-            # If the source block is gibberish (OCR garbage from stylised
-            # headers, watermarks, security microprint), HIDE it by
-            # painting the background colour over the bbox.
+            # Noise blocks: redaction already removed the source text;
+            # paint a small bg patch so any antialiased glyph residue
+            # is covered, then move on.
             if _is_noise_text(src, font_size=font_size):
-                mask_rect = fitz.Rect(
-                    rect.x0 - 1, rect.y0 - 1, rect.x1 + 1, rect.y1 + 1
+                bg_noise = _sample_background_color(
+                    page, rect, pix=pix_for_page
                 )
                 page.draw_rect(
-                    mask_rect, color=None, fill=bg, overlay=True
+                    rect, color=None, fill=bg_noise, overlay=True
                 )
                 continue
 
             if not translated_text:
                 continue
 
+            # Sample the background colour and paint the bbox. If the
+            # redaction for this page failed (some PDFs reject
+            # apply_redactions for various reasons), paint a slightly
+            # larger rectangle to physically hide the original glyphs
+            # even though they're still in the text stream.
+            bg = _sample_background_color(page, rect, pix=pix_for_page)
+            if page_idx in redaction_failures:
+                fail_safe = fitz.Rect(
+                    rect.x0 - 2, rect.y0 - 2, rect.x1 + 2, rect.y1 + 2,
+                )
+                page.draw_rect(fail_safe, color=None, fill=bg, overlay=True)
+            else:
+                page.draw_rect(rect, color=None, fill=bg, overlay=True)
+
             color_int = int(layout.get("color") or 0)
             r = ((color_int >> 16) & 0xFF) / 255.0
             g = ((color_int >> 8) & 0xFF) / 255.0
             b = (color_int & 0xFF) / 255.0
 
-            # Per-page font resolution: prefer a registered TTF for
-            # Arabic/Hebrew/Hindi/Thai; otherwise use the CJK/Helv name
-            # picked above.
-            page_font = fontname
-            if fontname == "helv":
+            # ============================================
+            # FONT SELECTION (style + script aware)
+            # 1. If the target uses CJK, use the reserved CJK name we
+            #    picked up-front (japan/korea/china-*).
+            # 2. If the target uses Arabic / Hebrew / Hindi / Thai,
+            #    register a system TTF for that script.
+            # 3. Otherwise — pick the right Latin-script built-in
+            #    (Times / Helvetica / Courier × Regular/Bold/Italic/
+            #    Bold-Italic) using the ORIGINAL font name + flags so
+            #    the translation visually matches the source.
+            # ============================================
+            flags = int((layout or {}).get("flags") or 0)
+            src_font_name = (layout or {}).get("font_name") or ""
+
+            if fontname != "helv":
+                # CJK target → keep the CJK font name.
+                page_font = fontname
+            else:
+                # Try a registered script TTF first.
                 if page_idx not in registered_fonts:
                     registered_fonts[page_idx] = (
-                        _register_script_font(page, target_lang) or "helv"
+                        _register_script_font(page, target_lang) or ""
                     )
-                page_font = registered_fonts[page_idx]
+                script_font = registered_fonts[page_idx]
+                if script_font:
+                    page_font = script_font
+                else:
+                    # Latin-script fall-through: pick a style-matched
+                    # PyMuPDF built-in so bold/italic/serif survive.
+                    page_font = _map_pdf_font(src_font_name, flags)
 
-            # Apply Arabic reshaping + bidi reordering so RTL text
-            # displays in the correct visual order.
+            # RTL languages need reshaping + bidi reorder + right-align.
             display_text = (
                 _shape_rtl(translated_text, target_lang)
                 if is_rtl
                 else translated_text
             )
-            text_align = 2 if is_rtl else 0  # 2 = right, 0 = left
+            text_align = 2 if is_rtl else 0
 
-            # 1. Mask the source bbox with the SAMPLED background colour
-            #    so the rectangle blends with the rest of the page.
-            mask_rect = fitz.Rect(
-                rect.x0 - 1, rect.y0 - 1, rect.x1 + 1, rect.y1 + 1
-            )
-            page.draw_rect(mask_rect, color=None, fill=bg, overlay=True)
+            # ============================================
+            # WIDTH-AWARE FONT SIZING
+            # Measure the translation's rendered width at the source
+            # font size. If it fits the bbox width, use the source
+            # size verbatim — same typographic weight as the original.
+            # If not, scale the size by (width_available / width_needed)
+            # in one calculation rather than guessing through a ladder.
+            # ============================================
+            target_size = font_size
+            try:
+                rendered_w = fitz.get_text_length(
+                    display_text, fontname=page_font, fontsize=font_size
+                )
+                box_w = max(1.0, rect.width - 2)  # small padding
+                if rendered_w > box_w:
+                    scale = box_w / rendered_w
+                    target_size = max(6.0, font_size * scale)
+            except Exception:
+                pass
 
-            # 2. Try the source font size first. If the translation is too
-            #    long, shrink the font (don't expand the rectangle).
+            # ============================================
+            # DRAW
+            # Use insert_textbox for proper line-wrapping inside the
+            # bbox. If somehow it still overflows (very long
+            # translation), fall through to a free-position insert_text
+            # at the line's baseline so the segment isn't dropped.
+            # ============================================
             drawn = False
             for size in (
-                font_size,
-                font_size * 0.95,
-                font_size * 0.9,
-                font_size * 0.85,
-                font_size * 0.8,
-                font_size * 0.75,
-                font_size * 0.7,
-                max(font_size * 0.6, 6.0),
+                target_size,
+                target_size * 0.95,
+                target_size * 0.9,
+                target_size * 0.85,
+                max(target_size * 0.7, 6.0),
             ):
                 rc = page.insert_textbox(
                     rect,
@@ -1028,13 +1365,16 @@ def _rebuild_pdf(
 
             if not drawn:
                 try:
-                    # For RTL, anchor the free-position text at the
-                    # right edge of the bbox so it still reads naturally.
+                    # Anchor at the line's baseline (approx 80% down
+                    # the bbox for typical fonts) so the glyphs sit
+                    # in the same vertical position as the original.
+                    asc = float((layout or {}).get("ascender") or 0.8)
+                    baseline_y = rect.y0 + asc * font_size
                     px = rect.x1 - 1 if is_rtl else rect.x0 + 1
                     page.insert_text(
-                        fitz.Point(px, rect.y0 + max(font_size, 8)),
+                        fitz.Point(px, baseline_y),
                         display_text,
-                        fontsize=max(font_size * 0.7, 6.0),
+                        fontsize=max(target_size * 0.7, 6.0),
                         color=(r, g, b),
                         fontname=page_font,
                     )
@@ -1296,16 +1636,13 @@ def _rebuild_image(
              appear in OCR order so the reader can align them visually
              with the original on page 1.
     """
-    logger.info("[image-rebuild v5] in-place overlay (preserve font size)")
+    logger.info("[image-rebuild v6] high-quality overlay")
     from PIL import Image
     import fitz
 
     fontname = _pdf_font_for_language(target_lang)
     is_rtl = _is_rtl_language(target_lang)
 
-    # Embed the original image as the page so its visual layout (logos,
-    # signatures, photos, watermarks) is preserved. Then white-out the
-    # source text bboxes and draw the translations on top.
     src = Image.open(original_path).convert("RGB")
     src_w, src_h = src.size
     img_buf = io.BytesIO()
@@ -1318,14 +1655,59 @@ def _rebuild_image(
     pix = fitz.Pixmap(img_buf.getvalue())
     page.insert_image(page.rect, pixmap=pix)
 
-    # If the target uses a non-CJK non-Latin script (Arabic, Hebrew,
-    # Hindi, Thai), register a system TTF that has those glyphs.
     page_font = fontname
     if fontname == "helv":
         page_font = _register_script_font(page, target_lang) or "helv"
 
-    # Pixmap of the source image for background-colour sampling.
+    # Pixmap of the source image used for both background-colour
+    # sampling AND photo-region detection. We compute a 'colour
+    # variance' for each candidate bbox — text on a flat background
+    # has low variance, while text supposedly inside a holder's
+    # photo or hologram has high variance. High-variance regions
+    # are skipped to avoid painting nonsense over the photo.
     sample_pix = fitz.Pixmap(img_buf.getvalue())
+
+    def _bbox_is_photographic(rect) -> bool:
+        """True if the area inside `rect` looks like a photograph or
+        hologram rather than flat ink-on-paper text. Heuristic: sample
+        a grid of pixels and compute the variance of luminance values.
+        High variance + wide RGB spread → photograph."""
+        try:
+            w = max(1, sample_pix.width)
+            h = max(1, sample_pix.height)
+            x0 = max(0, min(w - 1, int(rect.x0)))
+            y0 = max(0, min(h - 1, int(rect.y0)))
+            x1 = max(0, min(w - 1, int(rect.x1)))
+            y1 = max(0, min(h - 1, int(rect.y1)))
+            if x1 <= x0 + 2 or y1 <= y0 + 2:
+                return False
+            n_components = sample_pix.n
+            samples = sample_pix.samples
+            lums = []
+            rs, gs, bs = [], [], []
+            step_x = max(1, (x1 - x0) // 6)
+            step_y = max(1, (y1 - y0) // 6)
+            for yy in range(y0, y1, step_y):
+                for xx in range(x0, x1, step_x):
+                    idx = (yy * w + xx) * n_components
+                    r = samples[idx]
+                    g = samples[idx + 1]
+                    b = samples[idx + 2]
+                    rs.append(r); gs.append(g); bs.append(b)
+                    lums.append(0.299 * r + 0.587 * g + 0.114 * b)
+            if not lums:
+                return False
+            mean_l = sum(lums) / len(lums)
+            var_l = sum((l - mean_l) ** 2 for l in lums) / len(lums)
+            # Wide RGB spread within the bbox (photographs have varied
+            # colour; printed text on white paper is mostly one colour
+            # band). Threshold tuned empirically for ID cards.
+            chroma = (max(rs) - min(rs)) + (max(gs) - min(gs)) + (max(bs) - min(bs))
+            if var_l > 2000 and chroma > 200:
+                return True
+            return False
+        except Exception:
+            return False
 
     for translated, layout in pairs:
         bbox = (layout or {}).get("bbox")
@@ -1333,13 +1715,18 @@ def _rebuild_image(
             continue
         x0, y0, x1, y1 = bbox
         rect = fitz.Rect(x0, y0, x1, y1)
-        h = max(1, y1 - y0)
 
         src_text = (layout or {}).get("source_text", "")
+
+        # Skip OCR boxes that fall in a photo region (holder's face,
+        # hologram, watermark gradient). We'd produce garbage there.
+        if _bbox_is_photographic(rect):
+            continue
+
         bg = _sample_background_color(page, rect, pix=sample_pix)
 
         # Hide gibberish OCR blocks with the sampled background colour
-        # instead of pure white so the patch blends with the document.
+        # so the patch blends with the document.
         if _is_noise_text(src_text):
             mask_rect = fitz.Rect(
                 rect.x0 - 1, rect.y0 - 1, rect.x1 + 1, rect.y1 + 1
@@ -1352,19 +1739,30 @@ def _rebuild_image(
         if not translated:
             continue
 
-        # Derive a font size from the source bbox height. OCR bbox height
-        # is roughly the cap height of the original line, so 0.75x gives a
-        # reasonable point size.
-        font_size = max(6, int(h * 0.75))
+        # Prefer the font_size the extractor stored (median word
+        # height, capped 7-12pt). Fall back to a bbox-derived
+        # estimate for legacy projects.
+        h = max(1.0, y1 - y0)
+        font_size = float(
+            (layout or {}).get("font_size") or max(6.0, h * 0.6)
+        )
+        font_size = min(font_size, 12.0)
 
-        # 1. Mask the source bbox with the SAMPLED background colour
-        #    so the patch blends with the page (cream/scan/yellow tints).
+        # IMAGE rebuild padding: bigger than PDF because OCR bbox
+        # coordinates are inherently fuzzier than PyMuPDF's text-stream
+        # bboxes. Pad horizontally by 25% of the bbox height and
+        # vertically by 35% so the rectangle fully covers any source
+        # glyph extending slightly outside the OCR-detected line.
+        pad_v = max(2.0, h * 0.35)
+        pad_h = max(2.0, h * 0.25)
         mask_rect = fitz.Rect(
-            rect.x0 - 1, rect.y0 - 1, rect.x1 + 1, rect.y1 + 1
+            rect.x0 - pad_h,
+            rect.y0 - pad_v,
+            rect.x1 + pad_h,
+            rect.y1 + pad_v,
         )
         page.draw_rect(mask_rect, color=None, fill=bg, overlay=True)
 
-        # RTL shaping: reshape Arabic letter forms + bidi-reorder.
         display_text = _shape_rtl(translated, target_lang) if is_rtl else translated
         text_align = 2 if is_rtl else 0
 

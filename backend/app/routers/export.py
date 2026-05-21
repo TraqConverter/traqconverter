@@ -61,7 +61,12 @@ def export_docx_route(
         )
 
     try:
-        file_buffer = generate_docx(valid_segments, current_user.email, project=project)
+        file_buffer = generate_docx(
+            valid_segments,
+            current_user.email,
+            project=project,
+            user=current_user,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"DOCX export failed: {str(e)}")
 
@@ -117,7 +122,12 @@ def export_pdf_route(
         )
 
     try:
-        file_buffer = generate_pdf(valid_segments, current_user.email, project=project)
+        file_buffer = generate_pdf(
+            valid_segments,
+            current_user.email,
+            project=project,
+            user=current_user,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF export failed: {str(e)}")
 

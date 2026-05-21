@@ -37,6 +37,7 @@ def me(current_user: User = Depends(get_current_user)):
         "role": current_user.role,
         "subscription_plan": current_user.subscription_plan,
         "subscription_status": current_user.subscription_status,
+        "logo_s3_key": getattr(current_user, "logo_s3_key", None),
     }
 
 
