@@ -26,6 +26,12 @@ class User(Base):
 
     certification_file = Column(String, nullable=True)
 
+    # Optional per-user company logo displayed at the top of the
+    # certification page on every exported translation. Stored as an
+    # S3 key (we already use S3 for project files), so the same
+    # presigned-URL flow that fetches input files works here.
+    logo_s3_key = Column(String, nullable=True)
+
     # Audit CRIT-8: bumped on password change to invalidate every JWT
     # issued before the change (existing sessions get logged out).
     token_version = Column(Integer, nullable=False, default=0)

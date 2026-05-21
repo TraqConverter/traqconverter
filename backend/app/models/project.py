@@ -74,9 +74,11 @@ class TranslationProject(Base):
     last_heartbeat = Column(DateTime, nullable=True)
 
     # --------------------------------
-    # Certification Injection
+    # Per-project translation options (toggled on the new-project page)
     # --------------------------------
     add_certification = Column(Boolean, default=False, nullable=False)
+    use_tm = Column(Boolean, default=True, nullable=False)
+    apply_glossary = Column(Boolean, default=True, nullable=False)
 
     # --------------------------------
     # Language Pair

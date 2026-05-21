@@ -52,3 +52,5 @@ pypdf==5.1.0
 # RTL text support (Arabic, Hebrew, Farsi, Urdu)
 python-bidi==0.4.2
 arabic-reshaper==3.0.0
+# Claude Vision OCR (optional — used when ANTHROPIC_API_KEY is set)
+anthropic==0.43.0

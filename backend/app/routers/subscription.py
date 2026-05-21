@@ -135,14 +135,86 @@ def sync_session(
 
     plan = (metadata.get("plan") or "").upper()
     team_id = metadata.get("team_id")
+    purchase_type = (metadata.get("type") or "").lower()
+    mode = session.get("mode")
 
-    if session.get("mode") != "subscription" or plan not in SUBSCRIPTION_GRANTS or not team_id:
+    if not team_id:
+        return {"status": "ignored"}
+
+    team = db.query(Team).filter(Team.id == team_id).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    # ----------------------------------------------------------------
+    # ONE-TIME CREDIT PACK PURCHASE
+    # ----------------------------------------------------------------
+    if purchase_type == "credit_purchase" or mode == "payment":
+        try:
+            credits = int(metadata.get("credits", 0))
+        except (TypeError, ValueError):
+            credits = 0
+        if credits <= 0:
+            return {"status": "ignored"}
+
+        reference = f"checkout_{session.get('id')}"
+        existing = (
+            db.query(StripeEvent).filter(StripeEvent.id == reference).first()
+        )
+        if existing:
+            wallet = (
+                db.query(CreditWallet)
+                .filter(CreditWallet.team_id == team_id)
+                .first()
+            )
+            return {
+                "status": "already_processed",
+                "kind": "credits",
+                "credits_added": credits,
+                "purchased_credits": (
+                    wallet.purchased_credits if wallet else credits
+                ),
+            }
+
+        wallet = (
+            db.query(CreditWallet)
+            .filter(CreditWallet.team_id == team.id)
+            .with_for_update()
+            .first()
+        )
+        if not wallet:
+            wallet = CreditWallet(
+                team_id=team.id,
+                purchased_credits=0,
+                subscription_credits=0,
+                subscription_status="INACTIVE",
+            )
+            db.add(wallet)
+            db.flush()
+
+        wallet.purchased_credits += credits
+        db.add(StripeEvent(id=reference, event_type="credit_grant"))
+        db.commit()
+
+        logger.info(
+            f"sync-session credited +{credits} to team {team.id} "
+            f"(new purchased={wallet.purchased_credits})"
+        )
+        return {
+            "status": "success",
+            "kind": "credits",
+            "credits_added": credits,
+            "purchased_credits": wallet.purchased_credits,
+        }
+
+    # ----------------------------------------------------------------
+    # SUBSCRIPTION UPGRADE (BASIC / PRO)
+    # ----------------------------------------------------------------
+    if mode != "subscription" or plan not in SUBSCRIPTION_GRANTS:
         return {"status": "ignored"}
 
     reference = f"sub_checkout_{session.get('id')}"
     existing = db.query(StripeEvent).filter(StripeEvent.id == reference).first()
     if existing:
-        # Either already processed (maybe by the webhook) — just report success.
         wallet = (
             db.query(CreditWallet)
             .filter(CreditWallet.team_id == team_id)
@@ -152,10 +224,6 @@ def sync_session(
             "status": "already_processed",
             "tier": (wallet.plan_type if wallet else plan),
         }
-
-    team = db.query(Team).filter(Team.id == team_id).first()
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
 
     wallet = (
         db.query(CreditWallet)
@@ -192,7 +260,19 @@ def sync_session(
 
 
 # ============================================================
-# ONE-TIME CREDIT PURCHASE
+# CREDIT PACK CONFIG — bound to Stripe price IDs from .env so the
+# packs always check out at the exact price configured in Stripe's
+# dashboard, not a server-side number that could drift.
+# ============================================================
+CREDIT_PACKS = {
+    10: settings.STRIPE_PRICE_CREDITS_10,
+    25: settings.STRIPE_PRICE_CREDITS_25,
+    50: settings.STRIPE_PRICE_CREDITS_50,
+}
+
+
+# ============================================================
+# ONE-TIME CREDIT PURCHASE — pack-based, uses Stripe price IDs.
 # ============================================================
 @router.post("/purchase-credits")
 def purchase_credits(
@@ -200,18 +280,33 @@ def purchase_credits(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
- FIXED:
-    - No hardcoded URLs
-    - Config-driven pricing possible
+    """Create a Stripe Checkout Session for a fixed credit pack.
+
+    `amount` must match one of the configured pack sizes (10, 25, 50).
+    Each pack maps to a Stripe price ID supplied via .env so pricing
+    is owned by the Stripe dashboard rather than the server. The
+    Stripe webhook + /sync-session credit the wallet when payment
+    succeeds — same flow as the subscription upgrade path.
     """
 
-    if amount <= 0:
-        raise HTTPException(status_code=400, detail="Invalid credit amount")
+    if amount not in CREDIT_PACKS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid credit pack. Available packs: "
+                f"{sorted(CREDIT_PACKS.keys())}"
+            ),
+        )
 
-    # Pricing (move to config later if needed)
-    unit_price_cents = settings.CREDIT_PRICE_CENTS  # e.g. 100
-    total_price_cents = amount * unit_price_cents
+    price_id = CREDIT_PACKS[amount]
+    if not price_id:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Credit pack of {amount} isn't fully configured "
+                "(missing STRIPE_PRICE_CREDITS_* env var)."
+            ),
+        )
 
     team = db.query(Team).filter(
         Team.owner_id == current_user.id
@@ -220,22 +315,20 @@ def purchase_credits(
     if not team:
         raise HTTPException(status_code=400, detail="Team not found")
 
+    # Append the Stripe session id to the success URL so /success can
+    # call /sync-session and land the credits without depending on the
+    # webhook arriving first. Same pattern as the subscription path.
+    base_success = settings.STRIPE_SUCCESS_URL
+    join = "&" if "?" in base_success else "?"
+    success_url = f"{base_success}{join}session_id={{CHECKOUT_SESSION_ID}}"
+
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
         mode="payment",
         line_items=[
-            {
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {
-                        "name": f"{amount} Translation Credits",
-                    },
-                    "unit_amount": total_price_cents,
-                },
-                "quantity": 1,
-            }
+            {"price": price_id, "quantity": 1},
         ],
-        success_url=settings.STRIPE_SUCCESS_URL,
+        success_url=success_url,
         cancel_url=settings.STRIPE_CANCEL_URL,
         metadata={
             "type": "credit_purchase",

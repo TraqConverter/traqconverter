@@ -22,3 +22,14 @@ Thumbs.db
 *.sqlite3
 
 uploads/
+# Installer binaries — not source
+AWSCLIV2.msi
+
+# Frontend build artefacts (Next.js)
+traqconverter-frontend/node_modules/
+traqconverter-frontend/.next/
+traqconverter-frontend/tsconfig.tsbuildinfo
+traqconverter-frontend/next-env.d.ts
+
+# Standalone preview folder
+Traqconverter/

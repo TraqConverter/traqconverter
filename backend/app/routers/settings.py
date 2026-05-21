@@ -43,3 +43,65 @@ async def upload_certification(
             status_code=400,
             detail="Certification upload failed"
         )
+
+
+# ============================================================
+# Company logo upload — appears at the top of the certification page
+# on every exported translation. Each user has their own logo. PNG or
+# JPG, max ~2MB.
+# ============================================================
+@router.post("/upload-logo")
+async def upload_logo(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from pathlib import Path
+    import tempfile
+    from app.services.s3_service import upload_file_to_s3
+
+    name = (file.filename or "").lower()
+    if not name.endswith((".png", ".jpg", ".jpeg")):
+        raise HTTPException(
+            status_code=400, detail="Logo must be a PNG or JPG file."
+        )
+
+    # Save to a temp file then push to S3 using the same path as
+    # uploaded project files. ~2MB cap so users can't push huge images.
+    data = await file.read()
+    if len(data) > 2 * 1024 * 1024:
+        raise HTTPException(
+            status_code=400, detail="Logo file too large (2MB max)."
+        )
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="logo_"))
+    tmp_path = tmp_dir / (file.filename or "logo.png")
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(data)
+        s3_key = upload_file_to_s3(tmp_path)
+        current_user.logo_s3_key = s3_key
+        db.commit()
+        return {"message": "Logo uploaded", "logo_s3_key": s3_key}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500, detail=f"Logo upload failed: {e}"
+        )
+    finally:
+        try:
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+@router.delete("/logo")
+def delete_logo(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remove the user's logo (cert page renders without a logo)."""
+    current_user.logo_s3_key = None
+    db.commit()
+    return {"message": "Logo removed"}

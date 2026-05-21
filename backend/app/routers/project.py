@@ -63,6 +63,12 @@ async def upload_project(
     target_language: str = Form("Spanish"),
     model: str = Form("balanced"),
 
+    # New-project page toggles — persisted on the project so the worker
+    # can honour them at translation time.
+    use_tm: bool = Form(True),
+    apply_glossary: bool = Form(True),
+    request_certification: bool = Form(False),
+
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -142,6 +148,11 @@ async def upload_project(
             source_language=source_language,
             target_language=target_language,
             model=model,  # ✅ REQUIRED FIELD
+
+            # Per-project options from the new-project page toggles.
+            use_tm=use_tm,
+            apply_glossary=apply_glossary,
+            add_certification=request_certification,
 
             status=ProjectStatus.PENDING,
             progress_percent=0,
