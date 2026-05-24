@@ -182,12 +182,10 @@ async def _watchdog_loop():
 
 @app.on_event("startup")
 async def _start_watchdog():
-    try:
-        if not getattr(_settings, "SQS_QUEUE_URL", None):
-            logger.info("Watchdog disabled (no SQS_QUEUE_URL)")
-            return
-    except Exception:
-        return
+    # The queue is now Postgres-backed (translation_jobs table), so
+    # the watchdog runs unconditionally — it just sweeps stalled
+    # `processing` jobs back to `pending` so a crashed worker doesn't
+    # leave projects in limbo.
     asyncio.create_task(_watchdog_loop())
     logger.info(
         "Watchdog scheduled every %ss", WATCHDOG_INTERVAL_SECONDS
