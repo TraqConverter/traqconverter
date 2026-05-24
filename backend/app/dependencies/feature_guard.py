@@ -31,7 +31,15 @@ def effective_plan(db: Session, user: User) -> str:
     "EXPIRED" so feature checks fail closed.
 
     Returns one of: TRIAL / BASIC / PRO / EXPIRED.
+
+    Special-case: users with role SUPERUSER / SUPER_ADMIN / ADMIN are
+    always treated as PRO regardless of their wallet state, so the
+    operator account never runs out of credits or features.
     """
+    # Staff-style accounts get unlimited Pro access.
+    if (user.role or "").upper() in ("SUPERUSER", "SUPER_ADMIN", "ADMIN"):
+        return "PRO"
+
     team_id = _resolve_team_id(db, user)
     if team_id is None:
         return "EXPIRED"

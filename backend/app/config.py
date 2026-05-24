@@ -69,16 +69,27 @@ class Settings(BaseSettings):
     SENTRY_DSN: Optional[str] = None
     SENTRY_TRACES_SAMPLE_RATE: float = 0.1
 
-    # --- AWS (IAM compatible) ---
+    # --- AWS (legacy / optional) ---
+    # No longer required — Supabase Storage replaces S3 and Postgres
+    # replaces SQS. Kept here so existing AWS deployments still work
+    # without code changes.
     AWS_ACCESS_KEY_ID: Optional[str] = None
     AWS_SECRET_ACCESS_KEY: Optional[str] = None
     AWS_REGION: str = "us-east-1"
+    SQS_QUEUE_URL: Optional[str] = None
 
-    # --- Storage ---
+    # --- Storage (works with AWS S3 OR Supabase Storage) ---
+    # Bucket name is shared by both backends.
     S3_BUCKET_NAME: str
 
-    # --- Queue ---
-    SQS_QUEUE_URL: str
+    # --- Supabase Storage (S3-compatible API) ---
+    # Get these from Supabase dashboard → Project Settings → Storage →
+    # S3 access keys. Setting SUPABASE_S3_ENDPOINT switches storage to
+    # Supabase; leaving it blank falls back to real AWS S3.
+    SUPABASE_S3_ENDPOINT: Optional[str] = None
+    SUPABASE_S3_ACCESS_KEY: Optional[str] = None
+    SUPABASE_S3_SECRET_KEY: Optional[str] = None
+    SUPABASE_S3_REGION: Optional[str] = None
 
     model_config = ConfigDict(
         env_file=".env",

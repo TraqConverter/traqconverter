@@ -1,31 +1,20 @@
-import boto3
-import json
-import logging
+"""Legacy SQS shim.
 
-from app.config import settings
+The queue is now Postgres-backed (see app.services.queue_service +
+app.workers.sqs_worker). This module is kept only so any stale
+import of `send_translation_job` doesn't crash — it logs once and
+forwards to the Postgres enqueue path.
+"""
+import logging
+from app.services.queue_service import enqueue_translation_job
 
 logger = logging.getLogger(__name__)
 
-sqs = boto3.client(
-    "sqs",
-    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-    region_name=settings.AWS_REGION
-)
 
-QUEUE_URL = settings.SQS_QUEUE_URL
-
-
-def send_translation_job(project_id: str, file_key: str):
-
-    message = {
-        "project_id": project_id,
-        "file_key": file_key
-    }
-
-    sqs.send_message(
-        QueueUrl=QUEUE_URL,
-        MessageBody=json.dumps(message)
+def send_translation_job(project_id: str, file_key: str) -> None:
+    logger.info(
+        "sqs_service.send_translation_job → forwarding to Postgres queue "
+        "(project=%s)",
+        project_id,
     )
-
-    logger.info(f"SQS job sent for project {project_id}")
+    enqueue_translation_job(project_id, file_key)
