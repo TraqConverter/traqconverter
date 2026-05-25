@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
-import { clearToken } from "@/lib/auth"
+import { clearToken, setToken, getRemembered } from "@/lib/auth"
 
 // ============================================================
 // SETTINGS · ACCOUNT — espresso look
@@ -159,8 +159,14 @@ export default function AccountSettingsPage() {
       setError("Fill in both your current and new password.")
       return
     }
-    if (newPwd.length < 6) {
-      setError("New password must be at least 6 characters.")
+    // Backend enforces 8+; mirror it here so users get an instant
+    // message instead of a server round-trip.
+    if (newPwd.length < 8) {
+      setError("New password must be at least 8 characters.")
+      return
+    }
+    if (newPwd === currentPwd) {
+      setError("New password must be different from the current one.")
       return
     }
     if (newPwd !== confirmPwd) {
@@ -169,14 +175,21 @@ export default function AccountSettingsPage() {
     }
     try {
       setBusy("password")
-      await api.post("/auth/change-password", {
+      const res = await api.post("/auth/change-password", {
         current_password: currentPwd,
         new_password: newPwd,
       })
+      // The backend bumps token_version, invalidating EVERY previously
+      // issued JWT. It returns a fresh access_token so the device that
+      // initiated the change stays signed in — we have to persist it
+      // or the next request hits 401 and the interceptor punts to
+      // /login. Preserve the user's "remember me" choice.
+      const fresh = res.data?.access_token
+      if (fresh) setToken(fresh, getRemembered())
       setCurrentPwd("")
       setNewPwd("")
       setConfirmPwd("")
-      flashSuccess("Password updated.")
+      flashSuccess("Password updated. Other devices have been signed out.")
     } catch (err: any) {
       setError(
         err?.response?.data?.detail || "Couldn't update your password."
@@ -487,7 +500,7 @@ export default function AccountSettingsPage() {
         <SectionHeader
           eyebrow="SECURITY"
           title="Change password"
-          subtitle="Use at least 6 characters. Existing sessions stay signed in."
+          subtitle="Use at least 8 characters. For your security, other signed-in devices will be signed out."
         />
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
