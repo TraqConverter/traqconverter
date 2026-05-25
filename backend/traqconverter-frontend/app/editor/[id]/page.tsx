@@ -100,15 +100,21 @@ function initialsFor(p: { full_name: string | null; email: string }) {
 }
 
 function relativeTime(iso: string) {
-  const t = new Date(iso).getTime()
+  // Backend returns naive UTC ISO strings without timezone markers.
+  // Without this, the browser parses them as local time and comments
+  // appear hours older than they actually are.
+  const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(iso)
+  const safe = hasTz ? iso : iso + "Z"
+  const t = new Date(safe).getTime()
   if (!Number.isFinite(t)) return ""
   const diff = Date.now() - t
   const m = 60_000, h = 3_600_000, d = 86_400_000
+  if (diff < 0) return "just now"
   if (diff < m) return "just now"
   if (diff < h) return `${Math.floor(diff / m)}m ago`
   if (diff < d) return `${Math.floor(diff / h)}h ago`
   if (diff < 7 * d) return `${Math.floor(diff / d)}d ago`
-  return new Date(iso).toLocaleDateString()
+  return new Date(safe).toLocaleDateString()
 }
 
 export default function EditorPage() {
