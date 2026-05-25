@@ -22,6 +22,7 @@ type Project = {
   id: string
   filename: string
   status: string
+  review_status?: string
   progress: number
   source_lang: string
   target_lang: string
@@ -30,6 +31,25 @@ type Project = {
   created_at: string
   assignee_id: string | null
   assignee: Assignee | null
+}
+
+// The pill the user sees is derived from BOTH axes: `status` (worker
+// progress: PENDING/PROCESSING/COMPLETED/FAILED) and `review_status`
+// (human sign-off: DRAFT/IN_REVIEW/CERTIFIED). When the worker is
+// done we look at review_status instead so a fresh translation sits
+// in "Awaiting review" until a person certifies it.
+function effectiveStatus(p: { status?: string; review_status?: string }) {
+  const s = (p.status || "").toUpperCase()
+  if (s === "FAILED" || s === "PENDING" || s === "PROCESSING") return s
+  if (s === "COMPLETED") {
+    const r = (p.review_status || "").toUpperCase()
+    if (r === "CERTIFIED") return "CERTIFIED"
+    if (r === "IN_REVIEW") return "IN_REVIEW"
+    // Fall back to "Delivered" for legacy rows whose worker ran
+    // before the IN_REVIEW flip was wired up.
+    return "COMPLETED"
+  }
+  return s || "PENDING"
 }
 
 type Member = {
@@ -198,7 +218,7 @@ export default function JobsPage() {
   const counts = useMemo(() => {
     const c = { all: projects.length, active: 0, review: 0, delivered: 0 }
     for (const p of projects) {
-      const s = (p.status || "").toUpperCase()
+      const s = effectiveStatus(p)
       if (s === "PROCESSING" || s === "PENDING") c.active++
       else if (s === "IN_REVIEW") c.review++
       else if (s === "COMPLETED" || s === "CERTIFIED") c.delivered++
@@ -210,14 +230,14 @@ export default function JobsPage() {
     let list = projects
     if (tab === "active") {
       list = list.filter((p) => {
-        const s = (p.status || "").toUpperCase()
+        const s = effectiveStatus(p)
         return s === "PROCESSING" || s === "PENDING"
       })
     } else if (tab === "review") {
-      list = list.filter((p) => (p.status || "").toUpperCase() === "IN_REVIEW")
+      list = list.filter((p) => effectiveStatus(p) === "IN_REVIEW")
     } else if (tab === "delivered") {
       list = list.filter((p) => {
-        const s = (p.status || "").toUpperCase()
+        const s = effectiveStatus(p)
         return s === "COMPLETED" || s === "CERTIFIED"
       })
     }
@@ -388,7 +408,7 @@ export default function JobsPage() {
           />
         ) : (
           visible.map((p) => {
-            const st = statusStyle(p.status)
+            const st = statusStyle(effectiveStatus(p))
             const progress = Math.max(0, Math.min(100, p.progress || 0))
             return (
               <div
