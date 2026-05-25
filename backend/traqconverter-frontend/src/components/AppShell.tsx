@@ -2,6 +2,7 @@
 
 import { ReactNode, useEffect, useState } from "react"
 import { useRouter, usePathname } from "next/navigation"
+import Link from "next/link"
 import { api } from "@/lib/api"
 import { getToken, clearToken } from "@/lib/auth"
 
@@ -88,6 +89,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
 
   const [loading, setLoading] = useState(true)
+  // `authReady` is true when we know the user is logged in AND not
+  // on an auth page. Sidebar data fetches depend on this flag instead
+  // of on `pathname` directly, so they fire once when the user logs
+  // in (false → true) and not on every navigation thereafter.
+  const [authReady, setAuthReady] = useState(false)
   const [credits, setCredits] = useState<number | null>(null)
   const [projectCount, setProjectCount] = useState<number | null>(null)
   const [wallet, setWallet] = useState<{
@@ -117,17 +123,22 @@ export default function AppShell({ children }: { children: ReactNode }) {
     } else {
       setLoading(false)
     }
+
+    // Drive `authReady` from the synchronous token check + page kind.
+    // This flips false → true exactly once on first authenticated
+    // page-view, which is what the fetch effect below depends on.
+    setAuthReady(Boolean(token) && !isAuthPage)
   }, [pathname, router])
 
   useEffect(() => {
-    // Don't call protected endpoints on auth pages or before login
-    const token = getToken()
-    const isAuthPage =
-      pathname === "/login" ||
-      pathname === "/register" ||
-      pathname.startsWith("/auth")
-
-    if (!token || isAuthPage) {
+    // Sidebar data — wallet, user, project count — is fetched ONCE
+    // when the user authenticates rather than on every pathname
+    // change. The previous implementation re-ran three serial network
+    // calls on every navigation, which added 500-1500ms of perceived
+    // lag between clicks. Tab focus + a custom "sidebar:refresh"
+    // event let billing/upload flows refresh when counts genuinely
+    // changed.
+    if (!authReady) {
       setCredits(0)
       setWallet(null)
       setUser(null)
@@ -146,7 +157,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
           purchased_credits: res.data.purchased_credits || 0,
         })
       } catch {
-        // Silently fall back — auth-related errors are handled by the interceptor
         setCredits(0)
         setWallet(null)
       }
@@ -174,10 +184,24 @@ export default function AppShell({ children }: { children: ReactNode }) {
       }
     }
 
-    fetchCredits()
-    fetchUser()
-    fetchProjectCount()
-  }, [pathname])
+    const refreshAll = () => {
+      fetchCredits()
+      fetchUser()
+      fetchProjectCount()
+    }
+
+    refreshAll()
+
+    // Refresh when the tab regains focus (Stripe redirect, etc).
+    const onFocus = () => refreshAll()
+    const onSidebarRefresh = () => refreshAll()
+    window.addEventListener("focus", onFocus)
+    window.addEventListener("sidebar:refresh", onSidebarRefresh)
+    return () => {
+      window.removeEventListener("focus", onFocus)
+      window.removeEventListener("sidebar:refresh", onSidebarRefresh)
+    }
+  }, [authReady])
 
   if (loading) {
     return (
@@ -261,6 +285,21 @@ export default function AppShell({ children }: { children: ReactNode }) {
     return `${sub}${top}`
   })()
 
+  // Compute which nav item is active using "longest prefix wins" so
+  // that `/settings/account` doesn't also light up `/settings`
+  // (Members vs Settings) or `/settings/glossary` (Glossary vs
+  // Members). Otherwise nested routes highlight their parent too.
+  const allMatches = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.match))
+  const activeMatch = (() => {
+    // Exact match wins outright.
+    if (allMatches.includes(pathname)) return pathname
+    // Otherwise the longest prefix match (with a "/" boundary) wins.
+    const candidates = allMatches
+      .filter((m) => m !== "/" && pathname.startsWith(m + "/"))
+      .sort((a, b) => b.length - a.length)
+    return candidates[0] || ""
+  })()
+
   const displayName = user?.full_name?.trim() || user?.email?.split("@")[0] || ""
   const initials = (() => {
     const name = user?.full_name?.trim()
@@ -314,10 +353,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
               <nav className="flex flex-col gap-1">
                 {group.items.map((item) => {
-                  const active =
-                    pathname === item.match ||
-                    (item.match !== "/" && pathname.startsWith(item.match.split("?")[0] + "/")) ||
-                    pathname === item.match.split("?")[0]
+                  const active = item.match === activeMatch
 
                   const badge =
                     item.name === "Projects"
@@ -327,9 +363,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
                       : undefined
 
                   return (
-                    <button
+                    <Link
                       key={item.path}
-                      onClick={() => router.push(item.path)}
+                      href={item.path}
+                      prefetch
                       className="flex items-center gap-3 px-3 py-2.5 rounded-lg transition text-sm text-left"
                       style={{
                         background: active ? "#ffffff" : "transparent",
@@ -361,7 +398,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                           {badge}
                         </span>
                       )}
-                    </button>
+                    </Link>
                   )
                 })}
               </nav>
