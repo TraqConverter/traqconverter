@@ -166,6 +166,8 @@ logger.info("All routers registered successfully")
 # spam logs with credential errors.
 # ----------------------------------------------------
 import asyncio
+import os
+import threading
 from app.services.watchdog import recover_stalled_jobs
 
 WATCHDOG_INTERVAL_SECONDS = 60
@@ -180,6 +182,25 @@ async def _watchdog_loop():
         await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)
 
 
+def _run_worker_in_thread():
+    """Run the Postgres-backed translation worker in a daemon thread.
+
+    On Railway (single service) we want one process that serves HTTP
+    AND processes the translation queue. The worker uses a blocking
+    `while True` poll loop with `time.sleep`, so we put it in its own
+    thread to keep the asyncio event loop free.
+
+    Disable by setting RUN_WORKER_INLINE=0 if you ever want to split
+    web and worker into separate Railway services.
+    """
+    try:
+        from app.workers.sqs_worker import start_worker
+        logger.info("🛠️  Starting in-process translation worker thread")
+        start_worker()
+    except Exception:
+        logger.exception("In-process worker crashed")
+
+
 @app.on_event("startup")
 async def _start_watchdog():
     # The queue is now Postgres-backed (translation_jobs table), so
@@ -190,3 +211,20 @@ async def _start_watchdog():
     logger.info(
         "Watchdog scheduled every %ss", WATCHDOG_INTERVAL_SECONDS
     )
+
+    # Spin up the translation worker in a daemon thread so a single
+    # Railway service handles both HTTP and queue processing. Set
+    # RUN_WORKER_INLINE=0 to opt out (e.g. when running a dedicated
+    # worker service).
+    if os.getenv("RUN_WORKER_INLINE", "1") != "0":
+        t = threading.Thread(
+            target=_run_worker_in_thread,
+            name="translation-worker",
+            daemon=True,
+        )
+        t.start()
+        logger.info("Translation worker thread started")
+    else:
+        logger.info(
+            "RUN_WORKER_INLINE=0 — skipping in-process worker"
+        )
