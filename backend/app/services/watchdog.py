@@ -15,6 +15,7 @@ No SQS dependency. The boto3 import that used to live here is gone.
 import logging
 from datetime import datetime, timedelta
 from sqlalchemy import or_, text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -24,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
 STALL_TIMEOUT_MINUTES = 2
+
+# Set once we've observed a missing translation_jobs table so we stop
+# spamming the logs while migrations haven't been applied yet.
+_jobs_table_warning_logged = False
 
 
 def recover_stalled_jobs():
