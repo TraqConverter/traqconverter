@@ -301,6 +301,10 @@ def list_projects(
             "id": str(p.id),
             "filename": p.file_name,
             "status": p.status,
+            # review_status is the human-review axis. The frontend
+            # uses it to render the "In review" / "Certified" pill
+            # when the worker has finished (status==COMPLETED).
+            "review_status": p.review_status or "DRAFT",
             "progress": progress,
             "source_lang": p.source_language,
             "target_lang": p.target_language,

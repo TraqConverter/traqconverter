@@ -25,6 +25,7 @@ type Project = {
   target_language?: string
   target_lang?: string
   status?: string
+  review_status?: string
   progress_percent?: number
   progress?: number
   domain?: string
@@ -35,6 +36,22 @@ type Project = {
   team?: string[]
   assignee?: ProjectUser | null
   owner?: ProjectUser | null
+}
+
+// The user-facing pill is derived from both axes: `status` (worker
+// progress) and `review_status` (human sign-off). When the worker
+// finishes (status==COMPLETED) the project sits in IN_REVIEW until
+// a human certifies it.
+function effectiveStatus(p: { status?: string; review_status?: string }) {
+  const s = (p.status || "").toUpperCase()
+  if (s === "FAILED" || s === "PENDING" || s === "PROCESSING") return s
+  if (s === "COMPLETED") {
+    const r = (p.review_status || "").toUpperCase()
+    if (r === "CERTIFIED") return "CERTIFIED"
+    if (r === "IN_REVIEW") return "IN_REVIEW"
+    return "COMPLETED"
+  }
+  return s || "DRAFT"
 }
 
 // Derive initials from a real user: prefer full_name's first+last initial,
@@ -177,8 +194,9 @@ export default function DashboardPage() {
   // KPIs — computed from the real /projects/ payload
   const kpis = useMemo(() => {
     const isActive = (p: Project) => {
-      const s = (p.status || "").toUpperCase()
-      return s !== "COMPLETED" && s !== "CERTIFIED" && s !== "FAILED"
+      // Active = worker still chewing OR waiting on a human reviewer.
+      const s = effectiveStatus(p)
+      return s === "PENDING" || s === "PROCESSING" || s === "IN_REVIEW"
     }
 
     const active = projects.filter(isActive).length
@@ -195,7 +213,7 @@ export default function DashboardPage() {
     const activePagesCount = activePagesArray.filter((n: number) => n > 0).length
 
     const delivered = projects.filter((p) => {
-      const s = (p.status || "").toUpperCase()
+      const s = effectiveStatus(p)
       return s === "COMPLETED" || s === "CERTIFIED"
     }).length
 
@@ -228,9 +246,7 @@ export default function DashboardPage() {
       return projects
     }
     if (tab === "review") {
-      return projects.filter(
-        (p) => (p.status || "").toUpperCase() === "IN_REVIEW"
-      )
+      return projects.filter((p) => effectiveStatus(p) === "IN_REVIEW")
     }
     return projects
   }, [projects, tab])
@@ -442,7 +458,7 @@ export default function DashboardPage() {
               const src = p.source_language || p.source_lang || "en-GB"
               const tgt = p.target_language || p.target_lang || "en-US"
               const progress = p.progress_percent ?? p.progress ?? 0
-              const s = statusStyle(p.status)
+              const s = statusStyle(effectiveStatus(p))
               // Real team: assignee first (active worker), then owner
               // (creator). Falls through to an em-dash chip rather than
               // a fake "NL" placeholder when neither is set.

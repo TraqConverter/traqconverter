@@ -508,16 +508,29 @@ def process_translation_job(project_id: str):
 
         # ====================================================
         # COMPLETE
+        # ----------------------------------------------------
+        # `status` records that the worker finished — pipeline-wise
+        # we're done.  But `review_status` is the human-facing axis:
+        # a fresh translation must sit in IN_REVIEW until a person
+        # signs off (manually via /review-status or /certify).  This
+        # is what powers the "Awaiting review" tab on the dashboard
+        # and Projects pages; previously we left review_status at
+        # the DRAFT default, so projects skipped review entirely and
+        # showed up as Delivered immediately.
         # ====================================================
         project.progress_percent = 100
         project.status = ProjectStatus.COMPLETED
+        # Don't downgrade if someone has already certified it (e.g.
+        # a manual flip while the job was running).
+        if (project.review_status or "DRAFT") == "DRAFT":
+            project.review_status = "IN_REVIEW"
 
         db.commit()
 
         safe_broadcast(
             project_id,
             100,
-            "COMPLETED"
+            "IN_REVIEW",
         )
 
         # ====================================================
