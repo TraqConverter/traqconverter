@@ -370,21 +370,12 @@ def _build_translation_pages(
     )
 
     story: list = []
-
-    # Cover header for the translation page(s).
-    story.append(Paragraph("CERTIFIED TRANSLATION", styles["cover_title"]))
     src_lang = project_meta.get("source_language") or ""
     tgt_lang = project_meta.get("target_language") or ""
-    subtitle = []
-    if src_lang or tgt_lang:
-        subtitle.append(f"From {src_lang or '—'} to {tgt_lang or '—'}")
-    if project_meta.get("file_name"):
-        subtitle.append(f"Document: {project_meta['file_name']}")
-    if subtitle:
-        story.append(
-            Paragraph(" · ".join(subtitle), styles["muted_small"])
-        )
-        story.append(Spacer(1, 12))
+
+    # The translated body starts directly here — no "CERTIFIED
+    # TRANSLATION" cover header. The certified-statement block is
+    # rendered on the final page instead.
 
     # Group pairs by page so the structured rendering visually follows
     # the original page breaks.
@@ -503,3 +494,244 @@ def render_structured_export(
     out_pdf.close()
     out.seek(0)
     return out.getvalue()
+
+
+# ============================================================
+# Structured DOCX renderer — same shape as the PDF output:
+#   page 1     : original document (image embedded; PDFs are
+#                rendered as page-sized images so they fit)
+#   pages 2..N : structured translation with preserved alignment,
+#                bold / italic, placeholders in grey italic
+#   final page : certification block with optional company logo
+# ============================================================
+
+def _docx_alignment(value: int):
+    """Map ReportLab alignment ints onto python-docx enum."""
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    return {
+        0: WD_ALIGN_PARAGRAPH.LEFT,
+        1: WD_ALIGN_PARAGRAPH.CENTER,
+        2: WD_ALIGN_PARAGRAPH.RIGHT,
+        4: WD_ALIGN_PARAGRAPH.JUSTIFY,
+    }.get(value, WD_ALIGN_PARAGRAPH.LEFT)
+
+
+def _docx_font_name(family: str) -> str:
+    """Map serif / sans_serif / monospace to a font installed almost
+    everywhere — Word picks closest fallbacks on systems missing it."""
+    fam = (family or "").lower()
+    if fam == "sans_serif":
+        return "Arial"
+    if fam == "monospace":
+        return "Courier New"
+    return "Times New Roman"  # default + serif
+
+
+def _docx_apply_paragraph_style(
+    para,
+    text: str,
+    layout: dict[str, Any],
+    is_placeholder: bool,
+) -> None:
+    """Configure a python-docx paragraph + its single run from the
+    structured layout fields. Bold, italic, font family, size,
+    alignment, and grey-italic placeholder colouring are honoured.
+    """
+    from docx.shared import Pt, RGBColor
+
+    explicit_align = (layout or {}).get("alignment")
+    aligned = _ALIGN.get(
+        (explicit_align or "").lower(),
+        _alignment_from_layout(layout, None),
+    )
+    para.alignment = _docx_alignment(aligned)
+
+    is_bold = bool((layout or {}).get("bold"))
+    is_italic = bool((layout or {}).get("italic"))
+    is_all_caps = bool((layout or {}).get("all_caps"))
+    flags = int((layout or {}).get("flags") or 0)
+    if not is_bold and (flags & 16):
+        is_bold = True
+    if not is_italic and (flags & 2):
+        is_italic = True
+
+    # ALL-CAPS source maps to bold for visual hierarchy.
+    if is_all_caps:
+        is_bold = True
+
+    size_hint = ((layout or {}).get("size_hint") or "").lower()
+    if size_hint in _SIZE_PT:
+        size_pt = _SIZE_PT[size_hint]
+    else:
+        size_pt = float((layout or {}).get("font_size") or 10.5)
+        size_pt = max(8.5, min(15.0, size_pt))
+
+    family = (layout or {}).get("font_family") or ""
+    font_name = _docx_font_name(family)
+
+    if is_placeholder:
+        # Force italic, grey colour, regardless of source emphasis.
+        run = para.add_run(text)
+        run.italic = True
+        run.font.name = font_name
+        run.font.size = Pt(10)
+        run.font.color.rgb = RGBColor(
+            int(_PALETTE["placeholder"][1:3], 16),
+            int(_PALETTE["placeholder"][3:5], 16),
+            int(_PALETTE["placeholder"][5:7], 16),
+        )
+        return
+
+    run = para.add_run(text)
+    run.bold = is_bold
+    run.italic = is_italic
+    run.font.name = font_name
+    run.font.size = Pt(size_pt)
+    run.font.color.rgb = RGBColor(
+        int(_PALETTE["text"][1:3], 16),
+        int(_PALETTE["text"][3:5], 16),
+        int(_PALETTE["text"][5:7], 16),
+    )
+
+
+def _embed_image_full_page(doc, image_path: str) -> None:
+    """Drop an image as a single page in the DOCX, scaled to fit."""
+    from docx.shared import Inches
+    p = doc.add_paragraph()
+    run = p.add_run()
+    try:
+        run.add_picture(image_path, width=Inches(7))
+    except Exception as e:
+        logger.warning("DOCX: couldn't embed image %s: %s", image_path, e)
+    doc.add_page_break()
+
+
+def _embed_pdf_pages_as_images(doc, pdf_path: str) -> None:
+    """For DOCX exports we render each source PDF page to a PNG and
+    embed that page-by-page. Word can't natively show another PDF as
+    a 'page', so this is the cleanest equivalent."""
+    from PIL import Image  # noqa: F401  (ensures PIL is importable)
+    try:
+        src = fitz.open(pdf_path)
+        for page in src:
+            pix = page.get_pixmap(dpi=144)
+            png_bytes = pix.tobytes("png")
+            buf = io.BytesIO(png_bytes)
+            buf.seek(0)
+            from docx.shared import Inches
+            p = doc.add_paragraph()
+            run = p.add_run()
+            run.add_picture(buf, width=Inches(7))
+            doc.add_page_break()
+        src.close()
+    except Exception as e:
+        logger.warning("DOCX: couldn't embed source PDF pages: %s", e)
+
+
+def render_structured_docx_export(
+    *,
+    source_kind: str,
+    original_path: str,
+    pairs: list[tuple[str, dict[str, Any]]],
+    project_meta: dict[str, Any],
+    company_logo_path: str | None = None,
+) -> bytes:
+    """Produce the full export as a DOCX — same structural rules as
+    the PDF builder above so the two exports look like siblings."""
+    from docx import Document
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = Document()
+
+    # ---- Page 1+ : original document ----
+    if source_kind == "IMAGE":
+        _embed_image_full_page(doc, original_path)
+    elif source_kind == "PDF":
+        _embed_pdf_pages_as_images(doc, original_path)
+
+    # ---- Pages N+ : structured translation ----
+    src_lang = project_meta.get("source_language") or ""
+    tgt_lang = project_meta.get("target_language") or ""
+
+    last_page = None
+    last_y_bottom: float | None = None
+    for translated, layout in pairs:
+        layout = layout or {}
+        page_idx = int(layout.get("page", 0) or 0)
+        if last_page is not None and page_idx != last_page:
+            doc.add_page_break()
+            last_y_bottom = None
+        last_page = page_idx
+
+        bbox = layout.get("bbox") or []
+        if last_y_bottom is not None and len(bbox) == 4:
+            try:
+                gap_pt = max(0.0, float(bbox[1]) - last_y_bottom)
+            except Exception:
+                gap_pt = 0.0
+            if gap_pt > 6:
+                # Empty paragraph mirrors a paragraph-level gap.
+                doc.add_paragraph("")
+
+        body_text = (translated or "").strip()
+        if not body_text:
+            continue
+
+        src_text = layout.get("source_text") or ""
+        is_placeholder = bool(layout.get("placeholder_kind")) or (
+            body_text.startswith("[") and body_text.endswith("]")
+        )
+
+        para = doc.add_paragraph()
+        _docx_apply_paragraph_style(para, body_text, layout, is_placeholder)
+
+        if len(bbox) == 4:
+            try:
+                last_y_bottom = float(bbox[3])
+            except Exception:
+                pass
+
+    # ---- Final page : certification block ----
+    doc.add_page_break()
+    if company_logo_path and os.path.isfile(company_logo_path):
+        try:
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run()
+            run.add_picture(company_logo_path, width=Inches(2))
+        except Exception as e:
+            logger.warning("DOCX: couldn't embed logo: %s", e)
+
+    title = doc.add_paragraph()
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title_run = title.add_run("CERTIFIED TRANSLATION STATEMENT")
+    title_run.bold = True
+    title_run.font.size = Pt(14)
+    title_run.font.name = "Times New Roman"
+    title_run.font.color.rgb = RGBColor(
+        int(_PALETTE["text"][1:3], 16),
+        int(_PALETTE["text"][3:5], 16),
+        int(_PALETTE["text"][5:7], 16),
+    )
+
+    cert_lines = project_meta.get("certification_lines") or [
+        "I hereby certify that the foregoing is a true and complete "
+        "translation of the attached document.",
+        "",
+        f"Translator: {project_meta.get('translator_email', '')}",
+        f"Date: {project_meta.get('certification_date', '')}",
+        f"Source language: {src_lang or '—'}",
+        f"Target language: {tgt_lang or '—'}",
+    ]
+    for line in cert_lines:
+        p = doc.add_paragraph()
+        if line:
+            r = p.add_run(line)
+            r.font.name = "Times New Roman"
+            r.font.size = Pt(10.5)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
