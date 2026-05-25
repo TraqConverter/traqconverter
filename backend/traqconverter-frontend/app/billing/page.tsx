@@ -3,6 +3,15 @@
 import { useEffect, useMemo, useState } from "react"
 import { api } from "@/lib/api"
 
+// Backend serialises created_at as naive UTC (no timezone marker).
+// Without this guard the browser reads it as LOCAL time and dates
+// can shift by a day around midnight.
+function formatDate(iso?: string | null) {
+  if (!iso) return "—"
+  const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(iso)
+  return new Date(hasTz ? iso : iso + "Z").toLocaleDateString()
+}
+
 // ============================================================
 // BILLING — ESPRESSO LOOK
 // Wired to:
@@ -331,11 +340,7 @@ export default function BillingPage() {
         />
         <KpiCard
           label="Renews"
-          value={
-            wallet.subscription_expires_at
-              ? new Date(wallet.subscription_expires_at).toLocaleDateString()
-              : "—"
-          }
+          value={formatDate(wallet.subscription_expires_at)}
           sub={planActive ? "Next billing date" : "No active plan"}
         />
       </div>
@@ -447,7 +452,7 @@ export default function BillingPage() {
                   {t.reference_id || "—"}
                 </div>
                 <div className="text-right tabular-nums" style={{ color: "#6b6558" }}>
-                  {new Date(t.created_at).toLocaleDateString()}
+                  {formatDate(t.created_at)}
                 </div>
               </div>
             ))

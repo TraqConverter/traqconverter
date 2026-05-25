@@ -84,15 +84,24 @@ function langChip(raw?: string) {
 
 function relativeTime(iso?: string) {
   if (!iso) return "—"
-  const t = new Date(iso).getTime()
+  // The backend stores created_at as a naive UTC datetime, so the
+  // serialised string can come through without a timezone marker
+  // (e.g. "2026-05-25T12:45:43.627"). new Date() of that interprets
+  // it as LOCAL time, which made everything appear hours older than
+  // it really is. If the string has no Z and no ±offset, append Z
+  // so it's parsed as UTC.
+  const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(iso)
+  const safe = hasTz ? iso : iso + "Z"
+  const t = new Date(safe).getTime()
   if (!Number.isFinite(t)) return "—"
   const diff = Date.now() - t
   const m = 60_000, h = 3_600_000, d = 86_400_000
+  if (diff < 0) return "just now"
   if (diff < m) return "just now"
   if (diff < h) return `${Math.floor(diff / m)}m ago`
   if (diff < d) return `${Math.floor(diff / h)}h ago`
   if (diff < 7 * d) return `${Math.floor(diff / d)}d ago`
-  return new Date(iso).toLocaleDateString()
+  return new Date(safe).toLocaleDateString()
 }
 
 export default function JobsPage() {
