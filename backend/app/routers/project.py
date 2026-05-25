@@ -162,19 +162,26 @@ async def upload_project(
         db.flush()
 
         # ----------------------------------------------------
-        # Deduct Credits (SAFE)
+        # Deduct Credits — superusers / admins bypass the wallet
+        # entirely so the operator account never runs out.
         # ----------------------------------------------------
-        try:
-            new_balance = CreditService.deduct_credits(
-                db=db,
-                team_id=str(team.id),
-                amount=credits_required,
-                reference_id=str(project.id),
-            )
-        except WalletNotFoundError:
-            raise HTTPException(status_code=404, detail="Credit wallet not found")
-        except InsufficientCreditsError:
-            raise HTTPException(status_code=400, detail="Insufficient credits")
+        is_staff = (current_user.role or "").upper() in (
+            "SUPERUSER", "SUPER_ADMIN", "ADMIN",
+        )
+        if is_staff:
+            new_balance = -1  # signals "unlimited"
+        else:
+            try:
+                new_balance = CreditService.deduct_credits(
+                    db=db,
+                    team_id=str(team.id),
+                    amount=credits_required,
+                    reference_id=str(project.id),
+                )
+            except WalletNotFoundError:
+                raise HTTPException(status_code=404, detail="Credit wallet not found")
+            except InsufficientCreditsError:
+                raise HTTPException(status_code=400, detail="Insufficient credits")
 
         # ----------------------------------------------------
         # Commit

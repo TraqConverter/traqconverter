@@ -1,200 +1,206 @@
 # TraqConverter — Deployment Guide
 
-This file is the minimum set of steps to get TraqConverter running in
-production from a fresh clone. The two halves are independent: you can
-deploy the FastAPI backend on one host and the Next.js frontend on
-another, or use the bundled `docker-compose.yml` to run everything
-locally.
+Production stack:
 
----
+- **Vercel** → Next.js frontend
+- **Supabase** → Postgres database + S3-compatible object storage
+- **Railway** (or **Render**) → FastAPI API + translation worker
 
-## 1. Prerequisites
+Total wall-clock time for a fresh deploy is about 45 minutes.
 
-- Python 3.11
-- Node.js 20
-- PostgreSQL 14+
-- A Stripe account with two recurring prices (one for Basic, one for Pro) and
-  one webhook endpoint configured for the events
-  `checkout.session.completed`, `invoice.payment_succeeded`,
-  `customer.subscription.deleted`
-- An OpenAI API key
-- (Optional) AWS S3 bucket + SQS queue if you're running the queue worker
-  in production. For local dev you can skip this — the watchdog disables
-  itself if `SQS_QUEUE_URL` is empty.
+## 1. Create the Supabase project
 
----
+1. Sign in at <https://supabase.com> and click **New project**. Pick a
+   region close to your users.
+2. Save the **database password** when prompted — you'll need it.
+3. After provisioning finishes (~2 minutes), go to **Project Settings → Database → Connection string** and copy the **"Transaction" pooler URL** (port 6543). It looks like:
 
-## 2. Backend — environment variables
+   ```
+   postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres
+   ```
 
-Copy `backend/.env.example` to `backend/.env` and fill in real values.
-Every key is documented in the example file. The required ones:
+   That's your `database_url`.
+4. Go to **Storage** and click **New bucket**. Name it `traqconverter`. Leave it as private.
+5. Go to **Project Settings → Storage → S3 connection** and click
+   **Generate new keys**. Copy:
+   - **Access key ID**
+   - **Secret access key**
+   - **Endpoint** (looks like `https://<ref>.supabase.co/storage/v1/s3`)
 
-| Key                          | Notes                                                      |
-| ---------------------------- | ---------------------------------------------------------- |
-| `database_url`               | `postgresql+psycopg2://user:pass@host:5432/db`             |
-| `secret_key`                 | 32+ bytes (`openssl rand -hex 32`)                         |
-| `OPENAI_API_KEY`             | from platform.openai.com                                   |
-| `stripe_secret_key`          | `sk_live_...` (or `sk_test_...` for testing)               |
-| `stripe_publishable_key`     | `pk_live_...`                                              |
-| `stripe_webhook_secret`      | `whsec_...` (from your Stripe webhook endpoint)            |
-| `STRIPE_PRICE_PRO`           | the recurring price ID for Pro                             |
-| `STRIPE_PRICE_BASIC`         | the recurring price ID for Basic (optional)                |
-| `STRIPE_SUCCESS_URL`         | absolute URL of your `/success` page                       |
-| `STRIPE_CANCEL_URL`          | absolute URL of your `/cancel` page                        |
-| `S3_BUCKET_NAME`             | bucket holding uploads + rebuilt translations              |
-| `CORS_ORIGINS`               | comma-separated list of frontend origins (no `*` in prod)  |
+   Those map to `SUPABASE_S3_ACCESS_KEY`, `SUPABASE_S3_SECRET_KEY`,
+   `SUPABASE_S3_ENDPOINT`.
 
-Optional but recommended:
+## 2. Apply database migrations against Supabase
 
-| Key                            | Notes                                                |
-| ------------------------------ | ---------------------------------------------------- |
-| `SENTRY_DSN`                   | enables Sentry error tracking at startup             |
-| `SENTRY_TRACES_SAMPLE_RATE`    | float between 0 and 1, default `0.1`                 |
-| `TESSERACT_CMD`                | only on Windows or non-default Tesseract installs    |
-
----
-
-## 3. Backend — first deploy
+From your local machine:
 
 ```bash
 cd backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-alembic upgrade head            # run migrations
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+.\venv\Scripts\activate   # or `source venv/bin/activate` on macOS/Linux
+
+# Point alembic at the Supabase DB
+export DATABASE_URL="postgresql+psycopg2://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres"
+
+python -m alembic upgrade head
 ```
 
-The FastAPI server is now reachable at `http://localhost:8000`. The
-`/health` endpoint should return `{"status": "ok"}` and `/health/ready`
-should return `{"status": "ready"}`.
-
-Configure your Stripe webhook to forward to:
+You should see the migration chain run cleanly, ending with
+`d39e8a51bcaf` (the Postgres job-queue table). The migration order
+expected by alembic:
 
 ```
-POST  https://<your-api-host>/stripe/webhook
+b34ab420b451 → … → c427fe1382bd → d39e8a51bcaf (head)
 ```
 
-For local Stripe testing, run the CLI relay:
+## 3. Deploy the backend on Railway
+
+1. Sign in at <https://railway.app> and click **New Project →
+   Deploy from GitHub repo**. Pick the repo, leave the root as
+   `backend/`. Railway auto-detects Python.
+2. Open the project → **Settings → Variables** and paste in every
+   key from `backend/.env.example`. The important ones:
+
+   | Variable | Value |
+   |---|---|
+   | `database_url` | Supabase pooler URL from step 1 |
+   | `secret_key` | `python -c "import secrets;print(secrets.token_hex(32))"` |
+   | `OPENAI_API_KEY` | from OpenAI dashboard |
+   | `ANTHROPIC_API_KEY` | from Anthropic console |
+   | `SUPABASE_S3_ENDPOINT` | from step 1.5 |
+   | `SUPABASE_S3_ACCESS_KEY` | from step 1.5 |
+   | `SUPABASE_S3_SECRET_KEY` | from step 1.5 |
+   | `S3_BUCKET_NAME` | `traqconverter` |
+   | `stripe_secret_key` | live Stripe key |
+   | `stripe_publishable_key` | live Stripe key |
+   | `stripe_webhook_secret` | from Stripe dashboard once webhook is created |
+   | `STRIPE_PRICE_PRO`, `STRIPE_PRICE_BASIC` | Stripe price IDs |
+   | `STRIPE_PRICE_CREDITS_10/25/50` | Stripe price IDs |
+   | `STRIPE_SUCCESS_URL` | `https://<your-vercel-domain>/success` |
+   | `STRIPE_CANCEL_URL` | `https://<your-vercel-domain>/cancel` |
+   | `CORS_ORIGINS` | `https://<your-vercel-domain>` |
+
+3. Add a **second service** in the same Railway project for the worker:
+   - Service type: **Empty service** (or fork the existing one)
+   - **Start command:** `python -m app.workers.sqs_worker`
+   - Same env vars as the API.
+   - You don't need a public domain for the worker.
+
+4. Wait for both deploys to finish. The API service's public URL
+   (e.g. `https://traqconverter-api.up.railway.app`) is what the
+   frontend will call.
+
+## 4. Deploy the frontend on Vercel
+
+1. Sign in at <https://vercel.com> and click **Add New → Project**.
+   Point it at the same GitHub repo and set the **root directory** to
+   `traqconverter-frontend/`. Vercel auto-detects Next.js.
+2. Add environment variables (Vercel dashboard → Project → Settings → Environment Variables):
+
+   | Variable | Value |
+   |---|---|
+   | `NEXT_PUBLIC_API_URL` | `https://traqconverter-api.up.railway.app` (your Railway API URL, no trailing slash) |
+   | `NEXT_PUBLIC_WS_URL` | `wss://traqconverter-api.up.railway.app` |
+
+3. Click **Deploy**. Once live, copy the production URL (e.g.
+   `https://traqconverter.vercel.app`) and update **Railway** env
+   vars `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`, and
+   `CORS_ORIGINS` to point at it. Trigger a redeploy on Railway so
+   the new CORS rule takes effect.
+
+## 5. Stripe webhook
+
+1. Stripe dashboard → **Developers → Webhooks → Add endpoint**.
+2. Endpoint URL: `https://traqconverter-api.up.railway.app/stripe/webhook`
+3. Events to send (at minimum):
+   - `checkout.session.completed`
+   - `invoice.payment_succeeded`
+   - `customer.subscription.deleted`
+4. After creating, click into the webhook and copy the **Signing
+   secret** (starts with `whsec_`). Paste it as
+   `stripe_webhook_secret` in Railway.
+
+## 6. Smoke test
+
+Visit your Vercel URL:
+
+1. Register a new account → you should land on the dashboard.
+2. Upload a small test PDF or image at `/new-translation`.
+3. Watch the worker logs in Railway:
+   ```
+   📥 Processing job=… project=…
+   Storage backend: Supabase Storage (S3-compatible)
+   Object download successful: …
+   N segments created
+   ✅ Completed job=…
+   ```
+4. Open the project in `/jobs`, approve segments, export PDF.
+5. Visit `/billing` and try an upgrade with Stripe test card
+   `4242 4242 4242 4242`. Confirm the wallet flips to Pro.
+
+## 7. Local development (still works)
+
+For local dev you don't need any of the above:
 
 ```bash
-stripe listen --forward-to localhost:8000/stripe/webhook
-```
+# Backend
+cd backend
+.\venv\Scripts\activate
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
----
+# Worker (separate terminal)
+python -m app.workers.sqs_worker
 
-## 4. Frontend — environment variables
-
-In `traqconverter-frontend/.env.local`:
-
-```
-NEXT_PUBLIC_API_URL=https://<your-api-host>
-```
-
----
-
-## 5. Frontend — build & run
-
-```bash
+# Frontend (separate terminal)
 cd traqconverter-frontend
-npm ci
-npm run build
-npm run start
+npm run dev
 ```
 
-The SPA is now reachable at `http://localhost:3000`.
+Point your local `backend/.env` at either a local Postgres or your
+Supabase pooler URL — the code is identical.
 
----
+## What changed vs. the AWS deployment
 
-## 6. Docker — single-command stack
+| Was | Now |
+|---|---|
+| AWS S3 | Supabase Storage (S3-compatible API) |
+| AWS SQS | Postgres `translation_jobs` table + `FOR UPDATE SKIP LOCKED` worker |
+| AWS RDS / external Postgres | Supabase Postgres |
+| EC2 / ECS for backend | Railway (or Render / Fly.io) |
+| Self-hosted Next.js | Vercel |
+| Manual rotation of AWS access keys | Supabase service keys + Vercel/Railway env vars |
+| boto3 → S3 with IAM | boto3 → Supabase endpoint with service keys |
+| Watchdog re-enqueued via SQS SendMessage | Watchdog resets `processing → pending` directly in Postgres |
 
-The repo ships a `docker-compose.yml` that wires together Postgres, the
-API, the queue worker, and the Next.js frontend.
+Code is backend-agnostic — leaving `SUPABASE_S3_ENDPOINT` blank falls
+back to real AWS S3 so you can A/B test or fall back without code
+changes.
 
-```bash
-docker compose up -d --build
-docker compose run --rm api alembic upgrade head
+## Troubleshooting
+
+**`apply_redactions failed`**: Old PyMuPDF. Railway uses 1.24.13 from
+requirements.txt; if you see this, force a clean rebuild.
+
+**Worker doesn't pick up jobs**: Verify the `translation_jobs` table
+exists in Supabase. If `python -m alembic upgrade head` didn't run,
+re-run it pointed at the Supabase URL.
+
+**`InsufficientPrivilege: must be owner of table`** when running
+alembic: Connect to Supabase as the `postgres` superuser and run:
+```sql
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='public' LOOP
+    EXECUTE format('ALTER TABLE public.%I OWNER TO postgres', r.tablename);
+  END LOOP;
+END $$;
 ```
 
-Containers:
+**Stripe webhook signature errors**: The `stripe_webhook_secret` env
+var must match the secret shown in Stripe dashboard → that specific
+webhook's "Signing secret". Restart Railway after updating.
 
-- `db` — Postgres 16
-- `api` — FastAPI on port 8000, health-checked
-- `worker` — queue worker (same image, different `CMD`)
-- `web`   — Next.js standalone server on port 3000
-
-Logs:
-
-```bash
-docker compose logs -f api
-docker compose logs -f worker
-```
-
----
-
-## 7. CI
-
-`.github/workflows/ci.yml` runs on every push and pull request:
-
-- **backend**: ruff + ast.parse syntax check + smoke-import of `app.main`
-- **frontend**: `tsc --noEmit` + `next build`
-
-CI passing is a hard prerequisite for merging into `main`.
-
----
-
-## 8. Production hardening
-
-These are already wired up — listing here so you know what to expect:
-
-- **CORS** is env-driven via `CORS_ORIGINS`. Lock down to your real
-  frontend domain in production (no `*`).
-- **Security headers** (`X-Frame-Options`, `Referrer-Policy`,
-  `Permissions-Policy`, plus `Strict-Transport-Security` when
-  `environment=production`) are set in middleware.
-- **Auth rate limiting** is on `/auth/login` (10 req / 60 s / IP) and
-  `/auth/register` (5 req / 5 min / IP). Replace the in-memory bucket
-  with Redis if you scale to multiple API instances.
-- **JWT revocation** ships out of the box: changing a password bumps
-  `users.token_version`, instantly invalidating every older token.
-- **WebSocket auth**: pass `?token=<jwt>` to `/ws/projects` and
-  `/ws/projects/{id}`. Project-channel sockets are checked against the
-  caller's team membership before `accept()`.
-- **Watchdog**: started automatically at app boot. Disabled when
-  `SQS_QUEUE_URL` is empty so dev environments don't spam logs with
-  AWS errors.
-- **Health checks**: `/health` (liveness, fast) and `/health/ready`
-  (readiness — pings the DB).
-
----
-
-## 9. Operational notes
-
-- Migrations live in `backend/alembic/versions/`. Run
-  `alembic upgrade head` on every deploy. CI validates that the
-  revision graph has a single head before allowing a merge.
-- The queue worker writes scratch files to `uploads/`. Mount this as a
-  volume (compose does this automatically) or it'll grow unbounded
-  inside the container.
-- `app/services/layout_translator.py` rebuilds the source-resembling
-  output file on every successful translation. It uses PyMuPDF (PDF),
-  python-docx (DOCX), or PIL+Tesseract (images) — make sure
-  `tesseract` is installed in the container (the bundled `Dockerfile`
-  installs it).
-- Default subscription credit grants are `BASIC=19`,  `PRO=29` —
-  edit `app/core/plan_features.py::SUBSCRIPTION_GRANTS` if you change
-  pricing.
-
----
-
-## 10. Quick verification after deploy
-
-```bash
-# Liveness
-curl https://<api>/health
-# Readiness (also checks DB)
-curl https://<api>/health/ready
-
-# Stripe webhook signing secret matches
-stripe trigger checkout.session.completed --override checkout_session:metadata.user_id=<test-user-id> --override checkout_session:metadata.team_id=<test-team-id> --override checkout_session:metadata.plan=PRO
-# → backend log should show "sub_checkout_..." StripeEvent inserted
-```
+**Logo not appearing on cert page**: User must upload via
+`/settings/account → Branding`. Confirm the row in Supabase Storage:
+the file should be at `uploads/<uuid>_<filename>` and visible in the
+bucket browser.

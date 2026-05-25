@@ -231,6 +231,132 @@ def _build_layout_pdf_live(segments, project):
             pass
 
 
+def _build_layout_docx_live(segments, project):
+    """Build the export DOCX in the new STRUCTURED format — same shape
+    as `_build_layout_pdf_live` but emitting .docx instead of .pdf.
+
+        Page 1+      : original document embedded as image(s)
+        Pages N+     : clean structured translation (alignment, bold,
+                       italic, font family, placeholders all preserved)
+        Final page   : certification block (optional company logo)
+    """
+    if project is None or not segments:
+        return None
+    kind = (getattr(project, "source_kind", "") or "").upper()
+    if kind not in ("PDF", "IMAGE"):
+        return None
+
+    file_key = getattr(project, "file_path", None)
+    if not file_key:
+        return None
+
+    import os
+    import tempfile
+    from datetime import datetime
+    from pathlib import Path
+    from app.services.s3_service import generate_presigned_download_url
+    from app.services.structured_translation_renderer import (
+        render_structured_docx_export,
+    )
+    import requests
+
+    try:
+        url = generate_presigned_download_url(file_key)
+        r = requests.get(url, timeout=20)
+        r.raise_for_status()
+    except Exception as e:
+        logger.warning("Couldn't fetch source for DOCX export: %s", e)
+        return None
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="traqexport_docx_"))
+    try:
+        ext = (
+            ".pdf"
+            if kind == "PDF"
+            else os.path.splitext(file_key)[1] or ".jpg"
+        )
+        src_path = tmp_dir / f"source{ext}"
+        with open(src_path, "wb") as f:
+            f.write(r.content)
+
+        pairs = []
+        for s in segments:
+            if not s.translated_text or not s.translated_text.strip():
+                continue
+            meta = dict(s.layout_meta or {})
+            meta["source_text"] = s.source_text
+            pairs.append((s.translated_text, meta))
+
+        if not pairs:
+            return None
+
+        # Per-user logo first, then optional global fallback.
+        logo_path = None
+        user_logo_key = getattr(project, "_export_user_logo_key", None)
+        if user_logo_key:
+            try:
+                logo_url = generate_presigned_download_url(user_logo_key)
+                lr = requests.get(logo_url, timeout=10)
+                if lr.ok:
+                    logo_ext = (
+                        os.path.splitext(user_logo_key)[1].lower() or ".png"
+                    )
+                    user_logo_file = tmp_dir / f"logo{logo_ext}"
+                    with open(user_logo_file, "wb") as f:
+                        f.write(lr.content)
+                    logo_path = str(user_logo_file)
+            except Exception as e:
+                logger.warning("Couldn't fetch user logo: %s", e)
+        if not logo_path:
+            try:
+                from app.config import settings as _s
+                cand = getattr(_s, "COMPANY_LOGO_PATH", None)
+                if cand and os.path.isfile(cand):
+                    logo_path = cand
+            except Exception:
+                logo_path = None
+
+        project_meta = {
+            "title": (
+                getattr(project, "file_name", None)
+                or "Certified Translation"
+            ),
+            "file_name": getattr(project, "file_name", None) or "",
+            "source_language": getattr(project, "source_language", "") or "",
+            "target_language": getattr(project, "target_language", "") or "",
+            "translator_email": (
+                getattr(project, "_export_user_email", "") or ""
+            ),
+            "certification_date": datetime.utcnow().strftime(
+                "%Y-%m-%d %H:%M UTC"
+            ),
+        }
+
+        docx_bytes = render_structured_docx_export(
+            source_kind=kind,
+            original_path=str(src_path),
+            pairs=pairs,
+            project_meta=project_meta,
+            company_logo_path=logo_path,
+        )
+
+        out = BytesIO()
+        out.write(docx_bytes)
+        out.seek(0)
+        return out
+    except Exception as e:
+        logger.warning(
+            "Structured DOCX export failed: %s", e, exc_info=True
+        )
+        return None
+    finally:
+        try:
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
 def generate_docx(segments, user_email, project=None, user=None):
     if project is not None:
         try:
@@ -240,6 +366,18 @@ def generate_docx(segments, user_email, project=None, user=None):
             )
         except Exception:
             pass
+
+        # Prefer the new structured DOCX (mirrors the PDF export
+        # structure: original on page 1, structured translation on
+        # pages 2+, cert + logo at the end).
+        structured = _build_layout_docx_live(segments, project)
+        if structured is not None:
+            return structured
+
+        # Legacy fallback: the worker-written rebuilt DOCX prepended
+        # to the cert block. Only triggers for DOCX source projects
+        # (where the structured renderer can't run from an image-
+        # only source).
         layout_doc = _try_layout_docx_from_project(project)
         if layout_doc is not None:
             return layout_doc
