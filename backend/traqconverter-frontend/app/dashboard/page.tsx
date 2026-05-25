@@ -8,6 +8,12 @@ import { api } from "@/lib/api"
 // DASHBOARD — ESPRESSO LOOK
 // ============================================================
 
+type ProjectUser = {
+  id: string
+  email: string | null
+  full_name: string | null
+}
+
 type Project = {
   id: string | number
   file_name?: string
@@ -27,6 +33,23 @@ type Project = {
   due?: string
   due_date?: string
   team?: string[]
+  assignee?: ProjectUser | null
+  owner?: ProjectUser | null
+}
+
+// Derive initials from a real user: prefer full_name's first+last initial,
+// fall back to the first two letters of full_name, then email's local part.
+function initialsFor(u: ProjectUser | null | undefined): string | null {
+  if (!u) return null
+  const name = (u.full_name || "").trim()
+  if (name) {
+    const parts = name.split(/\s+/).filter(Boolean)
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
+    return parts[0].slice(0, 2).toUpperCase()
+  }
+  const email = (u.email || "").trim()
+  if (email) return email.slice(0, 2).toUpperCase()
+  return null
 }
 
 type Tab = "all" | "assigned" | "review"
@@ -420,7 +443,16 @@ export default function DashboardPage() {
               const tgt = p.target_language || p.target_lang || "en-US"
               const progress = p.progress_percent ?? p.progress ?? 0
               const s = statusStyle(p.status)
-              const team = p.team || ["NL"]
+              // Real team: assignee first (active worker), then owner
+              // (creator). Falls through to an em-dash chip rather than
+              // a fake "NL" placeholder when neither is set.
+              const teamInitials: string[] = []
+              const assigneeInitials = initialsFor(p.assignee)
+              const ownerInitials = initialsFor(p.owner)
+              if (assigneeInitials) teamInitials.push(assigneeInitials)
+              if (ownerInitials && ownerInitials !== assigneeInitials)
+                teamInitials.push(ownerInitials)
+              const team = teamInitials
               const due = p.due || p.due_date || "—"
 
               return (
@@ -503,23 +535,32 @@ export default function DashboardPage() {
 
                   {/* TEAM · DUE */}
                   <div className="flex items-center gap-3">
-                    <div className="flex -space-x-2">
-                      {team.slice(0, 3).map((t, i) => (
-                        <Avatar key={i} initials={t} />
-                      ))}
-                      {team.length > 3 && (
-                        <div
-                          className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold"
-                          style={{
-                            background: "#ede3cc",
-                            color: "#6b6558",
-                            border: "2px solid #fff",
-                          }}
-                        >
-                          +{team.length - 3}
-                        </div>
-                      )}
-                    </div>
+                    {team.length > 0 ? (
+                      <div className="flex -space-x-2">
+                        {team.slice(0, 3).map((t, i) => (
+                          <Avatar key={i} initials={t} />
+                        ))}
+                        {team.length > 3 && (
+                          <div
+                            className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold"
+                            style={{
+                              background: "#ede3cc",
+                              color: "#6b6558",
+                              border: "2px solid #fff",
+                            }}
+                          >
+                            +{team.length - 3}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span
+                        className="text-xs"
+                        style={{ color: "#b9ac8e" }}
+                      >
+                        Unassigned
+                      </span>
+                    )}
                     <span className="text-xs" style={{ color: "#6b6558" }}>
                       {due}
                     </span>

@@ -274,12 +274,17 @@ def list_projects(
 
     projects = base.limit(50).all()
 
-    # Pre-fetch assignee user rows so we can render names/emails without N+1
-    assignee_ids = {p.assignee_id for p in projects if p.assignee_id}
-    assignees = {}
-    if assignee_ids:
-        for u in db.query(User).filter(User.id.in_(assignee_ids)).all():
-            assignees[str(u.id)] = u
+    # Pre-fetch BOTH assignee and owner user rows so we can render
+    # names/emails without N+1. The frontend uses assignee when set
+    # (someone's actively working on it) and falls back to the project
+    # creator otherwise — the dashboard's "TEAM" column needs real
+    # initials rather than the old "NL" placeholder.
+    related_ids = {p.assignee_id for p in projects if p.assignee_id}
+    related_ids |= {p.user_id for p in projects if p.user_id}
+    users_by_id = {}
+    if related_ids:
+        for u in db.query(User).filter(User.id.in_(related_ids)).all():
+            users_by_id[str(u.id)] = u
 
     result = []
     for p in projects:
@@ -289,7 +294,8 @@ def list_projects(
         if p.status == ProjectStatus.COMPLETED:
             progress = 100
 
-        a = assignees.get(str(p.assignee_id)) if p.assignee_id else None
+        a = users_by_id.get(str(p.assignee_id)) if p.assignee_id else None
+        o = users_by_id.get(str(p.user_id)) if p.user_id else None
 
         result.append({
             "id": str(p.id),
@@ -309,6 +315,15 @@ def list_projects(
                     "full_name": a.full_name,
                 }
                 if a
+                else None
+            ),
+            "owner": (
+                {
+                    "id": str(o.id),
+                    "email": o.email,
+                    "full_name": o.full_name,
+                }
+                if o
                 else None
             ),
         })
