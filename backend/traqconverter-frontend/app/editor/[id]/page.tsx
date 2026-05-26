@@ -142,40 +142,51 @@ export default function EditorPage() {
     total: number
   } | null>(null)
 
-  // Source-document preview (toggle on/off). The backend returns a
-  // short-lived signed URL plus a kind hint so we render PDFs in an
-  // iframe and images in an <img>. We lazy-fetch the URL only when
-  // the user opens the panel; the URL is fairly short-lived so
-  // re-fetching on each toggle keeps it fresh too.
-  const [showSourcePreview, setShowSourcePreview] = useState(false)
+  // COMPARE MODE — shows the original document next to the rebuilt
+  // output PDF so a reviewer can verify the rebuild visually. When
+  // active, the segments table is replaced with these two panes
+  // (the right-side sidebar stays).
+  const [compareMode, setCompareMode] = useState(false)
   const [sourcePreview, setSourcePreview] = useState<{
     url: string
     kind: "pdf" | "image" | "other"
     filename: string
   } | null>(null)
-  const [sourceLoading, setSourceLoading] = useState(false)
+  const [rebuildPreview, setRebuildPreview] = useState<{
+    url: string | null
+    kind: "pdf" | "image" | "docx" | "other" | "none"
+    filename: string | null
+  } | null>(null)
+  const [compareLoading, setCompareLoading] = useState(false)
 
-  const loadSourcePreview = async () => {
-    if (sourcePreview) return
+  const loadCompare = async () => {
     try {
-      setSourceLoading(true)
-      const res = await api.get(`/projects/${id}/source-url`)
+      setCompareLoading(true)
+      const [srcRes, rebRes] = await Promise.all([
+        api.get(`/projects/${id}/source-url`),
+        api.get(`/projects/${id}/rebuild-url`),
+      ])
       setSourcePreview({
-        url: res.data.url,
-        kind: res.data.kind,
-        filename: res.data.filename,
+        url: srcRes.data.url,
+        kind: srcRes.data.kind,
+        filename: srcRes.data.filename,
+      })
+      setRebuildPreview({
+        url: rebRes.data.url,
+        kind: rebRes.data.kind,
+        filename: rebRes.data.filename,
       })
     } catch (err: any) {
-      console.error("SOURCE PREVIEW ERROR:", err)
+      console.error("COMPARE LOAD ERROR:", err)
     } finally {
-      setSourceLoading(false)
+      setCompareLoading(false)
     }
   }
 
-  const toggleSourcePreview = () => {
-    const next = !showSourcePreview
-    setShowSourcePreview(next)
-    if (next) loadSourcePreview()
+  const toggleCompareMode = () => {
+    const next = !compareMode
+    setCompareMode(next)
+    if (next && !sourcePreview) loadCompare()
   }
 
   const fetchProject = useCallback(async () => {
@@ -610,21 +621,21 @@ export default function EditorPage() {
           className="flex items-center gap-3 mt-2"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* SHOW SOURCE TOGGLE — opens a panel with the original
-              document next to the segments so reviewers can verify
-              the rebuild visually. */}
+          {/* COMPARE — swaps the segments table for a side-by-side
+              view of the ORIGINAL document and the REBUILT output
+              PDF so a reviewer can visually verify the rebuild. */}
           <button
             type="button"
-            onClick={toggleSourcePreview}
+            onClick={toggleCompareMode}
             className="inline-flex items-center gap-2 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
             style={{
-              background: showSourcePreview ? "#0a7870" : "#ffffff",
-              color: showSourcePreview ? "#ffffff" : "#1f2a2e",
-              border: showSourcePreview
+              background: compareMode ? "#0a7870" : "#ffffff",
+              color: compareMode ? "#ffffff" : "#1f2a2e",
+              border: compareMode
                 ? "1px solid #0a7870"
                 : "1px solid #e7ddc5",
             }}
-            title="Show or hide the original document next to the translation"
+            title="Compare the original document with the rebuilt output"
           >
             <svg
               width="14"
@@ -639,7 +650,7 @@ export default function EditorPage() {
               <rect x="3" y="4" width="8" height="16" rx="1.5" />
               <rect x="13" y="4" width="8" height="16" rx="1.5" />
             </svg>
-            {showSourcePreview ? "Hide source" : "Show source"}
+            {compareMode ? "Hide compare" : "Compare"}
           </button>
 
           {/* STATUS PILL with dropdown */}
@@ -867,93 +878,66 @@ export default function EditorPage() {
         </button>
       </div>
 
-      {/* SEGMENTS + (OPTIONAL SOURCE) + SIDEBAR
-          With "Show source" enabled the segments table shrinks to make
-          room for an iframe/<img> of the original document on its left.
-          Both panels are sticky-tall so the user can scroll either side
-          independently while comparing them. */}
+      {/* MAIN AREA + SIDEBAR
+          When Compare mode is OFF: segments table on the left, side
+          panel on the right.
+          When Compare mode is ON: the segments table is replaced by
+          two side-by-side preview panes — original on the left and
+          rebuilt output on the right. */}
       <div
         className="grid grid-cols-1 gap-4"
-        style={{
-          gridTemplateColumns: showSourcePreview
-            ? "minmax(0, 1fr) minmax(0, 1fr) 360px"
-            : "minmax(0, 1fr) 360px",
-        }}
+        style={{ gridTemplateColumns: "minmax(0, 1fr) 360px" }}
       >
-        {showSourcePreview && (
+        {compareMode ? (
           <div
-            className="rounded-2xl overflow-hidden flex flex-col"
+            className="rounded-2xl overflow-hidden grid"
             style={{
-              background: "#ffffff",
-              border: "1px solid #e7ddc5",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 12,
               height: "calc(100vh - 240px)",
-              minHeight: 520,
-              position: "sticky",
-              top: 20,
+              minHeight: 560,
             }}
           >
-            <div
-              className="px-4 py-2.5 flex items-center justify-between text-[11px] font-semibold tracking-[0.14em]"
-              style={{
-                color: "#9a9178",
-                background: "#faf5ee",
-                borderBottom: "1px solid #f1e8d1",
-              }}
-            >
-              <span>ORIGINAL DOCUMENT</span>
-              {sourcePreview && (
-                <a
-                  href={sourcePreview.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] font-semibold tracking-[0.1em] hover:underline"
-                  style={{ color: "#0a7870" }}
-                >
-                  OPEN ↗
-                </a>
-              )}
-            </div>
-            <div className="flex-1 overflow-auto" style={{ background: "#fbf6ea" }}>
-              {sourceLoading && !sourcePreview && (
-                <div className="px-4 py-8 text-sm text-center" style={{ color: "#8a8270" }}>
-                  Loading source…
-                </div>
-              )}
-              {sourcePreview && sourcePreview.kind === "pdf" && (
-                <iframe
-                  src={sourcePreview.url}
-                  title={sourcePreview.filename}
-                  className="w-full h-full"
-                  style={{ border: 0, background: "#fff" }}
-                />
-              )}
-              {sourcePreview && sourcePreview.kind === "image" && (
-                <div className="flex items-start justify-center p-3">
-                  <img
-                    src={sourcePreview.url}
-                    alt={sourcePreview.filename}
-                    style={{ maxWidth: "100%", height: "auto" }}
-                  />
-                </div>
-              )}
-              {sourcePreview && sourcePreview.kind === "other" && (
-                <div className="px-4 py-8 text-sm text-center" style={{ color: "#8a8270" }}>
-                  This file type can't be previewed inline.{" "}
-                  <a
-                    href={sourcePreview.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ color: "#0a7870", textDecoration: "underline" }}
-                  >
-                    Open in a new tab
-                  </a>
-                  .
-                </div>
-              )}
-            </div>
+            {/* LEFT — ORIGINAL */}
+            <ComparePane
+              label="ORIGINAL"
+              data={sourcePreview}
+              loading={compareLoading}
+              emptyHint="The source file isn't available."
+            />
+            {/* RIGHT — REBUILD */}
+            <ComparePane
+              label="REBUILT OUTPUT"
+              data={
+                rebuildPreview && rebuildPreview.url
+                  ? {
+                      url: rebuildPreview.url,
+                      kind:
+                        rebuildPreview.kind === "docx"
+                          ? "other"
+                          : (rebuildPreview.kind as "pdf" | "image" | "other"),
+                      filename: rebuildPreview.filename || "",
+                    }
+                  : null
+              }
+              loading={compareLoading}
+              emptyHint={
+                rebuildPreview && !rebuildPreview.url
+                  ? "Rebuild not generated yet — export the project as PDF or DOCX first, then come back here to compare."
+                  : "Loading rebuild…"
+              }
+              docxFallback={
+                rebuildPreview?.kind === "docx" && rebuildPreview.url
+                  ? rebuildPreview.url
+                  : null
+              }
+            />
           </div>
-        )}
+        ) : null}
 
+        {!compareMode && (
+        /* SEGMENTS TABLE */
+        <div className="contents">
         {/* SEGMENTS TABLE */}
         <div
           className="rounded-2xl overflow-hidden"
@@ -1077,6 +1061,8 @@ export default function EditorPage() {
             })
           )}
         </div>
+        </div>
+        )}
 
         {/* SIDEBAR */}
         <aside
@@ -1390,6 +1376,114 @@ export default function EditorPage() {
 // ============================================================
 // Local subcomponents
 // ============================================================
+
+function ComparePane({
+  label,
+  data,
+  loading,
+  emptyHint,
+  docxFallback,
+}: {
+  label: string
+  data: { url: string; kind: "pdf" | "image" | "other"; filename: string } | null
+  loading: boolean
+  emptyHint: string
+  docxFallback?: string | null
+}) {
+  return (
+    <div
+      className="rounded-2xl overflow-hidden flex flex-col"
+      style={{
+        background: "#ffffff",
+        border: "1px solid #e7ddc5",
+        minHeight: 0,
+      }}
+    >
+      <div
+        className="px-4 py-2.5 flex items-center justify-between text-[11px] font-semibold tracking-[0.14em]"
+        style={{
+          color: "#9a9178",
+          background: "#faf5ee",
+          borderBottom: "1px solid #f1e8d1",
+        }}
+      >
+        <span>{label}</span>
+        {data && (
+          <a
+            href={data.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[10px] font-semibold tracking-[0.1em] hover:underline"
+            style={{ color: "#0a7870" }}
+          >
+            OPEN ↗
+          </a>
+        )}
+      </div>
+      <div
+        className="flex-1 overflow-auto"
+        style={{ background: "#fbf6ea", minHeight: 0 }}
+      >
+        {loading && !data && (
+          <div className="px-4 py-8 text-sm text-center" style={{ color: "#8a8270" }}>
+            Loading…
+          </div>
+        )}
+        {!loading && !data && (
+          <div className="px-4 py-8 text-sm text-center" style={{ color: "#8a8270" }}>
+            {emptyHint}
+          </div>
+        )}
+        {data?.kind === "pdf" && (
+          <iframe
+            src={data.url}
+            title={data.filename}
+            className="w-full h-full"
+            style={{ border: 0, background: "#fff", minHeight: 500 }}
+          />
+        )}
+        {data?.kind === "image" && (
+          <div className="flex items-start justify-center p-3">
+            <img
+              src={data.url}
+              alt={data.filename}
+              style={{ maxWidth: "100%", height: "auto" }}
+            />
+          </div>
+        )}
+        {data?.kind === "other" && docxFallback && (
+          <div className="px-4 py-8 text-sm text-center" style={{ color: "#8a8270" }}>
+            <div className="mb-2">DOCX files can't preview inline in the browser.</div>
+            <a
+              href={docxFallback}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block px-4 py-2 rounded-full font-semibold"
+              style={{ background: "#0a7870", color: "#fff" }}
+            >
+              Download rebuild
+            </a>
+          </div>
+        )}
+        {data?.kind === "other" && !docxFallback && (
+          <div className="px-4 py-8 text-sm text-center" style={{ color: "#8a8270" }}>
+            This file type can't be previewed inline.{" "}
+            <a
+              href={data.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "#0a7870", textDecoration: "underline" }}
+            >
+              Open in a new tab
+            </a>
+            .
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 
 function LangChip({ text }: { text: string }) {
   return (

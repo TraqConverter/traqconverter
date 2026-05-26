@@ -695,6 +695,37 @@ def get_source_url(
     return {"url": url, "kind": kind, "filename": project.file_name}
 
 
+# ============================================================
+# REBUILD PREVIEW — returns a signed URL to the rebuild output file
+# so the editor's Compare view can show it next to the original.
+# This is purely a preview / viewing call (no download-feature
+# gating) so users on any plan can verify the rebuild visually.
+# ============================================================
+@router.get("/{project_id}/rebuild-url")
+def get_rebuild_url(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = get_user_project_or_404(db, project_id, current_user)
+    if not project.output_file:
+        # The worker hasn't produced an output yet (project still
+        # processing or failed). Tell the frontend so it can show a
+        # helpful message rather than a broken iframe.
+        return {"url": None, "kind": "none", "filename": None}
+    url = generate_presigned_download_url(project.output_file)
+    name = (project.output_file or "").rsplit("/", 1)[-1].lower()
+    if name.endswith(".pdf"):
+        kind = "pdf"
+    elif name.endswith((".png", ".jpg", ".jpeg", ".webp")):
+        kind = "image"
+    elif name.endswith(".docx"):
+        kind = "docx"
+    else:
+        kind = "other"
+    return {"url": url, "kind": kind, "filename": name}
+
+
 @router.get(
     "/{project_id}/download",
     dependencies=[Depends(require_feature("download_translation"))],
