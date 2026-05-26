@@ -136,6 +136,67 @@ export default function JobsPage() {
   const [assigningId, setAssigningId] = useState<string | null>(null)
   const [assignBusy, setAssignBusy] = useState<string | null>(null)
 
+  // Rename + delete modals.
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState<string>("")
+  const [renameBusy, setRenameBusy] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+
+  const closeRename = () => {
+    setRenamingId(null)
+    setRenameDraft("")
+  }
+  const closeDelete = () => setDeletingId(null)
+
+  const submitRename = async () => {
+    if (!renamingId) return
+    const name = renameDraft.trim()
+    if (!name) {
+      setError("Project name can't be empty.")
+      return
+    }
+    try {
+      setRenameBusy(true)
+      setError(null)
+      const res = await api.patch(`/projects/${renamingId}`, {
+        file_name: name,
+      })
+      const newName: string = res.data?.file_name || name
+      setProjects((ps) =>
+        ps.map((p) =>
+          p.id === renamingId ? { ...p, filename: newName } : p
+        )
+      )
+      closeRename()
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.detail ||
+          "Couldn't rename the project — please try again."
+      )
+    } finally {
+      setRenameBusy(false)
+    }
+  }
+
+  const submitDelete = async () => {
+    if (!deletingId) return
+    try {
+      setDeleteBusy(true)
+      setError(null)
+      await api.delete(`/projects/${deletingId}`)
+      setProjects((ps) => ps.filter((p) => p.id !== deletingId))
+      closeDelete()
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.detail ||
+          "Couldn't delete the project — please try again."
+      )
+    } finally {
+      setDeleteBusy(false)
+    }
+  }
+
   useEffect(() => {
     fetchJobs()
     fetchMembers()
@@ -721,26 +782,248 @@ export default function JobsPage() {
                   {relativeTime(p.created_at)}
                 </div>
 
-                {/* CHEVRON */}
-                <div className="flex justify-end" style={{ color: "#9a9178" }}>
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
+                {/* ROW ACTIONS — rename + delete */}
+                <div
+                  className="flex justify-end items-center gap-1"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    title="Rename project"
+                    aria-label="Rename project"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setRenamingId(p.id)
+                      setRenameDraft(p.filename || "")
+                    }}
+                    className="w-8 h-8 rounded-md flex items-center justify-center transition"
+                    style={{ color: "#6b6558", background: "transparent" }}
+                    onMouseEnter={(e) =>
+                      (e.currentTarget.style.background = "#f3ecdb")
+                    }
+                    onMouseLeave={(e) =>
+                      (e.currentTarget.style.background = "transparent")
+                    }
                   >
-                    <path d="m9 6 6 6-6 6" />
-                  </svg>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 20h9" />
+                      <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4Z" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    title="Delete project"
+                    aria-label="Delete project"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setDeletingId(p.id)
+                    }}
+                    className="w-8 h-8 rounded-md flex items-center justify-center transition"
+                    style={{ color: "#b14a3a", background: "transparent" }}
+                    onMouseEnter={(e) =>
+                      (e.currentTarget.style.background = "#f9efe9")
+                    }
+                    onMouseLeave={(e) =>
+                      (e.currentTarget.style.background = "transparent")
+                    }
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M3 6h18" />
+                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      <path d="M19 6 18 21H6L5 6" />
+                    </svg>
+                  </button>
                 </div>
               </div>
             )
           })
         )}
       </div>
+
+      {/* RENAME MODAL */}
+      {renamingId && (
+        <ModalOverlay onClose={closeRename}>
+          <div
+            className="rounded-2xl p-6 w-full max-w-md"
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e7ddc5",
+              boxShadow: "0 24px 60px rgba(30,30,20,0.18)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="text-[11px] font-semibold tracking-[0.18em] mb-1"
+              style={{ color: "#9a9178" }}
+            >
+              RENAME PROJECT
+            </div>
+            <h3
+              className="text-[18px] font-semibold tracking-tight mb-4"
+              style={{ color: "#1f2a2e" }}
+            >
+              Pick a clearer name
+            </h3>
+            <input
+              autoFocus
+              value={renameDraft}
+              onChange={(e) => setRenameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitRename()
+                if (e.key === "Escape") closeRename()
+              }}
+              placeholder="e.g. Birth certificate · ITA→EN"
+              className="w-full text-sm outline-none px-4 py-2.5 rounded-xl"
+              style={{
+                background: "#faf5ee",
+                border: "1px solid #e7ddc5",
+                color: "#1f2a2e",
+              }}
+            />
+            <p className="text-xs mt-3" style={{ color: "#8a8270" }}>
+              Renaming only changes how the project appears in the dashboard
+              and on exports. The original source file is unchanged.
+            </p>
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <button
+                type="button"
+                onClick={closeRename}
+                disabled={renameBusy}
+                className="px-4 py-2 rounded-full text-sm font-semibold"
+                style={{
+                  background: "#ffffff",
+                  color: "#1f2a2e",
+                  border: "1px solid #e7ddc5",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitRename}
+                disabled={renameBusy || !renameDraft.trim()}
+                className="px-4 py-2 rounded-full text-sm font-semibold"
+                style={{
+                  background:
+                    renameBusy || !renameDraft.trim() ? "#9bc9c5" : "#0a7870",
+                  color: "#fff",
+                  cursor:
+                    renameBusy || !renameDraft.trim()
+                      ? "not-allowed"
+                      : "pointer",
+                }}
+              >
+                {renameBusy ? "Saving…" : "Save name"}
+              </button>
+            </div>
+          </div>
+        </ModalOverlay>
+      )}
+
+      {/* DELETE MODAL */}
+      {deletingId && (
+        <ModalOverlay onClose={closeDelete}>
+          <div
+            className="rounded-2xl p-6 w-full max-w-md"
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e7b8b0",
+              boxShadow: "0 24px 60px rgba(177,74,58,0.20)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="text-[11px] font-semibold tracking-[0.18em] mb-1"
+              style={{ color: "#b14a3a" }}
+            >
+              DELETE PROJECT
+            </div>
+            <h3
+              className="text-[18px] font-semibold tracking-tight mb-3"
+              style={{ color: "#1f2a2e" }}
+            >
+              Permanently remove this project?
+            </h3>
+            <p className="text-sm mb-5" style={{ color: "#6b6558" }}>
+              This deletes the project, its segments, comments, and the
+              uploaded source file. This action cannot be undone.
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeDelete}
+                disabled={deleteBusy}
+                className="px-4 py-2 rounded-full text-sm font-semibold"
+                style={{
+                  background: "#ffffff",
+                  color: "#1f2a2e",
+                  border: "1px solid #e7ddc5",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitDelete}
+                disabled={deleteBusy}
+                className="px-4 py-2 rounded-full text-sm font-semibold"
+                style={{
+                  background: deleteBusy ? "#e7b8b0" : "#b14a3a",
+                  color: "#fff",
+                  cursor: deleteBusy ? "not-allowed" : "pointer",
+                }}
+              >
+                {deleteBusy ? "Deleting…" : "Delete project"}
+              </button>
+            </div>
+          </div>
+        </ModalOverlay>
+      )}
+    </div>
+  )
+}
+
+function ModalOverlay({
+  onClose,
+  children,
+}: {
+  onClose: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(31, 42, 46, 0.45)",
+        backdropFilter: "blur(2px)",
+        zIndex: 100,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      {children}
     </div>
   )
 }
