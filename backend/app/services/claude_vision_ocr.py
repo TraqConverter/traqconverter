@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # Prompt revision marker — bump when you change the prompt so the
 # worker log can confirm a code reload happened.
-_PROMPT_VERSION = "v5-fontaware"
+_PROMPT_VERSION = "v6-logical-blocks"
 
 
 _SYSTEM_PROMPT = """You are a certified-translator's pre-press tool. \
@@ -67,7 +67,61 @@ Output shape:
     ]
   }
 
-FONT FAMILY guidance:
+============================================================
+SEGMENTATION — THE CRITICAL RULE
+============================================================
+Group text into LOGICAL READING UNITS, not visual lines. A logical
+unit is a continuous span of text a human would read as one thought
+or one row of a form. Specifically:
+
+A) MULTI-LINE HEADINGS / TITLES that span 2-3 stacked lines but
+   belong together are ONE element. Join the lines with a single
+   newline "\\n".
+     Example A1 (header block, top-left of the page):
+       MINISTERO
+       DELL'INTERNO
+     → one element with text "MINISTERO\\nDELL'INTERNO"
+     Example A2 (header block, top-right):
+       CARTA
+       DI IDENTITÀ
+       ELETTRONICA
+     → one element with text "CARTA\\nDI IDENTITÀ\\nELETTRONICA"
+
+B) FORM ROWS where a label is followed on the SAME visual row (or
+   immediately to the right after a gap of whitespace) by its value
+   are ONE element. Preserve a tab-like separation by joining the
+   label and value with multiple spaces.
+     Example B1:
+       Comune        SAN BENEDETTO DEL TRONTO
+     → one element "Comune    SAN BENEDETTO DEL TRONTO"
+     Example B2:
+       Codice Fiscale    PRGLLI21E70Z114M
+     → one element "Codice Fiscale    PRGLLI21E70Z114M"
+   If a value WRAPS to the next line (because it's long) include
+   the wrapped portion in the same element using "\\n":
+       Luogo di residenza   VIA TAGLIAMENTO, N. 23 SAN
+                            BENEDETTO DEL TRONTO (AP)
+     → one element "Luogo di residenza   VIA TAGLIAMENTO, N. 23 SAN\\nBENEDETTO DEL TRONTO (AP)"
+
+C) PARAGRAPHS (multi-line prose) are ONE element. Join the
+   constituent lines with single spaces, NOT with "\\n".
+     Example C1:
+       Conserva questo documento, potrai utilizzarlo in Italia
+       fino alla ricezione della tua Carta di Identità Elettronica
+       (CIE).
+     → one element "Conserva questo documento, potrai utilizzarlo in Italia fino alla ricezione della tua Carta di Identità Elettronica (CIE)."
+
+D) STANDALONE LINES (single-line titles, captions, footers) are
+   one element on their own — e.g. the centred title
+   "Ricevuta della richiesta CIE".
+
+E) TABLE ROWS: each row is one element per cell. Read across the
+   row (left to right), one element per visible cell. A header
+   row's cells go above the data row's cells in document order.
+
+============================================================
+FONT FAMILY guidance
+============================================================
 - Look at the actual letter shapes:
     * "serif" — letters have small horizontal/vertical strokes at the
       ends of stems (e.g. Times, Garamond, Cambria, Georgia, Minion).
@@ -78,26 +132,27 @@ FONT FAMILY guidance:
 - `document_font_family` is your best guess for the DOMINANT body
   font of the whole page.
 - Per-element `font_family` lets you note when a particular line
-  uses a different family — e.g. a serif headline above a sans-serif
-  body, or a monospaced certificate number inside a serif paragraph.
-  When in doubt, repeat the document-level value.
+  uses a different family. When in doubt, repeat the document-level
+  value.
 
-Coordinate frame: pixel positions in the IMAGE'S native size.
+Coordinate frame: pixel positions in the IMAGE'S native size. For
+multi-line elements emit the bbox that ENCLOSES THE WHOLE BLOCK
+(top of the first line to the bottom of the last line).
 
-ELEMENT RULES:
-
+============================================================
+PER-ELEMENT FIELDS
+============================================================
 1) Text elements (kind="text"):
-   - One element per VISUAL LINE.
    - "text" reproduces the source EXACTLY — same language, diacritics,
      capitalisation, punctuation, numbers, parens, slashes.
-   - "alignment" reflects what you actually see: a line centred on
-     the page is "center"; a line flush against the right margin is
-     "right"; everything else is "left".
+   - "alignment" reflects what you actually see for the block:
+       a block centred on the page is "center"; a block flush
+       against the right margin is "right"; everything else "left".
    - "bold" / "italic" reflect visible weight and slant.
-   - "all_caps" is true ONLY when the line is rendered in caps (don't
-     guess based on the words being acronyms).
+   - "all_caps" is true ONLY when the block is rendered in caps
+     (don't guess based on the words being acronyms).
    - "size" is relative to the body text on the page:
-       xlarge = main title (e.g. "COMUNE DI SAN BONIFACIO")
+       xlarge = main title (e.g. "Ricevuta della richiesta CIE")
        large  = section header
        normal = body text
        small  = fine print, address lines, disclaimers
@@ -111,33 +166,101 @@ ELEMENT RULES:
      photo          → "[Photo]"
      stamp          → "[Stamp: <legible text inside the stamp>]"
                        (omit the colon+text if no readable text)
-     signature      → "[Signature]"
+     signature      → "[Signature: <legible name if any>]"
      barcode        → "[Barcode]"
      qr             → "[QR Code]"
      illegible      → "[Illegible Text]"
      handwritten    → "[Handwritten text: <transcription>]"
      blanked_out    → "[Blanked Out]"
 
-   Examples of when to use blanked_out: a field that has a value but
-   it's been redacted with a bar / black box / whiteout so the value
-   isn't visible. Emit ONE [Blanked Out] element where the redacted
-   value would have appeared, inline with surrounding text.
+   Use blanked_out when a field has a value that's been redacted
+   with a bar / black box / whiteout so the value isn't visible.
+   Emit ONE [Blanked Out] element inline where the redacted value
+   would have appeared.
 
-EXHAUSTIVE — include EVERY visible line of text (headers, address
-lines, contact numbers, fine print, footer disclaimers, signature
-labels, stamps, page numbers). A typical legal certificate has 40-80
-elements when placeholders are included.
+============================================================
+QUALITY CONTROLS — STRICT
+============================================================
+- DO NOT emit fragments. If a word or short string isn't readable
+  with confidence, DROP it entirely — never emit a one- or two-
+  character segment like "t", "OD", "Ae" or partial words like
+  "( Y CARTA". When in doubt, treat the area as a placeholder
+  (logo / illegible) instead.
+- DO NOT emit a label without its value when the value is clearly
+  visible next to it. They go in the SAME element.
+- DO NOT translate. DO NOT invent text. DO NOT skip "decorative"
+  lines that contain real readable words.
+
+INCLUDE EVERY visible block of text (headers, body, address lines,
+contact numbers, fine print, footer disclaimers, signature labels,
+stamps). A typical ID/certificate has 15-40 logical elements when
+placeholders are included.
 
 EXCLUDE only:
 - Machine-readable zones (dense strings of A-Z, 0-9 and '<' such as
   "P<NLD<<<<<<<").
-- Pure decorative borders that contain no readable text and no clear
-  graphic identity (coats of arms, logos, photos and signatures are
-  all included as placeholders).
-
-DO NOT translate. DO NOT invent text. DO NOT skip "decorative" lines.
+- Pure decorative borders / watermark backgrounds that contain no
+  readable words.
 
 Output ONLY the JSON object. No prose, no markdown fences."""
+
+
+# Patterns that almost always indicate a partial OCR fragment from a
+# stylised header / watermark rather than real readable text. Tuned
+# against the failure mode seen on Italian CIE documents where the
+# CARTA / DI IDENTITÀ / ELETTRONICA header was producing junk like
+# "t", "OD", "( Y CARTA", "Ae : ELETTRONICA".
+_JUNK_RE = re.compile(
+    r"""
+    ^                                      # full-string match
+    (?:
+        [^\w\s]{0,3}                       # leading punctuation
+        [A-Za-z]{1,2}                      # 1-2 letters
+        [^\w\s]{0,3}                       # trailing punctuation
+      |                                    # OR
+        [^\w\s]+[A-Za-z]{0,2}              # only punctuation + tiny letters
+      |                                    # OR
+        [A-Za-z]{1,2}\s*[:.]\s*[A-Za-z]{0,4}  # "Ae :" / "X. Y"
+    )
+    $
+    """,
+    re.VERBOSE,
+)
+
+
+def _looks_like_junk(text: str) -> bool:
+    """Return True for strings that look like OCR junk fragments.
+
+    Real words and short labels in our reference docs ("Nome", "Sesso",
+    "F", "Cognome", "1") need to survive. We're targeting things like
+    "t", "OD", "( Y CARTA", "Ae : ELETTRONICA" — short, mostly
+    punctuation, broken at non-word boundaries.
+    """
+    s = text.strip()
+    if not s:
+        return True
+    # Anything 3+ characters made entirely of letters is fine.
+    if len(s) >= 3 and s.replace(" ", "").isalpha():
+        return False
+    # Letter/digit ratio — junk fragments tend to be heavy on
+    # punctuation or stray brackets.
+    letters_or_digits = sum(1 for c in s if c.isalnum())
+    if len(s) <= 2:
+        # 1-2 char strings are junk UNLESS they're well-known short
+        # form-field values like "F" or "1" — but to keep this safe
+        # we only drop 1-char alphabetic when surrounded by spaces in
+        # multi-line context. For single short strings here, allow
+        # numerics and capital single letters (often field values).
+        if s.isalnum() and (s.isdigit() or s.isupper()):
+            return False
+        return True
+    # Mostly-punctuation or "X : Y" style fragments
+    if _JUNK_RE.match(s):
+        return True
+    # Letters < 50% of length and contains stray brackets/punct → junk
+    if letters_or_digits / max(1, len(s)) < 0.5:
+        return True
+    return False
 
 
 def is_available() -> bool:
@@ -281,6 +404,7 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
     raw_elements = data.get("elements") or data.get("lines") or []
 
     out: list[dict[str, Any]] = []
+    dropped_junk = 0
     for el in raw_elements:
         text = (el.get("text") or "").strip()
         if not text:
@@ -297,6 +421,16 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
         x1 = max(0.0, min(src_w, x1 * sx))
         y1 = max(0.0, min(src_h, y1 * sy))
         if x1 <= x0 + 1 or y1 <= y0 + 1:
+            continue
+        # Safety net: drop obvious OCR-junk fragments even though the
+        # prompt forbids them. These come up most often on stylised
+        # header text and watermarks where the model produces things
+        # like "t", "Ae", "OD", "( Y CARTA". Placeholders (kind=
+        # "placeholder") are exempt because they intentionally have
+        # short labels like "[Photo]" / "[QR Code]".
+        kind = el.get("kind") or "text"
+        if kind == "text" and _looks_like_junk(text):
+            dropped_junk += 1
             continue
         # Per-element font family with a document-level fallback so we
         # always have a value to render with.
@@ -326,10 +460,11 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
     raw_count = len(raw_elements)
     logger.info(
         "Claude Vision OCR (%s): model returned %d raw elements, "
-        "%d kept after coordinate validation, from %s",
+        "%d kept after validation (%d junk fragments dropped), from %s",
         _PROMPT_VERSION,
         raw_count,
         len(out),
+        dropped_junk,
         image_path,
     )
     return out
