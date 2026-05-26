@@ -1,9 +1,13 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -127,6 +131,27 @@ def delete_account(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Permanently delete the user's account.
+
+    For an OWNER, this also tears down their team and every artefact
+    attached to it — projects, segments, comments, job queue rows,
+    translation memory, glossary entries, members, invites, credit
+    wallet + transactions, stripe event log entries.
+
+    For a non-owner (a team member), we only remove their User row +
+    their TeamMember rows. The team and its data stay with the owner.
+
+    Each step uses synchronize_session=False bulk deletes so the
+    session doesn't get out of sync with the database. We walk
+    children → parents so FK constraints don't block any step.
+    """
+    from sqlalchemy import text
+    from app.models.team_member import TeamMember, TeamInvite
+    from app.models.translation_segment import TranslationSegment
+    from app.models.segment_comment import SegmentComment
+    from app.models.project import TranslationProject
+    from app.models.credit import CreditWallet, CreditTransaction
+
     if payload.confirm.strip().upper() != "DELETE":
         raise HTTPException(
             status_code=400, detail='Type "DELETE" to confirm account deletion'
@@ -134,13 +159,134 @@ def delete_account(
     if not verify_password(payload.password, current_user.password_hash):
         raise HTTPException(status_code=400, detail="Password is incorrect")
 
-    team = db.query(Team).filter(Team.owner_id == current_user.id).first()
-    if team:
-        db.query(CreditWallet).filter(CreditWallet.team_id == team.id).delete()
-        db.delete(team)
+    user_id = current_user.id
+    team = db.query(Team).filter(Team.owner_id == user_id).first()
 
-    db.delete(current_user)
-    db.commit()
+    try:
+        if team is not None:
+            team_id = team.id
+
+            # 1) Fetch project IDs once so we can purge their children
+            #    in bulk.
+            project_ids = [
+                row[0]
+                for row in db.query(TranslationProject.id)
+                .filter(TranslationProject.team_id == team_id)
+                .all()
+            ]
+
+            if project_ids:
+                segment_ids = [
+                    row[0]
+                    for row in db.query(TranslationSegment.id)
+                    .filter(TranslationSegment.project_id.in_(project_ids))
+                    .all()
+                ]
+                if segment_ids:
+                    db.query(SegmentComment).filter(
+                        SegmentComment.segment_id.in_(segment_ids)
+                    ).delete(synchronize_session=False)
+                db.query(TranslationSegment).filter(
+                    TranslationSegment.project_id.in_(project_ids)
+                ).delete(synchronize_session=False)
+
+                # translation_jobs + translation_memory are raw-SQL
+                # tables; not all deployments have project_id on TM.
+                for sql, params in (
+                    (
+                        "DELETE FROM translation_jobs WHERE project_id = ANY(:pids)",
+                        {"pids": [str(p) for p in project_ids]},
+                    ),
+                    (
+                        "DELETE FROM translation_memory WHERE project_id = ANY(:pids)",
+                        {"pids": [str(p) for p in project_ids]},
+                    ),
+                ):
+                    try:
+                        db.execute(text(sql), params)
+                    except Exception:
+                        db.rollback()
+                        # Re-attach team object after rollback so we
+                        # can keep going.
+                        team = db.query(Team).filter(
+                            Team.id == team_id
+                        ).first()
+
+                db.query(TranslationProject).filter(
+                    TranslationProject.team_id == team_id
+                ).delete(synchronize_session=False)
+
+            # 2) Team-level scoped collections.
+            db.query(TeamMember).filter(
+                TeamMember.team_id == team_id
+            ).delete(synchronize_session=False)
+            db.query(TeamInvite).filter(
+                TeamInvite.team_id == team_id
+            ).delete(synchronize_session=False)
+
+            # Team-scoped glossary entries (table is raw-SQL backed).
+            try:
+                db.execute(
+                    text("DELETE FROM glossary WHERE team_id = :tid"),
+                    {"tid": str(team_id)},
+                )
+            except Exception:
+                db.rollback()
+                team = db.query(Team).filter(Team.id == team_id).first()
+
+            # 3) Wallet + transactions.
+            wallet_ids = [
+                row[0]
+                for row in db.query(CreditWallet.id)
+                .filter(CreditWallet.team_id == team_id)
+                .all()
+            ]
+            if wallet_ids:
+                db.query(CreditTransaction).filter(
+                    CreditTransaction.wallet_id.in_(wallet_ids)
+                ).delete(synchronize_session=False)
+                db.query(CreditWallet).filter(
+                    CreditWallet.team_id == team_id
+                ).delete(synchronize_session=False)
+
+            # 4) Finally the team row.
+            db.execute(
+                text("DELETE FROM teams WHERE id = :tid"),
+                {"tid": str(team_id)},
+            )
+
+        # User may also be a MEMBER of other teams — drop those memberships.
+        db.query(TeamMember).filter(
+            TeamMember.user_id == user_id
+        ).delete(synchronize_session=False)
+
+        # And any stripe_event rows tied to them, just in case.
+        try:
+            db.execute(
+                text(
+                    "DELETE FROM stripe_events "
+                    "WHERE user_id = :uid OR customer_email = :email"
+                ),
+                {"uid": str(user_id), "email": current_user.email},
+            )
+        except Exception:
+            db.rollback()
+
+        # 5) The user row.
+        db.execute(
+            text("DELETE FROM users WHERE id = :uid"),
+            {"uid": str(user_id)},
+        )
+
+        db.commit()
+    except Exception as e:
+        logger.exception("Account delete failed: %s", e)
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Couldn't delete account — {type(e).__name__}",
+        )
+
     return {"status": "deleted"}
 
 
@@ -153,6 +299,8 @@ def delete_account(
     dependencies=[Depends(_register_limit)],
 )
 def register(user_data: UserRegister, db: Session = Depends(get_db)):
+    from app.models.team_member import TeamInvite
+
     existing = db.query(User).filter(User.email == user_data.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -165,27 +313,61 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     db.add(user)
     db.flush()
 
-    team = Team(
-        name=f"{user.full_name or user.email}'s Team",
-        owner_id=user.id,
+    # If this email already has a pending team invite, the user is
+    # joining someone ELSE's team — they don't get their own team or
+    # their own wallet, they inherit the inviter's team's wallet
+    # (which determines their plan tier and credit pool). This is
+    # what makes "invited members are on the same plan as the owner"
+    # work transparently.
+    pending_invite = (
+        db.query(TeamInvite)
+        .filter(
+            TeamInvite.email == (user_data.email or "").lower(),
+            TeamInvite.status == "PENDING",
+        )
+        .first()
     )
-    db.add(team)
-    db.flush()
 
-    # 7-day trial with 1 credit. Download is gated at the route level
-    # (feature_guard's TRIAL config).
-    wallet = CreditWallet(
-        team_id=team.id,
-        subscription_credits=TRIAL_CREDITS,
-        purchased_credits=0,
-        plan_type="TRIAL",
-        subscription_status="TRIAL",
-        subscription_expires_at=datetime.utcnow() + timedelta(days=TRIAL_DAYS),
-    )
-    db.add(wallet)
+    if pending_invite is None:
+        # Standalone register: create their own team and a trial wallet.
+        team = Team(
+            name=f"{user.full_name or user.email}'s Team",
+            owner_id=user.id,
+        )
+        db.add(team)
+        db.flush()
 
-    user.subscription_plan = "TRIAL"
-    user.subscription_status = "TRIAL"
+        # 7-day trial with 1 credit. Download is gated at the route
+        # level (feature_guard's TRIAL config).
+        wallet = CreditWallet(
+            team_id=team.id,
+            subscription_credits=TRIAL_CREDITS,
+            purchased_credits=0,
+            plan_type="TRIAL",
+            subscription_status="TRIAL",
+            subscription_expires_at=datetime.utcnow() + timedelta(days=TRIAL_DAYS),
+        )
+        db.add(wallet)
+
+        user.subscription_plan = "TRIAL"
+        user.subscription_status = "TRIAL"
+    else:
+        # Invited user — mirror the owner's plan onto their User row
+        # so /auth/me reflects the right tier. The wallet they share
+        # with the team is the team-scoped CreditWallet, which they
+        # don't get their own copy of.
+        team_owner = (
+            db.query(User)
+            .join(Team, Team.owner_id == User.id)
+            .filter(Team.id == pending_invite.team_id)
+            .first()
+        )
+        if team_owner:
+            user.subscription_plan = team_owner.subscription_plan or "TRIAL"
+            user.subscription_status = team_owner.subscription_status or "TRIAL"
+        else:
+            user.subscription_plan = "TRIAL"
+            user.subscription_status = "TRIAL"
 
     db.commit()
     db.refresh(user)

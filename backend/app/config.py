@@ -57,6 +57,21 @@ class Settings(BaseSettings):
     # or JPG on the server's filesystem. Leave unset to skip the logo.
     COMPANY_LOGO_PATH: Optional[str] = None
 
+    # --- Resend (transactional email) ---
+    # When RESEND_API_KEY is set, team invites and other notifications
+    # are sent via Resend. Leave empty in dev to skip email sending
+    # (the invite still lands in the DB and auto-accepts on register/login).
+    RESEND_API_KEY: Optional[str] = None
+    # The "from" header on outgoing email. Must be on a domain you've
+    # verified in the Resend dashboard. Example: "TraqConverter
+    # <notifications@onlinedoctranslator.ai>".
+    RESEND_FROM_EMAIL: Optional[str] = (
+        "TraqConverter <notifications@onlinedoctranslator.ai>"
+    )
+    # Public frontend URL used to build links inside emails. Set to
+    # https://www.onlinedoctranslator.ai in production.
+    FRONTEND_URL: str = "http://localhost:3000"
+
     # NEW: CREDIT PRICING
     CREDIT_PRICE_CENTS: int = 100
 
