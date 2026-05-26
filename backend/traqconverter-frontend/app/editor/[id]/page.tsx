@@ -1377,6 +1377,13 @@ export default function EditorPage() {
 // Local subcomponents
 // ============================================================
 
+// Microsoft Office Online viewer renders DOCX / XLSX / PPTX inline by
+// fetching the signed URL on their servers and returning a rendered
+// HTML viewer — so Word files never trigger a browser download.
+function officeViewerUrl(srcUrl: string) {
+  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(srcUrl)}`
+}
+
 function ComparePane({
   label,
   data,
@@ -1390,6 +1397,18 @@ function ComparePane({
   emptyHint: string
   docxFallback?: string | null
 }) {
+  // Pick the iframe source URL based on file kind:
+  //  - DOCX (kind="other" with docxFallback) → Office Online viewer
+  //    so Word files render inline rather than triggering a download.
+  //  - PDF → the signed URL direct (relies on inline disposition).
+  //  - Everything else → no iframe; fall through to image/other UI.
+  const iframeSrc =
+    data?.kind === "other" && docxFallback
+      ? officeViewerUrl(docxFallback)
+      : data?.kind === "pdf"
+      ? data.url
+      : null
+
   return (
     <div
       className="rounded-2xl overflow-hidden flex flex-col"
@@ -1434,12 +1453,14 @@ function ComparePane({
             {emptyHint}
           </div>
         )}
-        {data?.kind === "pdf" && (
+        {iframeSrc && (
           <iframe
-            src={data.url}
-            title={data.filename}
+            src={iframeSrc}
+            title={data?.filename || ""}
             className="w-full h-full"
             style={{ border: 0, background: "#fff", minHeight: 500 }}
+            // sandbox is omitted on purpose — Office Online viewer
+            // needs to run scripts to render the document.
           />
         )}
         {data?.kind === "image" && (
@@ -1449,20 +1470,6 @@ function ComparePane({
               alt={data.filename}
               style={{ maxWidth: "100%", height: "auto" }}
             />
-          </div>
-        )}
-        {data?.kind === "other" && docxFallback && (
-          <div className="px-4 py-8 text-sm text-center" style={{ color: "#8a8270" }}>
-            <div className="mb-2">DOCX files can't preview inline in the browser.</div>
-            <a
-              href={docxFallback}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-block px-4 py-2 rounded-full font-semibold"
-              style={{ background: "#0a7870", color: "#fff" }}
-            >
-              Download rebuild
-            </a>
           </div>
         )}
         {data?.kind === "other" && !docxFallback && (
