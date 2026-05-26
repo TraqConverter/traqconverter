@@ -546,6 +546,14 @@ def _docx_apply_paragraph_style(
     )
     para.alignment = _docx_alignment(aligned)
 
+    # Compact spacing so the rebuild fits the same footprint as the
+    # original (the default 8pt-after spacing on every paragraph
+    # stretched the body across two pages).
+    pf = para.paragraph_format
+    pf.space_before = Pt(0)
+    pf.space_after = Pt(2)
+    pf.line_spacing = 1.15
+
     is_bold = bool((layout or {}).get("bold"))
     is_italic = bool((layout or {}).get("italic"))
     is_all_caps = bool((layout or {}).get("all_caps"))
@@ -595,12 +603,15 @@ def _docx_apply_paragraph_style(
 
 
 def _embed_image_full_page(doc, image_path: str) -> None:
-    """Drop an image as a single page in the DOCX, scaled to fit."""
+    """Drop an image as a single page in the DOCX, scaled to fit
+    A4 portrait with reasonable margins. width=6 inches (instead of
+    7) gives the image a safe top/bottom margin so it doesn't
+    overflow to a second page (cause of the blank page 2 bug)."""
     from docx.shared import Inches
     p = doc.add_paragraph()
     run = p.add_run()
     try:
-        run.add_picture(image_path, width=Inches(7))
+        run.add_picture(image_path, width=Inches(6))
     except Exception as e:
         logger.warning("DOCX: couldn't embed image %s: %s", image_path, e)
     doc.add_page_break()
@@ -608,12 +619,14 @@ def _embed_image_full_page(doc, image_path: str) -> None:
 
 def _embed_pdf_pages_as_images(doc, pdf_path: str) -> None:
     """For DOCX exports we render each source PDF page to a PNG and
-    embed that page-by-page. Word can't natively show another PDF as
-    a 'page', so this is the cleanest equivalent."""
+    embed it page-by-page. width=6 inches keeps each page inside its
+    own DOCX page (was 7, which let tall sources spill into a
+    blank page after)."""
     from PIL import Image  # noqa: F401  (ensures PIL is importable)
     try:
         src = fitz.open(pdf_path)
-        for page in src:
+        pages = list(src)
+        for i, page in enumerate(pages):
             pix = page.get_pixmap(dpi=144)
             png_bytes = pix.tobytes("png")
             buf = io.BytesIO(png_bytes)
@@ -621,7 +634,10 @@ def _embed_pdf_pages_as_images(doc, pdf_path: str) -> None:
             from docx.shared import Inches
             p = doc.add_paragraph()
             run = p.add_run()
-            run.add_picture(buf, width=Inches(7))
+            run.add_picture(buf, width=Inches(6))
+            # Page break between pages, AND before the structured
+            # translation content. The trailing page break here is
+            # what gives the translation its own clean page start.
             doc.add_page_break()
         src.close()
     except Exception as e:
@@ -939,10 +955,20 @@ def render_planned_docx_export(
         return None
 
     from docx import Document
-    from docx.shared import Inches, Pt, RGBColor
+    from docx.shared import Inches, Pt, RGBColor, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     doc = Document()
+
+    # Tighten section margins so the translated content has the same
+    # available area as the original document (the linear renderer's
+    # 1" margins left too little room and forced overflow onto a
+    # second page).
+    for section in doc.sections:
+        section.top_margin = Cm(1.5)
+        section.bottom_margin = Cm(1.5)
+        section.left_margin = Cm(1.8)
+        section.right_margin = Cm(1.8)
 
     # ---- Page 1+ : original document ----
     if source_kind == "IMAGE":
