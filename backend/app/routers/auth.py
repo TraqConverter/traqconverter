@@ -190,32 +190,51 @@ def delete_account(
                     TranslationSegment.project_id.in_(project_ids)
                 ).delete(synchronize_session=False)
 
-                # translation_jobs + translation_memory are raw-SQL
-                # backed and may not have project_id on older schemas.
-                # Wrap each in a SAVEPOINT so a failure here only
-                # rolls back THAT statement, not the segment deletes
-                # we just did above — otherwise the project delete
-                # below trips an FK constraint because the segments
-                # are still there.
-                for sql, params in (
-                    (
-                        "DELETE FROM translation_jobs WHERE project_id = ANY(:pids)",
-                        {"pids": [str(p) for p in project_ids]},
-                    ),
-                    (
-                        "DELETE FROM translation_memory WHERE project_id = ANY(:pids)",
-                        {"pids": [str(p) for p in project_ids]},
-                    ),
-                ):
+                # translation_jobs is project-scoped (FK with CASCADE).
+                # translation_memory is TEAM-scoped on this deployment
+                # (its FK is translation_memory.team_id → teams.id),
+                # so we delete by team_id, not project_id. Both wrapped
+                # in SAVEPOINTs so missing columns / tables don't
+                # roll back the segment + comment deletes above.
+                try:
+                    with db.begin_nested():
+                        db.execute(
+                            text(
+                                "DELETE FROM translation_jobs "
+                                "WHERE project_id = ANY(:pids)"
+                            ),
+                            {"pids": [str(p) for p in project_ids]},
+                        )
+                except Exception as e:
+                    logger.info("Optional translation_jobs cleanup skipped: %s", e)
+
+                try:
+                    with db.begin_nested():
+                        db.execute(
+                            text(
+                                "DELETE FROM translation_memory "
+                                "WHERE team_id = :tid"
+                            ),
+                            {"tid": str(team_id)},
+                        )
+                except Exception as e:
+                    # Fall back to project-scoped delete if the
+                    # column shape is different on this deployment.
+                    logger.info(
+                        "TM team_id cleanup didn't apply, trying project_id: %s",
+                        e,
+                    )
                     try:
                         with db.begin_nested():
-                            db.execute(text(sql), params)
-                    except Exception as e:
-                        logger.info(
-                            "Optional cleanup skipped (%s): %s",
-                            sql.split(" ")[2],  # the table name
-                            e,
-                        )
+                            db.execute(
+                                text(
+                                    "DELETE FROM translation_memory "
+                                    "WHERE project_id = ANY(:pids)"
+                                ),
+                                {"pids": [str(p) for p in project_ids]},
+                            )
+                    except Exception as e2:
+                        logger.info("TM project_id cleanup also skipped: %s", e2)
 
                 db.query(TranslationProject).filter(
                     TranslationProject.team_id == team_id
