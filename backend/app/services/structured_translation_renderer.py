@@ -628,6 +628,314 @@ def _embed_pdf_pages_as_images(doc, pdf_path: str) -> None:
         logger.warning("DOCX: couldn't embed source PDF pages: %s", e)
 
 
+# ============================================================
+# LAYOUT-AWARE DOCX RENDERER
+# ------------------------------------------------------------
+# Asks Claude to plan a DOCX-shaped JSON tree over the OCR
+# elements, then emits paragraphs / rows / tables that mirror
+# the visual structure of the original document. Falls through
+# to the linear renderer on failure.
+# ============================================================
+
+
+def _render_planned_block(
+    doc_or_cell,
+    block: dict[str, Any],
+    by_id: dict[int, tuple[str, dict[str, Any]]],
+) -> None:
+    """Recursively render one layout-planner block into a python-docx
+    container (Document or _Cell). The container must expose
+    `add_paragraph` and `add_table` (both do)."""
+    from docx.shared import Pt
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    kind = (block or {}).get("kind", "paragraph")
+
+    if kind == "paragraph":
+        try:
+            eid = int(block.get("id"))
+        except (TypeError, ValueError):
+            return
+        if eid not in by_id:
+            return
+        translated, layout = by_id[eid]
+        # Override the layout alignment with the planner's choice
+        # (planner has the spatial context).
+        explicit_align = (block.get("alignment") or "").lower()
+        layout_for_render = dict(layout or {})
+        if explicit_align in {"left", "center", "right", "justify"}:
+            layout_for_render["alignment"] = explicit_align
+        para = doc_or_cell.add_paragraph()
+        text = (translated or "").strip() or (layout.get("source_text") or "").strip()
+        if not text:
+            return
+        is_placeholder = bool(layout.get("placeholder_kind")) or (
+            text.startswith("[") and text.endswith("]")
+        )
+        _docx_apply_paragraph_style(para, text, layout_for_render, is_placeholder)
+        if block.get("spacing_before_pt"):
+            try:
+                para.paragraph_format.space_before = Pt(
+                    float(block["spacing_before_pt"])
+                )
+            except Exception:
+                pass
+
+    elif kind == "row":
+        cols = block.get("columns") or []
+        if not cols:
+            return
+        # Use a borderless table to lay out columns side-by-side.
+        tbl = doc_or_cell.add_table(rows=1, cols=len(cols))
+        tbl.autofit = True
+        # Apply width percentages if given.
+        total_width_emu = None
+        widths = [c.get("width_pct") for c in cols if isinstance(c, dict)]
+        if all(isinstance(w, (int, float)) and w > 0 for w in widths) and widths:
+            from docx.shared import Inches
+            total_width_emu = Inches(6.5)  # rough A4 minus margins
+        for idx, col in enumerate(cols):
+            cell = tbl.rows[0].cells[idx]
+            # Remove default empty paragraph in the cell so our content
+            # is the first paragraph.
+            if cell.paragraphs and not cell.paragraphs[0].text:
+                p = cell.paragraphs[0]
+                p._element.getparent().remove(p._element)
+            for child in col.get("blocks") or []:
+                _render_planned_block(cell, child, by_id)
+        # Strip the surrounding table borders so it looks like a layout.
+        _strip_table_borders(tbl)
+
+    elif kind == "table":
+        rows = block.get("rows") or []
+        if not rows:
+            return
+        cols_count = max(len(r) for r in rows)
+        if cols_count == 0:
+            return
+        tbl = doc_or_cell.add_table(rows=len(rows), cols=cols_count)
+        tbl.autofit = True
+        if not block.get("border"):
+            _strip_table_borders(tbl)
+        for ri, row in enumerate(rows):
+            for ci in range(cols_count):
+                cell = tbl.rows[ri].cells[ci]
+                # Clear default empty paragraph.
+                if cell.paragraphs and not cell.paragraphs[0].text:
+                    p = cell.paragraphs[0]
+                    p._element.getparent().remove(p._element)
+                if ci >= len(row):
+                    cell.add_paragraph("")
+                    continue
+                cellspec = row[ci] or {}
+                if "id" in cellspec:
+                    try:
+                        eid = int(cellspec["id"])
+                    except (TypeError, ValueError):
+                        cell.add_paragraph("")
+                        continue
+                    if eid not in by_id:
+                        cell.add_paragraph("")
+                        continue
+                    translated, layout = by_id[eid]
+                    layout_for_render = dict(layout or {})
+                    a = (cellspec.get("alignment") or "").lower()
+                    if a in {"left", "center", "right", "justify"}:
+                        layout_for_render["alignment"] = a
+                    text = (translated or "").strip() or (
+                        layout.get("source_text") or ""
+                    ).strip()
+                    if not text:
+                        cell.add_paragraph("")
+                        continue
+                    is_placeholder = bool(layout.get("placeholder_kind")) or (
+                        text.startswith("[") and text.endswith("]")
+                    )
+                    para = cell.add_paragraph()
+                    _docx_apply_paragraph_style(
+                        para, text, layout_for_render, is_placeholder
+                    )
+                elif "text" in cellspec:
+                    para = cell.add_paragraph()
+                    _docx_apply_paragraph_style(
+                        para,
+                        cellspec.get("text") or "",
+                        {"alignment": cellspec.get("alignment") or "left"},
+                        False,
+                    )
+                else:
+                    cell.add_paragraph("")
+
+    elif kind == "spacer":
+        try:
+            from docx.shared import Pt as DocxPt
+            para = doc_or_cell.add_paragraph()
+            h_mm = float(block.get("height_mm") or 2.0)
+            para.paragraph_format.space_after = DocxPt(h_mm * 2.83)
+        except Exception:
+            pass
+
+
+def _strip_table_borders(table) -> None:
+    """Remove ALL borders from a python-docx Table so it looks like a
+    pure layout grid rather than a visible table."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    tbl = table._element
+    tblPr = tbl.find(qn("w:tblPr"))
+    if tblPr is None:
+        tblPr = OxmlElement("w:tblPr")
+        tbl.insert(0, tblPr)
+    # Replace any existing tblBorders with all-none.
+    existing = tblPr.find(qn("w:tblBorders"))
+    if existing is not None:
+        tblPr.remove(existing)
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        b = OxmlElement(f"w:{edge}")
+        b.set(qn("w:val"), "nil")
+        borders.append(b)
+    tblPr.append(borders)
+
+
+def _build_layout_plan_input(
+    pairs: list[tuple[str, dict[str, Any]]],
+) -> tuple[list[dict[str, Any]], dict[int, tuple[str, dict[str, Any]]], float, float]:
+    """Build the (elements, by_id, page_w, page_h) tuple the planner
+    needs. Element ids are assigned by index into the `pairs` list so
+    the renderer can look the original pair back up after Claude
+    returns a layout plan."""
+    elements: list[dict[str, Any]] = []
+    by_id: dict[int, tuple[str, dict[str, Any]]] = {}
+    page_w = 0.0
+    page_h = 0.0
+    for idx, (translated, layout) in enumerate(pairs):
+        layout = layout or {}
+        bbox = layout.get("bbox") or [0, 0, 0, 0]
+        try:
+            x0, y0, x1, y1 = (float(v) for v in bbox)
+        except Exception:
+            x0, y0, x1, y1 = 0.0, 0.0, 0.0, 0.0
+        page_w = max(page_w, x1)
+        page_h = max(page_h, y1)
+        elements.append(
+            {
+                "id": idx,
+                "source": layout.get("source_text") or "",
+                "translated": translated or "",
+                "bbox": [x0, y0, x1, y1],
+                "alignment": layout.get("alignment") or "left",
+                "bold": bool(layout.get("bold")),
+                "italic": bool(layout.get("italic")),
+                "all_caps": bool(layout.get("all_caps")),
+                "size": layout.get("size_hint") or layout.get("size") or "normal",
+                "kind": "placeholder"
+                if layout.get("placeholder_kind")
+                else "text",
+            }
+        )
+        by_id[idx] = (translated, layout)
+    # Sensible defaults if everything was at 0,0.
+    if page_w <= 1:
+        page_w = 1000.0
+    if page_h <= 1:
+        page_h = 1400.0
+    return elements, by_id, page_w, page_h
+
+
+def render_planned_docx_export(
+    *,
+    source_kind: str,
+    original_path: str,
+    pairs: list[tuple[str, dict[str, Any]]],
+    project_meta: dict[str, Any],
+    company_logo_path: str | None = None,
+) -> bytes | None:
+    """Layout-aware DOCX export. Returns the DOCX bytes, or None when
+    the layout planner is unavailable or fails — callers should fall
+    back to `render_structured_docx_export` in that case."""
+    try:
+        from app.services.layout_planner import plan_layout, is_available
+    except Exception as e:
+        logger.warning("Layout planner not importable: %s", e)
+        return None
+
+    if not is_available():
+        return None
+
+    elements, by_id, page_w, page_h = _build_layout_plan_input(pairs)
+    if not elements:
+        return None
+
+    plan = plan_layout(elements, page_width=page_w, page_height=page_h)
+    if not plan:
+        return None
+
+    from docx import Document
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = Document()
+
+    # ---- Page 1+ : original document ----
+    if source_kind == "IMAGE":
+        _embed_image_full_page(doc, original_path)
+    elif source_kind == "PDF":
+        _embed_pdf_pages_as_images(doc, original_path)
+
+    # ---- Translated section, structured per the layout plan ----
+    for block in plan.get("blocks") or []:
+        _render_planned_block(doc, block, by_id)
+
+    # ---- Final page : certification block (unchanged) ----
+    doc.add_page_break()
+    if company_logo_path and os.path.isfile(company_logo_path):
+        try:
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run()
+            run.add_picture(company_logo_path, width=Inches(2))
+        except Exception as e:
+            logger.warning("DOCX: couldn't embed logo: %s", e)
+
+    title = doc.add_paragraph()
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title_run = title.add_run("CERTIFIED TRANSLATION STATEMENT")
+    title_run.bold = True
+    title_run.font.size = Pt(14)
+    title_run.font.name = "Times New Roman"
+    title_run.font.color.rgb = RGBColor(
+        int(_PALETTE["text"][1:3], 16),
+        int(_PALETTE["text"][3:5], 16),
+        int(_PALETTE["text"][5:7], 16),
+    )
+
+    src_lang = project_meta.get("source_language") or ""
+    tgt_lang = project_meta.get("target_language") or ""
+    cert_lines = project_meta.get("certification_lines") or [
+        "I hereby certify that the foregoing is a true and complete "
+        "translation of the attached document.",
+        "",
+        f"Translator: {project_meta.get('translator_email', '')}",
+        f"Date: {project_meta.get('certification_date', '')}",
+        f"Source language: {src_lang or '—'}",
+        f"Target language: {tgt_lang or '—'}",
+    ]
+    for line in cert_lines:
+        p = doc.add_paragraph()
+        if line:
+            r = p.add_run(line)
+            r.font.name = "Times New Roman"
+            r.font.size = Pt(10.5)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    logger.info("Layout-aware DOCX renderer: produced %d-byte file", len(buf.getvalue()))
+    return buf.getvalue()
+
+
 def render_structured_docx_export(
     *,
     source_kind: str,
