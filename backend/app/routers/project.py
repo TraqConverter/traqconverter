@@ -838,35 +838,33 @@ def delete_project(
             TranslationSegment.project_id == project.id
         ).delete(synchronize_session=False)
 
-        # 3) Translation memory entries scoped to this project (the
-        #    table is raw SQL so we use text() to avoid coupling to
-        #    a possibly absent model).
+        # 3) Translation memory entries scoped to this project. The
+        #    table is raw SQL; we wrap in SAVEPOINT so a missing
+        #    project_id column on older schemas doesn't roll back
+        #    the segment + comment deletes above.
         try:
-            db.execute(
-                text(
-                    "DELETE FROM translation_memory WHERE project_id = :pid"
-                ),
-                {"pid": pid},
-            )
-        except Exception:
-            db.rollback()
-            # TM table may not have project_id on older schemas — keep
-            # going. The next statements need a clean transaction.
-            project = get_user_project_or_404(db, project_id, current_user)
+            with db.begin_nested():
+                db.execute(
+                    text(
+                        "DELETE FROM translation_memory WHERE project_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+        except Exception as e:
+            logger.info("Optional TM cleanup skipped: %s", e)
 
         # 4) Job queue rows. The schema migration set ON DELETE
-        #    CASCADE here, but we're explicit to be safe on older
-        #    deployments.
+        #    CASCADE here, but we're explicit to be safe.
         try:
-            db.execute(
-                text(
-                    "DELETE FROM translation_jobs WHERE project_id = :pid"
-                ),
-                {"pid": pid},
-            )
-        except Exception:
-            db.rollback()
-            project = get_user_project_or_404(db, project_id, current_user)
+            with db.begin_nested():
+                db.execute(
+                    text(
+                        "DELETE FROM translation_jobs WHERE project_id = :pid"
+                    ),
+                    {"pid": pid},
+                )
+        except Exception as e:
+            logger.info("Optional translation_jobs cleanup skipped: %s", e)
 
         # 5) Finally the project row itself.
         db.delete(project)
