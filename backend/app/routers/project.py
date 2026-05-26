@@ -804,11 +804,79 @@ def delete_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Audit HIGH-3: scope by team, not creator. Assigned teammates can
-    # see/approve/certify/download projects too.
-    project = get_user_project_or_404(db, project_id, current_user)
+    """Permanently delete a project and everything attached to it.
 
-    db.delete(project)
-    db.commit()
+    We explicitly remove dependent rows in the right order so the
+    delete works regardless of whether each FK has ON DELETE CASCADE
+    set in the schema. Previously the SQLAlchemy `db.delete(project)`
+    failed silently when any reference (segment comments, TM entries,
+    job rows on older schemas, etc) blocked the cascade.
+    """
+    from sqlalchemy import text
+    from app.models.translation_segment import TranslationSegment
+    from app.models.segment_comment import SegmentComment
+
+    # Audit HIGH-3: scope by team, not creator.
+    project = get_user_project_or_404(db, project_id, current_user)
+    pid = str(project.id)
+
+    try:
+        # 1) Comments — keyed by segment id.
+        segment_ids = [
+            row[0]
+            for row in db.query(TranslationSegment.id)
+            .filter(TranslationSegment.project_id == project.id)
+            .all()
+        ]
+        if segment_ids:
+            db.query(SegmentComment).filter(
+                SegmentComment.segment_id.in_(segment_ids)
+            ).delete(synchronize_session=False)
+
+        # 2) Segments themselves.
+        db.query(TranslationSegment).filter(
+            TranslationSegment.project_id == project.id
+        ).delete(synchronize_session=False)
+
+        # 3) Translation memory entries scoped to this project (the
+        #    table is raw SQL so we use text() to avoid coupling to
+        #    a possibly absent model).
+        try:
+            db.execute(
+                text(
+                    "DELETE FROM translation_memory WHERE project_id = :pid"
+                ),
+                {"pid": pid},
+            )
+        except Exception:
+            db.rollback()
+            # TM table may not have project_id on older schemas — keep
+            # going. The next statements need a clean transaction.
+            project = get_user_project_or_404(db, project_id, current_user)
+
+        # 4) Job queue rows. The schema migration set ON DELETE
+        #    CASCADE here, but we're explicit to be safe on older
+        #    deployments.
+        try:
+            db.execute(
+                text(
+                    "DELETE FROM translation_jobs WHERE project_id = :pid"
+                ),
+                {"pid": pid},
+            )
+        except Exception:
+            db.rollback()
+            project = get_user_project_or_404(db, project_id, current_user)
+
+        # 5) Finally the project row itself.
+        db.delete(project)
+        db.commit()
+    except Exception as e:
+        logger.exception("Project delete failed: %s", e)
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Couldn't delete project — {type(e).__name__}",
+        )
 
     return {"message": "Project deleted successfully"}
