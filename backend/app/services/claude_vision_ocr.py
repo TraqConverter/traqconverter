@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # Prompt revision marker — bump when you change the prompt so the
 # worker log can confirm a code reload happened.
-_PROMPT_VERSION = "v6-logical-blocks"
+_PROMPT_VERSION = "v7-no-logo-hallucination"
 
 
 _SYSTEM_PROMPT = """You are a certified-translator's pre-press tool. \
@@ -172,6 +172,19 @@ PER-ELEMENT FIELDS
      illegible      → "[Illegible Text]"
      handwritten    → "[Handwritten text: <transcription>]"
      blanked_out    → "[Blanked Out]"
+
+   ⚠️ CRITICAL — DO NOT FABRICATE PLACEHOLDERS FOR TEXT:
+   If a block of text is READABLE — even if it's stylised, bold,
+   small-caps, or sits where a header logo might typically go —
+   transcribe it as a TEXT element. Do NOT emit "[Logo]" or
+   "[Coat of Arms]" above or beside readable text.
+   - Bold heading words like "MINISTERO\\nDELL'INTERNO" in the top
+     corner of an Italian government form are TEXT, not a logo.
+   - "CARTA\\nDI IDENTITÀ\\nELETTRONICA" in the top-right corner
+     of a CIE document is TEXT, not a logo.
+   Only emit "[Logo]" when there is a true GRAPHICAL mark
+   (illustrative symbol, crest, emblem, brand graphic) with NO
+   readable words inside or next to it that you could transcribe.
 
    Use blanked_out when a field has a value that's been redacted
    with a bar / black box / whiteout so the value isn't visible.

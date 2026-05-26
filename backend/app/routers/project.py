@@ -667,6 +667,34 @@ def certify_project(
 # that the worker uploads to S3.
 # ============================================================
 
+# ============================================================
+# SOURCE PREVIEW — returns a short-lived signed URL the editor can
+# load into an <iframe>/<img> to show the ORIGINAL document next to
+# the rebuilt translation. No download gating — viewing the source
+# is always allowed if the user can see the project at all.
+# ============================================================
+@router.get("/{project_id}/source-url")
+def get_source_url(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = get_user_project_or_404(db, project_id, current_user)
+    if not project.file_path:
+        raise HTTPException(status_code=404, detail="Source file not available")
+    url = generate_presigned_download_url(project.file_path)
+    # Hand the frontend a hint about how to render the file so it can
+    # choose <iframe> for PDFs and <img> for images.
+    fname = (project.file_name or "").lower()
+    if fname.endswith(".pdf"):
+        kind = "pdf"
+    elif fname.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
+        kind = "image"
+    else:
+        kind = "other"
+    return {"url": url, "kind": kind, "filename": project.file_name}
+
+
 @router.get(
     "/{project_id}/download",
     dependencies=[Depends(require_feature("download_translation"))],

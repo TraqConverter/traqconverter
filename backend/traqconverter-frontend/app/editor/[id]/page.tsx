@@ -142,6 +142,42 @@ export default function EditorPage() {
     total: number
   } | null>(null)
 
+  // Source-document preview (toggle on/off). The backend returns a
+  // short-lived signed URL plus a kind hint so we render PDFs in an
+  // iframe and images in an <img>. We lazy-fetch the URL only when
+  // the user opens the panel; the URL is fairly short-lived so
+  // re-fetching on each toggle keeps it fresh too.
+  const [showSourcePreview, setShowSourcePreview] = useState(false)
+  const [sourcePreview, setSourcePreview] = useState<{
+    url: string
+    kind: "pdf" | "image" | "other"
+    filename: string
+  } | null>(null)
+  const [sourceLoading, setSourceLoading] = useState(false)
+
+  const loadSourcePreview = async () => {
+    if (sourcePreview) return
+    try {
+      setSourceLoading(true)
+      const res = await api.get(`/projects/${id}/source-url`)
+      setSourcePreview({
+        url: res.data.url,
+        kind: res.data.kind,
+        filename: res.data.filename,
+      })
+    } catch (err: any) {
+      console.error("SOURCE PREVIEW ERROR:", err)
+    } finally {
+      setSourceLoading(false)
+    }
+  }
+
+  const toggleSourcePreview = () => {
+    const next = !showSourcePreview
+    setShowSourcePreview(next)
+    if (next) loadSourcePreview()
+  }
+
   const fetchProject = useCallback(async () => {
     try {
       const [projRes, segRes] = await Promise.all([
@@ -574,6 +610,38 @@ export default function EditorPage() {
           className="flex items-center gap-3 mt-2"
           onClick={(e) => e.stopPropagation()}
         >
+          {/* SHOW SOURCE TOGGLE — opens a panel with the original
+              document next to the segments so reviewers can verify
+              the rebuild visually. */}
+          <button
+            type="button"
+            onClick={toggleSourcePreview}
+            className="inline-flex items-center gap-2 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
+            style={{
+              background: showSourcePreview ? "#0a7870" : "#ffffff",
+              color: showSourcePreview ? "#ffffff" : "#1f2a2e",
+              border: showSourcePreview
+                ? "1px solid #0a7870"
+                : "1px solid #e7ddc5",
+            }}
+            title="Show or hide the original document next to the translation"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="3" y="4" width="8" height="16" rx="1.5" />
+              <rect x="13" y="4" width="8" height="16" rx="1.5" />
+            </svg>
+            {showSourcePreview ? "Hide source" : "Show source"}
+          </button>
+
           {/* STATUS PILL with dropdown */}
           <div className="relative">
             <button
@@ -799,8 +867,93 @@ export default function EditorPage() {
         </button>
       </div>
 
-      {/* SEGMENTS + SIDEBAR */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4">
+      {/* SEGMENTS + (OPTIONAL SOURCE) + SIDEBAR
+          With "Show source" enabled the segments table shrinks to make
+          room for an iframe/<img> of the original document on its left.
+          Both panels are sticky-tall so the user can scroll either side
+          independently while comparing them. */}
+      <div
+        className="grid grid-cols-1 gap-4"
+        style={{
+          gridTemplateColumns: showSourcePreview
+            ? "minmax(0, 1fr) minmax(0, 1fr) 360px"
+            : "minmax(0, 1fr) 360px",
+        }}
+      >
+        {showSourcePreview && (
+          <div
+            className="rounded-2xl overflow-hidden flex flex-col"
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e7ddc5",
+              height: "calc(100vh - 240px)",
+              minHeight: 520,
+              position: "sticky",
+              top: 20,
+            }}
+          >
+            <div
+              className="px-4 py-2.5 flex items-center justify-between text-[11px] font-semibold tracking-[0.14em]"
+              style={{
+                color: "#9a9178",
+                background: "#faf5ee",
+                borderBottom: "1px solid #f1e8d1",
+              }}
+            >
+              <span>ORIGINAL DOCUMENT</span>
+              {sourcePreview && (
+                <a
+                  href={sourcePreview.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] font-semibold tracking-[0.1em] hover:underline"
+                  style={{ color: "#0a7870" }}
+                >
+                  OPEN ↗
+                </a>
+              )}
+            </div>
+            <div className="flex-1 overflow-auto" style={{ background: "#fbf6ea" }}>
+              {sourceLoading && !sourcePreview && (
+                <div className="px-4 py-8 text-sm text-center" style={{ color: "#8a8270" }}>
+                  Loading source…
+                </div>
+              )}
+              {sourcePreview && sourcePreview.kind === "pdf" && (
+                <iframe
+                  src={sourcePreview.url}
+                  title={sourcePreview.filename}
+                  className="w-full h-full"
+                  style={{ border: 0, background: "#fff" }}
+                />
+              )}
+              {sourcePreview && sourcePreview.kind === "image" && (
+                <div className="flex items-start justify-center p-3">
+                  <img
+                    src={sourcePreview.url}
+                    alt={sourcePreview.filename}
+                    style={{ maxWidth: "100%", height: "auto" }}
+                  />
+                </div>
+              )}
+              {sourcePreview && sourcePreview.kind === "other" && (
+                <div className="px-4 py-8 text-sm text-center" style={{ color: "#8a8270" }}>
+                  This file type can't be previewed inline.{" "}
+                  <a
+                    href={sourcePreview.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: "#0a7870", textDecoration: "underline" }}
+                  >
+                    Open in a new tab
+                  </a>
+                  .
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* SEGMENTS TABLE */}
         <div
           className="rounded-2xl overflow-hidden"
