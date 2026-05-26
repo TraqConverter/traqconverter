@@ -759,6 +759,45 @@ def download_project(
 # DELETE PROJECT
 # ============================================================
 
+# ============================================================
+# RENAME PROJECT — updates the display file_name shown in the UI.
+# Doesn't touch the underlying storage key (project.file_path) so
+# the original document and any rebuild remain reachable.
+# ============================================================
+
+class _RenameProjectPayload(BaseModel):
+    file_name: str
+
+
+@router.patch("/{project_id}")
+def rename_project(
+    project_id: UUID,
+    data: _RenameProjectPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = get_user_project_or_404(db, project_id, current_user)
+
+    new_name = (data.file_name or "").strip()
+    if not new_name:
+        raise HTTPException(
+            status_code=400, detail="file_name can't be empty"
+        )
+    # Keep an extension on the visible name so DOCX/PDF export
+    # filenames don't get awkward — if the user dropped it, splice
+    # the original extension back on.
+    original_ext = ""
+    if project.file_name and "." in project.file_name:
+        original_ext = "." + project.file_name.rsplit(".", 1)[-1]
+    if original_ext and not new_name.lower().endswith(original_ext.lower()):
+        new_name = new_name + original_ext
+
+    project.file_name = new_name[:255]  # keep it sensible
+    db.commit()
+    db.refresh(project)
+    return {"id": str(project.id), "file_name": project.file_name}
+
+
 @router.delete("/{project_id}")
 def delete_project(
     project_id: UUID,

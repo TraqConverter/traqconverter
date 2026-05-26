@@ -21,6 +21,31 @@ configure_logging()
 logger = logging.getLogger(__name__)
 logger.info("Starting TraqConverter API")
 
+# Startup diagnostic — log whether LibreOffice is available on PATH
+# so we can tell at a glance whether the nixpacks.toml install
+# landed. Without it, the PDF export silently falls back to the
+# ReportLab pipeline (which doesn't match the DOCX visually).
+def _log_libreoffice_status():
+    import shutil
+    for binname in ("soffice", "libreoffice"):
+        path = shutil.which(binname)
+        if path:
+            logger.info(
+                "✅ LibreOffice available for DOCX→PDF: %s -> %s",
+                binname,
+                path,
+            )
+            return
+    logger.warning(
+        "⚠️  LibreOffice NOT on PATH — PDF export will fall back to "
+        "ReportLab (PDF will visually drift from DOCX). Check that "
+        "nixpacks.toml is at the Railway service's root directory "
+        "and includes `aptPkgs = [\"libreoffice\", ...]`."
+    )
+
+
+_log_libreoffice_status()
+
 # ----------------------------------------------------
 # Sentry (optional — enabled when SENTRY_DSN is set)
 # ----------------------------------------------------

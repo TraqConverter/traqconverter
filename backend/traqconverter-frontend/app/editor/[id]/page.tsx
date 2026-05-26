@@ -213,6 +213,48 @@ export default function EditorPage() {
     }
   }
 
+  // Rename + delete state for the title chrome.
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [renamingDraft, setRenamingDraft] = useState("")
+  const [renameBusy, setRenameBusy] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+
+  const submitRename = async () => {
+    const name = renamingDraft.trim()
+    if (!name) return
+    try {
+      setRenameBusy(true)
+      const res = await api.patch(`/projects/${id}`, { file_name: name })
+      const newName: string = res.data?.file_name || name
+      setProject((p) => (p ? { ...p, file_name: newName } : p))
+      setRenameOpen(false)
+    } catch (err: any) {
+      console.error("RENAME ERROR:", err)
+      alert(
+        err?.response?.data?.detail ||
+          "Couldn't rename the project — please try again."
+      )
+    } finally {
+      setRenameBusy(false)
+    }
+  }
+
+  const submitDelete = async () => {
+    try {
+      setDeleteBusy(true)
+      await api.delete(`/projects/${id}`)
+      router.replace("/jobs")
+    } catch (err: any) {
+      console.error("DELETE ERROR:", err)
+      alert(
+        err?.response?.data?.detail ||
+          "Couldn't delete the project — please try again."
+      )
+      setDeleteBusy(false)
+    }
+  }
+
   const fetchProject = useCallback(async () => {
     try {
       const [projRes, segRes] = await Promise.all([
@@ -632,12 +674,45 @@ export default function EditorPage() {
               </span>{" "}
               {project.target_language || "—"}
             </div>
-            <h1
-              className="text-[30px] font-semibold tracking-tight"
-              style={{ color: "#1f2a2e" }}
-            >
-              {project.file_name}
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1
+                className="text-[30px] font-semibold tracking-tight"
+                style={{ color: "#1f2a2e" }}
+              >
+                {project.file_name}
+              </h1>
+              <button
+                type="button"
+                onClick={() => {
+                  setRenamingDraft(project.file_name || "")
+                  setRenameOpen(true)
+                }}
+                title="Rename project"
+                aria-label="Rename project"
+                className="w-7 h-7 rounded-md flex items-center justify-center transition"
+                style={{ color: "#6b6558" }}
+                onMouseEnter={(e) =>
+                  (e.currentTarget.style.background = "#f3ecdb")
+                }
+                onMouseLeave={(e) =>
+                  (e.currentTarget.style.background = "transparent")
+                }
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -645,6 +720,42 @@ export default function EditorPage() {
           className="flex items-center gap-3 mt-2"
           onClick={(e) => e.stopPropagation()}
         >
+          {/* DELETE — opens the confirm modal. */}
+          <button
+            type="button"
+            onClick={() => setDeleteOpen(true)}
+            title="Delete project"
+            aria-label="Delete project"
+            className="inline-flex items-center gap-2 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
+            style={{
+              background: "#ffffff",
+              color: "#b14a3a",
+              border: "1px solid #e7b8b0",
+            }}
+            onMouseEnter={(e) =>
+              (e.currentTarget.style.background = "#f9efe9")
+            }
+            onMouseLeave={(e) =>
+              (e.currentTarget.style.background = "#ffffff")
+            }
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3 6h18" />
+              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              <path d="M19 6 18 21H6L5 6" />
+            </svg>
+            Delete
+          </button>
+
           {/* COMPARE — swaps the segments table for a side-by-side
               view of the ORIGINAL document and the REBUILT output
               PDF so a reviewer can visually verify the rebuild. */}
@@ -1388,6 +1499,148 @@ export default function EditorPage() {
                 style={{ background: "#0a7870", color: "#fff" }}
               >
                 Approve all
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* RENAME MODAL */}
+      {renameOpen && (
+        <div
+          onClick={() => !renameBusy && setRenameOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(31,42,46,0.45)",
+            backdropFilter: "blur(2px)",
+            zIndex: 100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="rounded-2xl p-6 w-full max-w-md"
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e7ddc5",
+              boxShadow: "0 24px 60px rgba(30,30,20,0.18)",
+            }}
+          >
+            <div
+              className="text-[11px] font-semibold tracking-[0.18em] mb-1"
+              style={{ color: "#9a9178" }}
+            >
+              RENAME PROJECT
+            </div>
+            <h3 className="text-[18px] font-semibold tracking-tight mb-4" style={{ color: "#1f2a2e" }}>
+              Pick a clearer name
+            </h3>
+            <input
+              autoFocus
+              value={renamingDraft}
+              onChange={(e) => setRenamingDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitRename()
+                if (e.key === "Escape" && !renameBusy) setRenameOpen(false)
+              }}
+              className="w-full text-sm outline-none px-4 py-2.5 rounded-xl"
+              style={{
+                background: "#faf5ee",
+                border: "1px solid #e7ddc5",
+                color: "#1f2a2e",
+              }}
+            />
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() => setRenameOpen(false)}
+                disabled={renameBusy}
+                className="px-4 py-2 rounded-full text-sm font-semibold"
+                style={{ background: "#ffffff", color: "#1f2a2e", border: "1px solid #e7ddc5" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitRename}
+                disabled={renameBusy || !renamingDraft.trim()}
+                className="px-4 py-2 rounded-full text-sm font-semibold"
+                style={{
+                  background: renameBusy || !renamingDraft.trim() ? "#9bc9c5" : "#0a7870",
+                  color: "#fff",
+                  cursor: renameBusy || !renamingDraft.trim() ? "not-allowed" : "pointer",
+                }}
+              >
+                {renameBusy ? "Saving…" : "Save name"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE MODAL */}
+      {deleteOpen && (
+        <div
+          onClick={() => !deleteBusy && setDeleteOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(31,42,46,0.45)",
+            backdropFilter: "blur(2px)",
+            zIndex: 100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="rounded-2xl p-6 w-full max-w-md"
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e7b8b0",
+              boxShadow: "0 24px 60px rgba(177,74,58,0.20)",
+            }}
+          >
+            <div
+              className="text-[11px] font-semibold tracking-[0.18em] mb-1"
+              style={{ color: "#b14a3a" }}
+            >
+              DELETE PROJECT
+            </div>
+            <h3 className="text-[18px] font-semibold tracking-tight mb-3" style={{ color: "#1f2a2e" }}>
+              Permanently remove this project?
+            </h3>
+            <p className="text-sm mb-5" style={{ color: "#6b6558" }}>
+              This deletes the project, its segments, comments, and the uploaded source file. This action cannot be undone.
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteOpen(false)}
+                disabled={deleteBusy}
+                className="px-4 py-2 rounded-full text-sm font-semibold"
+                style={{ background: "#ffffff", color: "#1f2a2e", border: "1px solid #e7ddc5" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitDelete}
+                disabled={deleteBusy}
+                className="px-4 py-2 rounded-full text-sm font-semibold"
+                style={{
+                  background: deleteBusy ? "#e7b8b0" : "#b14a3a",
+                  color: "#fff",
+                  cursor: deleteBusy ? "not-allowed" : "pointer",
+                }}
+              >
+                {deleteBusy ? "Deleting…" : "Delete project"}
               </button>
             </div>
           </div>
