@@ -38,9 +38,10 @@ def _log_libreoffice_status():
             return
     logger.warning(
         "⚠️  LibreOffice NOT on PATH — PDF export will fall back to "
-        "ReportLab (PDF will visually drift from DOCX). Check that "
-        "nixpacks.toml is at the Railway service's root directory "
-        "and includes `aptPkgs = [\"libreoffice\", ...]`."
+        "ReportLab (PDF will visually drift from DOCX). Add "
+        "`libreoffice` + `libreoffice-writer` to the apt-get install "
+        "line in backend/Dockerfile (or nixpacks.toml aptPkgs if "
+        "using Nixpacks)."
     )
 
 

@@ -8,8 +8,16 @@
 
 FROM python:3.11-slim AS base
 
-# System packages we need at runtime: tesseract for OCR, libs for PyMuPDF
-# and PIL, plus build tools for any wheels that don't ship binaries.
+# System packages we need at runtime:
+#   * tesseract  — fallback OCR engine when Claude Vision isn't configured
+#   * PyMuPDF / PIL libs — image decoding for the layout pipeline
+#   * libreoffice + libreoffice-writer — DOCX→PDF conversion. Export PDF
+#     builds the layout-planned DOCX and shells out to `soffice --headless`
+#     so the PDF is visually identical to the DOCX.
+#   * fonts-liberation / fonts-dejavu-core — give LibreOffice acceptable
+#     fallback fonts so the converted PDF doesn't render in a default
+#     Type1 face.
+#   * build-essential — for any Python wheels that don't ship binaries.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     tesseract-ocr \
@@ -18,7 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libjpeg62-turbo \
     libpng16-16 \
+    libreoffice \
+    libreoffice-writer \
     fonts-dejavu-core \
+    fonts-liberation \
     curl \
  && rm -rf /var/lib/apt/lists/*
 
