@@ -191,7 +191,12 @@ def delete_account(
                 ).delete(synchronize_session=False)
 
                 # translation_jobs + translation_memory are raw-SQL
-                # tables; not all deployments have project_id on TM.
+                # backed and may not have project_id on older schemas.
+                # Wrap each in a SAVEPOINT so a failure here only
+                # rolls back THAT statement, not the segment deletes
+                # we just did above — otherwise the project delete
+                # below trips an FK constraint because the segments
+                # are still there.
                 for sql, params in (
                     (
                         "DELETE FROM translation_jobs WHERE project_id = ANY(:pids)",
@@ -203,14 +208,14 @@ def delete_account(
                     ),
                 ):
                     try:
-                        db.execute(text(sql), params)
-                    except Exception:
-                        db.rollback()
-                        # Re-attach team object after rollback so we
-                        # can keep going.
-                        team = db.query(Team).filter(
-                            Team.id == team_id
-                        ).first()
+                        with db.begin_nested():
+                            db.execute(text(sql), params)
+                    except Exception as e:
+                        logger.info(
+                            "Optional cleanup skipped (%s): %s",
+                            sql.split(" ")[2],  # the table name
+                            e,
+                        )
 
                 db.query(TranslationProject).filter(
                     TranslationProject.team_id == team_id
@@ -225,14 +230,16 @@ def delete_account(
             ).delete(synchronize_session=False)
 
             # Team-scoped glossary entries (table is raw-SQL backed).
+            # SAVEPOINT keeps a missing table / column from rolling
+            # back the rest of the cleanup.
             try:
-                db.execute(
-                    text("DELETE FROM glossary WHERE team_id = :tid"),
-                    {"tid": str(team_id)},
-                )
-            except Exception:
-                db.rollback()
-                team = db.query(Team).filter(Team.id == team_id).first()
+                with db.begin_nested():
+                    db.execute(
+                        text("DELETE FROM glossary WHERE team_id = :tid"),
+                        {"tid": str(team_id)},
+                    )
+            except Exception as e:
+                logger.info("Optional glossary cleanup skipped: %s", e)
 
             # 3) Wallet + transactions.
             wallet_ids = [
@@ -261,16 +268,19 @@ def delete_account(
         ).delete(synchronize_session=False)
 
         # And any stripe_event rows tied to them, just in case.
+        # SAVEPOINT so a missing column doesn't roll back the user
+        # delete that's about to happen.
         try:
-            db.execute(
-                text(
-                    "DELETE FROM stripe_events "
-                    "WHERE user_id = :uid OR customer_email = :email"
-                ),
-                {"uid": str(user_id), "email": current_user.email},
-            )
-        except Exception:
-            db.rollback()
+            with db.begin_nested():
+                db.execute(
+                    text(
+                        "DELETE FROM stripe_events "
+                        "WHERE user_id = :uid OR customer_email = :email"
+                    ),
+                    {"uid": str(user_id), "email": current_user.email},
+                )
+        except Exception as e:
+            logger.info("Optional stripe_events cleanup skipped: %s", e)
 
         # 5) The user row.
         db.execute(
