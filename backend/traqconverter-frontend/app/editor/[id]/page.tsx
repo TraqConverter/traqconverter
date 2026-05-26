@@ -162,9 +162,15 @@ export default function EditorPage() {
   const loadCompare = async () => {
     try {
       setCompareLoading(true)
+      // Fetch the source URL and BUILD a fresh DOCX rebuild in
+      // parallel. The new build-rebuild-docx endpoint generates a
+      // DOCX from current approved segments, uploads it, and returns
+      // a signed URL — guaranteeing the Compare view always shows
+      // the latest DOCX, never a stale PDF. The Office viewer
+      // renders it inline so the browser never downloads anything.
       const [srcRes, rebRes] = await Promise.all([
         api.get(`/projects/${id}/source-url`),
-        api.get(`/projects/${id}/rebuild-url`),
+        api.post(`/projects/${id}/build-rebuild-docx`),
       ])
       setSourcePreview({
         url: srcRes.data.url,
@@ -178,6 +184,19 @@ export default function EditorPage() {
       })
     } catch (err: any) {
       console.error("COMPARE LOAD ERROR:", err)
+      // Fall back to the stored rebuild URL if the live build failed
+      // (e.g. no approved segments yet) so the user still sees a
+      // helpful message in the pane.
+      try {
+        const rebRes = await api.get(`/projects/${id}/rebuild-url`)
+        setRebuildPreview({
+          url: rebRes.data.url,
+          kind: rebRes.data.kind,
+          filename: rebRes.data.filename,
+        })
+      } catch {
+        setRebuildPreview({ url: null, kind: "none", filename: null })
+      }
     } finally {
       setCompareLoading(false)
     }
@@ -186,7 +205,12 @@ export default function EditorPage() {
   const toggleCompareMode = () => {
     const next = !compareMode
     setCompareMode(next)
-    if (next && !sourcePreview) loadCompare()
+    // Always re-build on open so the user gets the freshest rebuild
+    // (in case they've edited segments since the last Compare).
+    if (next) {
+      setRebuildPreview(null)
+      loadCompare()
+    }
   }
 
   const fetchProject = useCallback(async () => {
