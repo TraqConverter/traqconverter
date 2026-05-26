@@ -421,7 +421,135 @@ def generate_docx(segments, user_email, project=None, user=None):
     return buffer
 
 
+def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes | None:
+    """Convert DOCX bytes to PDF using LibreOffice headless.
+
+    Returns PDF bytes on success, None if LibreOffice isn't available
+    or conversion fails (so the caller can fall back to the ReportLab
+    PDF builder).
+
+    This is how Export PDF stays visually identical to Export DOCX —
+    we build ONE document (via the layout planner) and let LibreOffice
+    render that exact DOCX into a PDF instead of running a separate
+    ReportLab pipeline that drifts from the DOCX output.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    # Locate LibreOffice. Different distros use different binary
+    # names; we try the common ones in order.
+    candidates = ["soffice", "libreoffice"]
+    libreoffice_bin = next(
+        (shutil.which(c) for c in candidates if shutil.which(c)), None
+    )
+    if not libreoffice_bin:
+        logger.warning(
+            "LibreOffice not found on PATH — PDF export will fall back "
+            "to ReportLab. Install libreoffice on the deployment host "
+            "to get DOCX-identical PDF output."
+        )
+        return None
+
+    with tempfile.TemporaryDirectory(prefix="docx2pdf_") as tmp:
+        tmp_dir = Path(tmp)
+        docx_path = tmp_dir / "input.docx"
+        docx_path.write_bytes(docx_bytes)
+
+        try:
+            # `--headless` runs without a UI. We pass an isolated
+            # user-profile dir so concurrent calls don't collide on
+            # the global LibreOffice profile (which would block).
+            user_profile = tmp_dir / "lo_profile"
+            user_profile.mkdir()
+            env_arg = f"-env:UserInstallation=file://{user_profile}"
+
+            proc = subprocess.run(
+                [
+                    libreoffice_bin,
+                    env_arg,
+                    "--headless",
+                    "--convert-to",
+                    "pdf",
+                    "--outdir",
+                    str(tmp_dir),
+                    str(docx_path),
+                ],
+                capture_output=True,
+                timeout=120,
+                text=True,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("LibreOffice conversion timed out after 120s")
+            return None
+        except Exception as e:
+            logger.warning("LibreOffice invocation failed: %s", e)
+            return None
+
+        if proc.returncode != 0:
+            logger.warning(
+                "LibreOffice exited %d. stderr=%s",
+                proc.returncode,
+                (proc.stderr or "")[:500],
+            )
+            return None
+
+        pdf_path = tmp_dir / "input.pdf"
+        if not pdf_path.exists():
+            logger.warning(
+                "LibreOffice ran cleanly but produced no PDF at %s. "
+                "stdout=%s",
+                pdf_path,
+                (proc.stdout or "")[:500],
+            )
+            return None
+
+        logger.info("LibreOffice DOCX→PDF conversion succeeded")
+        return pdf_path.read_bytes()
+
+
 def generate_pdf(segments, user_email, project=None, user=None):
+    """PDF export.
+
+    Primary path: build the DOCX (which uses the layout planner with
+    borders, tables, two-column rows etc.) and convert it to PDF via
+    LibreOffice. This guarantees the PDF looks identical to the DOCX
+    — they're literally the same document, one is rendered through
+    the Office file format and one through PDF.
+
+    Fallback path: if LibreOffice isn't installed (local dev), build
+    the PDF with ReportLab via the existing _build_layout_pdf_live
+    helper, and finally fall back to a flat paragraph stream.
+    """
+    # 1) Try the DOCX→LibreOffice→PDF path.
+    if project is not None:
+        try:
+            docx_buf = generate_docx(
+                segments, user_email, project=project, user=user
+            )
+        except Exception as e:
+            logger.warning(
+                "DOCX build failed inside PDF path, falling back: %s", e
+            )
+            docx_buf = None
+
+        if docx_buf is not None:
+            try:
+                docx_bytes = docx_buf.getvalue()
+            except AttributeError:
+                # Already raw bytes
+                docx_bytes = docx_buf
+
+            pdf_bytes = _convert_docx_to_pdf(docx_bytes)
+            if pdf_bytes:
+                buf = BytesIO(pdf_bytes)
+                buf.seek(0)
+                return buf
+
+    # 2) Fallback: ReportLab path mirroring the layout plan when we
+    #    can (still tries the structured renderer), otherwise a flat
+    #    paragraph stream.
     if project is not None:
         try:
             project._export_user_email = user_email
@@ -430,9 +558,6 @@ def generate_pdf(segments, user_email, project=None, user=None):
             )
         except Exception:
             pass
-        # Always rebuild from the live segments so edits + approval
-        # filtering are honoured. Falls back to the flat paragraph
-        # render below if the live rebuild can't run.
         layout_pdf = _build_layout_pdf_live(segments, project)
         if layout_pdf is not None:
             return layout_pdf
@@ -441,12 +566,10 @@ def generate_pdf(segments, user_email, project=None, user=None):
     doc = SimpleDocTemplate(buffer)
     styles = getSampleStyleSheet()
     content = []
-    # Translated body first…
     for seg in segments:
         if seg.translated_text:
             content.append(Paragraph(seg.translated_text, styles["Normal"]))
             content.append(Spacer(1, 10))
-    # …then the certification block at the end.
     content.append(Spacer(1, 20))
     for line in build_certification(user_email):
         content.append(Paragraph(line, styles["Normal"]))
