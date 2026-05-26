@@ -638,18 +638,34 @@ def _embed_pdf_pages_as_images(doc, pdf_path: str) -> None:
 # ============================================================
 
 
-def _set_cell_text(cell, eid, by_id, alignment_override=None):
+def _set_cell_text(cell, eid, by_id, alignment_override=None, split_column=None):
     """Populate a table cell with a single styled paragraph from an
     element id. Uses the cell's existing default paragraph as the
     first content paragraph instead of removing it (removing the
     cell's last paragraph violates Word's OOXML invariant and Word
-    silently drops every subsequent block in the document)."""
+    silently drops every subsequent block in the document).
+
+    `split_column` is "label" or "value" for form-table cells that
+    share an id with the matching half. Splits on 2+ consecutive
+    spaces between source_text's label and value.
+    """
     if eid not in by_id:
         return
     translated, layout = by_id[eid]
     text = (translated or "").strip() or (layout.get("source_text") or "").strip()
     if not text:
         return
+
+    # Form-table label/value split. The OCR emits things like
+    # "Comune    SAN BENEDETTO DEL TRONTO" as a single segment; for
+    # a layout-table column we want only the label or the value.
+    if split_column in ("label", "value"):
+        # Split on 2+ spaces or a tab — common form-row separator.
+        import re as _re
+        parts = _re.split(r" {2,}|\t+", text, maxsplit=1)
+        if len(parts) == 2:
+            text = parts[0].strip() if split_column == "label" else parts[1].strip()
+
     layout_for_render = dict(layout or {})
     if alignment_override in {"left", "center", "right", "justify"}:
         layout_for_render["alignment"] = alignment_override
@@ -801,6 +817,7 @@ def _render_planned_block(
                             eid,
                             by_id,
                             alignment_override=(cellspec.get("alignment") or "").lower(),
+                            split_column=cellspec.get("split_column"),
                         )
                     elif "text" in cellspec:
                         _set_cell_literal(

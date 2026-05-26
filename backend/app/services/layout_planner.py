@@ -37,7 +37,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
-_PLANNER_VERSION = "v1"
+_PLANNER_VERSION = "v2-aggressive-tables"
 
 
 _SYSTEM_PROMPT = """You are a DOCX layout planner. Given a flat list of \
@@ -93,47 +93,88 @@ C) Table (gridded, with optional borders):
 D) Spacer (small vertical gap):
    { "kind": "spacer", "height_mm": <number> }
 
-RULES:
+============================================================
+CRITICAL — THIS IS A LAYOUT TASK, NOT A LIST TASK
+============================================================
+The DEFAULT for any block of text is NOT a "paragraph". Most
+documents have visual structure (columns, tables, side-by-side
+blocks) and your job is to recreate it. If you emit only
+paragraphs you have FAILED this task.
 
-1) Use EVERY element id exactly once across the whole "blocks" tree.
-   Don't drop elements. Don't duplicate elements.
+You MUST use "row" blocks for ANY case where two or more elements
+share a similar Y coordinate (their y0 values differ by less than
+20% of the average element height) but have clearly different X
+coordinates. Examples:
+  - A heading at top-left and another heading at top-right.
+  - A label and its value separated by horizontal space.
+  - A photo placeholder at the left and form rows at its right.
+  - A right-aligned element ([QR Code], [Stamp]) next to body text.
 
-2) Detect two-column header layouts: if you see two text blocks near
-   the top of the page, one at the left edge and one at the right edge
-   (different x0 ranges, similar y range), emit them as a "row" with
-   two columns.
+You MUST use "table" blocks when you see ≥ 3 consecutive form rows
+(same shape: label on the left, value on the right, aligned X
+positions). Group them into one table with two columns. Cleaner
+than many separate rows.
 
-3) Detect form rows: a label like "Comune" near x≈200 followed by a
-   value like "SAN BENEDETTO DEL TRONTO" near x≈350 on the same y
-   should be a TWO-COLUMN ROW with the label as the left column and
-   value as the right. If the document has many of these consecutive
-   form rows, group them into ONE table with two columns instead of
-   many separate rows — that produces cleaner output.
+You MUST use "table" with border:true when you see a parent/guardian
+style data section: a header row of column titles ("nome e cognome",
+"estremi del documento", "firma") followed by data rows.
 
-4) Detect a PHOTO + FORM layout: if there's a [Photo] placeholder at
-   the left side of the page and a stack of form rows to its right
-   spanning the same Y range, emit ONE row with:
-     column 1 (≈25%): the photo placeholder paragraph
-     column 2 (≈75%): the table of form rows
-   Same pattern applies to a QR code or stamp sitting next to text.
+============================================================
+DETECTION RECIPES
+============================================================
+Given the page_width W:
 
-5) Detect parent/guardian style TABLES: when you see a sequence of
-   short header words ("nome e cognome", "estremi del documento",
-   "firma") followed by data rows, emit them as a single TABLE with
-   border:true.
+1) "Two-column header at top" — for any two elements where
+   y_avg < page_height * 0.15 AND one has x0 < W*0.25 AND the
+   other has x1 > W*0.75 → "row" with [left_col, right_col].
 
-6) CENTERED titles (page-centered, large font, often bold) → a
-   paragraph with alignment "center".
+2) "Centered title" — for any element with
+   |((x0+x1)/2) - W/2| < W*0.10 AND text width < W*0.6 → paragraph
+   with alignment "center". Often size "large" / "xlarge".
 
-7) RIGHT-aligned standalone elements (e.g. "Numero di Serie XYZ"
-   at the right edge of the page) → paragraph alignment "right".
+3) "Right-aligned standalone" — for any element with x1 > W*0.85
+   AND its x0 > W*0.50 AND it's the only element on its Y row →
+   paragraph with alignment "right". Examples: "Numero di Serie",
+   "[QR Code]", "[Stamp]".
 
-8) Place elements in TOP-DOWN reading order. Elements at similar
-   Y belong on the same row.
+4) "Form table" — if you see 3+ consecutive elements where:
+       - each contains BOTH a label-like prefix AND a value-like
+         suffix separated by 2+ spaces (e.g. "Comune    SAN
+         BENEDETTO DEL TRONTO")
+   → emit ONE table block, two columns, one row per element.
+     For each row, SPLIT the element text on the multi-space gap
+     and put the label in column 1 (alignment "left") and the
+     value in column 2 (alignment "left"). Each cell references
+     the SAME element id; we'll handle the split at render time
+     via {"id": <id>, "alignment": "left"} for column 1 and
+     {"id": <id>, "alignment": "left"} again for column 2. (Yes
+     this duplicates the id — set "split_column": "label" or
+     "value" on each cell so the renderer knows which half to
+     show.)
 
-9) Use ONLY the element ids that appear in the input.
+5) "Photo + form composite" — if a [Photo] placeholder has
+   y0 < W*0.40 and x1 < W*0.30 AND there are 4+ form-row elements
+   to its right (their x0 > W*0.25 and they span y0..(photo.y1+50))
+   → emit ONE "row" with two columns:
+       col 1 (≈25%): paragraph with the photo id
+       col 2 (≈75%): table of the form rows
 
-10) Return JSON only — no markdown, no commentary."""
+6) "Parent/guardian table" — look for elements like
+   "nome e cognome" / "estremi del documento" / "firma" with
+   alignment "left" on the same Y. Treat the next 1-3 rows of
+   data as table data rows. Emit ONE table with border:true,
+   3 columns.
+
+============================================================
+OUTPUT RULES
+============================================================
+- Use EVERY element id exactly once across the whole "blocks" tree.
+  Don't drop. Don't duplicate. (Form-table split-cells are an
+  exception: those CAN reference an id twice with different
+  "split_column" values.)
+- Place elements in TOP-DOWN reading order.
+- Use ONLY ids that appear in the input.
+- Return JSON only — no markdown, no commentary, no preamble."""
 
 
 def is_available() -> bool:
@@ -247,16 +288,22 @@ def plan_layout(
             extra[:5],
         )
         return None
+    # Duplicate ids are normally disallowed, but form-table cells can
+    # legitimately reference the same id twice (label half + value
+    # half). The renderer reads "split_column" to pick which side to
+    # show. We only error out if there's a duplicate that isn't part
+    # of a split-column form table.
     seen_count: dict[int, int] = {}
     for i in referenced:
         seen_count[i] = seen_count.get(i, 0) + 1
     dupes = [i for i, n in seen_count.items() if n > 1]
     if dupes:
-        logger.warning(
-            "Layout planner: duplicated ids %s — discarding",
-            dupes[:5],
-        )
-        return None
+        if not _all_dupes_are_split_columns(plan.get("blocks") or [], dupes):
+            logger.warning(
+                "Layout planner: duplicated ids %s outside split cells — discarding",
+                dupes[:5],
+            )
+            return None
     missing = sorted(valid_ids - set(referenced))
     if missing:
         # Append a fallback linear section with the missing ids so we
@@ -271,17 +318,110 @@ def plan_layout(
                 {"kind": "paragraph", "id": mid, "alignment": "left"}
             )
 
+    # Diagnostic: log the SHAPE of the plan so we can see whether
+    # Claude is actually producing rows/tables or just paragraphs.
+    shape = _count_block_kinds(plan.get("blocks") or [])
     logger.info(
-        "Layout planner (%s): produced %d top-level blocks for %d elements",
+        "Layout planner (%s): %d top-level blocks for %d elements — "
+        "paragraphs=%d rows=%d tables=%d tables_bordered=%d spacers=%d",
         _PLANNER_VERSION,
         len(plan.get("blocks") or []),
         len(elements),
+        shape["paragraph"],
+        shape["row"],
+        shape["table"],
+        shape["table_bordered"],
+        shape["spacer"],
     )
     return plan
 
 
+def _count_block_kinds(blocks: list[Any]) -> dict[str, int]:
+    """Walk the planner tree and count block kinds — useful for
+    diagnosing 'why is the rebuild flat?'."""
+    out = {
+        "paragraph": 0,
+        "row": 0,
+        "table": 0,
+        "table_bordered": 0,
+        "spacer": 0,
+    }
+    for b in blocks or []:
+        if not isinstance(b, dict):
+            continue
+        kind = b.get("kind", "paragraph")
+        if kind == "paragraph":
+            out["paragraph"] += 1
+        elif kind == "row":
+            out["row"] += 1
+            for col in b.get("columns") or []:
+                if isinstance(col, dict):
+                    sub = _count_block_kinds(col.get("blocks") or [])
+                    for k, v in sub.items():
+                        out[k] += v
+        elif kind == "table":
+            out["table"] += 1
+            if b.get("border"):
+                out["table_bordered"] += 1
+        elif kind == "spacer":
+            out["spacer"] += 1
+    return out
+
+
+def _all_dupes_are_split_columns(
+    blocks: list[Any], dupe_ids: list[int]
+) -> bool:
+    """True iff every duplicated id appears ONLY inside table cells
+    that carry a "split_column" hint. Lets us allow form-table label
+    + value splits without permitting arbitrary duplication."""
+    dupe_set = set(dupe_ids)
+    return _walk_check_dupes(blocks, dupe_set)
+
+
+def _walk_check_dupes(blocks: list[Any], dupe_set: set[int]) -> bool:
+    for b in blocks or []:
+        if not isinstance(b, dict):
+            continue
+        kind = b.get("kind", "paragraph")
+        if kind == "paragraph":
+            try:
+                eid = int(b.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if eid in dupe_set:
+                return False  # dup outside a split-column cell
+        elif kind == "row":
+            for col in b.get("columns") or []:
+                if isinstance(col, dict):
+                    if not _walk_check_dupes(col.get("blocks") or [], dupe_set):
+                        return False
+        elif kind == "table":
+            for row in b.get("rows") or []:
+                for cell in row or []:
+                    if isinstance(cell, dict) and "id" in cell:
+                        try:
+                            eid = int(cell["id"])
+                        except (TypeError, ValueError):
+                            continue
+                        if eid in dupe_set and not cell.get("split_column"):
+                            return False
+    return True
+
+
 def _collect_ids(blocks: list[Any], out: list[int]) -> None:
-    """Walk the planner's tree and gather every referenced element id."""
+    """Walk the planner's tree and gather every referenced element id.
+
+    Cells carrying split_column ("label" or "value") count as ONE
+    reference toward coverage even when the same id appears in both
+    halves of a form-table row.
+    """
+    seen_split: set[int] = set()
+    _collect_ids_inner(blocks, out, seen_split)
+
+
+def _collect_ids_inner(
+    blocks: list[Any], out: list[int], seen_split: set[int]
+) -> None:
     for b in blocks or []:
         if not isinstance(b, dict):
             continue
@@ -294,12 +434,21 @@ def _collect_ids(blocks: list[Any], out: list[int]) -> None:
         elif kind == "row":
             for col in b.get("columns") or []:
                 if isinstance(col, dict):
-                    _collect_ids(col.get("blocks") or [], out)
+                    _collect_ids_inner(col.get("blocks") or [], out, seen_split)
         elif kind == "table":
             for row in b.get("rows") or []:
                 for cell in row or []:
                     if isinstance(cell, dict) and "id" in cell:
                         try:
-                            out.append(int(cell["id"]))
+                            eid = int(cell["id"])
                         except (TypeError, ValueError):
-                            pass
+                            continue
+                        if cell.get("split_column"):
+                            # Count split cells once even if both
+                            # label + value halves reference the same
+                            # id.
+                            if eid not in seen_split:
+                                out.append(eid)
+                                seen_split.add(eid)
+                        else:
+                            out.append(eid)
