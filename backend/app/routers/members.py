@@ -200,7 +200,62 @@ def invite_member(
     db.commit()
     db.refresh(invite)
 
-    return {"invited": True, "invite": _serialize_invite(invite)}
+    # Fire the invitation email via Resend. Failures don't break the
+    # invite flow (the row is already in the DB and will auto-accept
+    # on register/login), they just surface in the response so the
+    # owner can retry from the UI.
+    email_delivered = _send_invite_email(team, current_user, email, role)
+
+    return {
+        "invited": True,
+        "invite": _serialize_invite(invite),
+        "email_delivered": email_delivered,
+    }
+
+
+def _send_invite_email(
+    team: Team,
+    inviter: User,
+    invitee_email: str,
+    role: str,
+) -> bool:
+    """Send the invite email through Resend. Returns True on success,
+    False if Resend isn't configured or the send failed (we always
+    persist the invite either way so the auto-accept path still
+    works)."""
+    from urllib.parse import urlencode
+    from app.config import settings as _settings
+    from app.services.email_service import (
+        send_email,
+        render_invite_email,
+        is_configured,
+    )
+
+    if not is_configured():
+        # Local dev or unconfigured production — be loud about it.
+        import logging
+        logging.getLogger(__name__).info(
+            "Invite stored but no email sent (RESEND_API_KEY missing). "
+            "Recipient will be auto-added when they register/sign in "
+            "with %s.",
+            invitee_email,
+        )
+        return False
+
+    base = (_settings.FRONTEND_URL or "http://localhost:3000").rstrip("/")
+    register_url = (
+        f"{base}/register?"
+        + urlencode({"email": invitee_email, "team": team.name or ""})
+    )
+
+    subject, html = render_invite_email(
+        inviter_name=(inviter.full_name or "").strip(),
+        inviter_email=inviter.email,
+        team_name=team.name or "your team",
+        role=role,
+        register_url=register_url,
+    )
+    return send_email(to=invitee_email, subject=subject, html=html)
 
 
 # ============================================================
