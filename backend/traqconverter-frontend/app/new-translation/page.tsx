@@ -286,8 +286,12 @@ export default function NewProjectPage() {
   const [source, setSource] = useState("auto")
   const [target, setTarget] = useState("it-IT")
 
-  const [useTM, setUseTM] = useState(true)
-  const [applyGlossary, setApplyGlossary] = useState(true)
+  // TM and Glossary default OFF — users opt in explicitly when they
+  // know they have approved memory / approved terminology to apply.
+  // Defaulting them ON surprised users on first upload by re-using
+  // entries from other projects that hadn't been curated.
+  const [useTM, setUseTM] = useState(false)
+  const [applyGlossary, setApplyGlossary] = useState(false)
   const [requestCert, setRequestCert] = useState(false)
 
   const handlePickFile = () => fileInputRef.current?.click()
