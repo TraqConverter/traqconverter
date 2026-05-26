@@ -1,0 +1,13 @@
+# Nixpacks build configuration for Railway.
+#
+# We install LibreOffice on the deployment host so the PDF export
+# can convert the (layout-planned) DOCX into a PDF that's visually
+# identical to it. Without LibreOffice the PDF export falls back to
+# a ReportLab pipeline that drifts from the DOCX renderer.
+#
+# `tesseract` is also pinned here because the worker uses it as the
+# fallback OCR engine when Claude Vision isn't configured.
+
+[phases.setup]
+nixPkgs = ["python311", "libreoffice", "tesseract"]
+aptPkgs = ["fonts-liberation", "fonts-dejavu-core"]
