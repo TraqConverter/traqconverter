@@ -929,7 +929,9 @@ function Pricing() {
           />
         </div>
 
-        {/* Credit packs */}
+        {/* Credit packs — must mirror the labels and credit counts
+            shown on the in-app billing page so visitors recognise
+            them after sign-up. */}
         <div className="mt-12">
           <div
             className="text-center"
@@ -952,30 +954,109 @@ function Pricing() {
               marginBottom: 24,
             }}
           >
-            One-off page packs — never expire
+            One-off credit packs — never expire
           </h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-[860px] mx-auto">
+          <div className="grid md:grid-cols-3 gap-4 max-w-[860px] mx-auto">
             {[
-              { p: "5 pages", c: "€19" },
-              { p: "20 pages", c: "€69" },
-              { p: "50 pages", c: "€149" },
-              { p: "100 pages", c: "€279" },
+              {
+                name: "Starter pack",
+                credits: 10,
+                price: "€10",
+                note: "Top up a small project",
+                featured: false,
+              },
+              {
+                name: "Studio pack",
+                credits: 25,
+                price: "€25",
+                note: "Most teams pick this",
+                featured: true,
+              },
+              {
+                name: "Scale pack",
+                credits: 50,
+                price: "€50",
+                note: "Best for high-volume work",
+                featured: false,
+              },
             ].map((pack) => (
               <div
-                key={pack.p}
+                key={pack.name}
                 style={{
                   background: "#ffffff",
-                  border: `1px solid ${BORDER}`,
-                  borderRadius: 14,
-                  padding: 18,
+                  border: `1px solid ${pack.featured ? TEAL : BORDER}`,
+                  borderRadius: 16,
+                  padding: 22,
                   textAlign: "center",
+                  position: "relative",
+                  boxShadow: pack.featured
+                    ? "0 8px 20px rgba(10,120,112,0.10)"
+                    : "0 1px 2px rgba(30,30,20,0.03)",
                 }}
               >
-                <div style={{ fontSize: 13, color: MUTED, marginBottom: 6 }}>
-                  {pack.p}
+                {pack.featured && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: -10,
+                      left: "50%",
+                      transform: "translateX(-50%)",
+                      background: ACCENT_GOLD,
+                      color: "#fff",
+                      fontSize: 9,
+                      fontWeight: 700,
+                      padding: "3px 10px",
+                      borderRadius: 999,
+                      letterSpacing: "0.1em",
+                    }}
+                  >
+                    POPULAR
+                  </div>
+                )}
+                <div
+                  style={{
+                    fontSize: 11,
+                    letterSpacing: "0.14em",
+                    color: SUBTLE,
+                    fontWeight: 600,
+                    marginBottom: 10,
+                  }}
+                >
+                  {pack.name.toUpperCase()}
                 </div>
-                <div style={{ fontSize: 22, fontWeight: 700, color: TEXT }}>
-                  {pack.c}
+                <div className="flex items-baseline justify-center gap-1">
+                  <span
+                    style={{
+                      fontSize: 30,
+                      fontWeight: 700,
+                      color: TEXT,
+                      letterSpacing: "-0.02em",
+                    }}
+                  >
+                    {pack.credits}
+                  </span>
+                  <span style={{ fontSize: 13, color: MUTED, marginLeft: 4 }}>
+                    credits
+                  </span>
+                </div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: MUTED,
+                    marginTop: 4,
+                    marginBottom: 14,
+                  }}
+                >
+                  {pack.note}
+                </div>
+                <div
+                  style={{
+                    fontSize: 22,
+                    fontWeight: 700,
+                    color: pack.featured ? TEAL : TEXT,
+                  }}
+                >
+                  {pack.price}
                 </div>
               </div>
             ))}
