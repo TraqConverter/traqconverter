@@ -257,6 +257,7 @@ def _build_layout_docx_live(segments, project):
     from app.services.s3_service import generate_presigned_download_url
     from app.services.structured_translation_renderer import (
         render_structured_docx_export,
+        render_planned_docx_export,
     )
     import requests
 
@@ -332,13 +333,33 @@ def _build_layout_docx_live(segments, project):
             ),
         }
 
-        docx_bytes = render_structured_docx_export(
-            source_kind=kind,
-            original_path=str(src_path),
-            pairs=pairs,
-            project_meta=project_meta,
-            company_logo_path=logo_path,
-        )
+        # Try the layout-aware path first (asks Claude to plan a DOCX
+        # skeleton that mirrors the original document's columns/tables).
+        # On any failure (missing API key, planner error, malformed
+        # JSON) fall back to the linear renderer so exports never break.
+        docx_bytes = None
+        try:
+            docx_bytes = render_planned_docx_export(
+                source_kind=kind,
+                original_path=str(src_path),
+                pairs=pairs,
+                project_meta=project_meta,
+                company_logo_path=logo_path,
+            )
+        except Exception as e:
+            logger.warning(
+                "Layout-aware DOCX render failed, falling back to linear: %s",
+                e,
+            )
+            docx_bytes = None
+        if not docx_bytes:
+            docx_bytes = render_structured_docx_export(
+                source_kind=kind,
+                original_path=str(src_path),
+                pairs=pairs,
+                project_meta=project_meta,
+                company_logo_path=logo_path,
+            )
 
         out = BytesIO()
         out.write(docx_bytes)
