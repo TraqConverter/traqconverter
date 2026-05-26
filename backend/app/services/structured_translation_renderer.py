@@ -638,142 +638,191 @@ def _embed_pdf_pages_as_images(doc, pdf_path: str) -> None:
 # ============================================================
 
 
+def _set_cell_text(cell, eid, by_id, alignment_override=None):
+    """Populate a table cell with a single styled paragraph from an
+    element id. Uses the cell's existing default paragraph as the
+    first content paragraph instead of removing it (removing the
+    cell's last paragraph violates Word's OOXML invariant and Word
+    silently drops every subsequent block in the document)."""
+    if eid not in by_id:
+        return
+    translated, layout = by_id[eid]
+    text = (translated or "").strip() or (layout.get("source_text") or "").strip()
+    if not text:
+        return
+    layout_for_render = dict(layout or {})
+    if alignment_override in {"left", "center", "right", "justify"}:
+        layout_for_render["alignment"] = alignment_override
+    is_placeholder = bool(layout.get("placeholder_kind")) or (
+        text.startswith("[") and text.endswith("]")
+    )
+    # Reuse the cell's default empty paragraph when it is still
+    # empty; otherwise append a new one.
+    para = None
+    if cell.paragraphs and not cell.paragraphs[0].text:
+        para = cell.paragraphs[0]
+    else:
+        para = cell.add_paragraph()
+    _docx_apply_paragraph_style(para, text, layout_for_render, is_placeholder)
+
+
+def _set_cell_literal(cell, text, alignment="left"):
+    """Variant of _set_cell_text for literal cell text (headers / spacers)."""
+    if not text:
+        return
+    para = None
+    if cell.paragraphs and not cell.paragraphs[0].text:
+        para = cell.paragraphs[0]
+    else:
+        para = cell.add_paragraph()
+    _docx_apply_paragraph_style(para, text, {"alignment": alignment}, False)
+
+
+def _ensure_trailing_paragraph(cell):
+    """Word requires every <w:tc> to end with a <w:p>. When we add a
+    nested table to a cell, Word treats the missing trailing
+    paragraph as a corrupt document and stops rendering. This adds
+    an empty paragraph if the cell's last block child is a table."""
+    from docx.oxml.ns import qn
+
+    tc = cell._element
+    children = list(tc)
+    # Find last block-level element (paragraph or table).
+    for child in reversed(children):
+        tag = child.tag
+        if tag == qn("w:p"):
+            return  # already ends with a paragraph
+        if tag == qn("w:tbl"):
+            break
+        # Skip non-content elements like tcPr
+    cell.add_paragraph("")
+
+
 def _render_planned_block(
     doc_or_cell,
     block: dict[str, Any],
     by_id: dict[int, tuple[str, dict[str, Any]]],
-) -> None:
+    is_cell: bool = False,
+) -> bool:
     """Recursively render one layout-planner block into a python-docx
-    container (Document or _Cell). The container must expose
-    `add_paragraph` and `add_table` (both do)."""
+    container (Document or _Cell). Returns True if anything was
+    written. Each branch is wrapped in its own try/except so one
+    malformed block can't black-hole the rest of the document.
+    """
     from docx.shared import Pt
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-    kind = (block or {}).get("kind", "paragraph")
+    try:
+        kind = (block or {}).get("kind", "paragraph")
 
-    if kind == "paragraph":
-        try:
-            eid = int(block.get("id"))
-        except (TypeError, ValueError):
-            return
-        if eid not in by_id:
-            return
-        translated, layout = by_id[eid]
-        # Override the layout alignment with the planner's choice
-        # (planner has the spatial context).
-        explicit_align = (block.get("alignment") or "").lower()
-        layout_for_render = dict(layout or {})
-        if explicit_align in {"left", "center", "right", "justify"}:
-            layout_for_render["alignment"] = explicit_align
-        para = doc_or_cell.add_paragraph()
-        text = (translated or "").strip() or (layout.get("source_text") or "").strip()
-        if not text:
-            return
-        is_placeholder = bool(layout.get("placeholder_kind")) or (
-            text.startswith("[") and text.endswith("]")
-        )
-        _docx_apply_paragraph_style(para, text, layout_for_render, is_placeholder)
-        if block.get("spacing_before_pt"):
+        if kind == "paragraph":
             try:
-                para.paragraph_format.space_before = Pt(
-                    float(block["spacing_before_pt"])
-                )
-            except Exception:
-                pass
+                eid = int(block.get("id"))
+            except (TypeError, ValueError):
+                return False
+            if eid not in by_id:
+                return False
+            translated, layout = by_id[eid]
+            text = (translated or "").strip() or (layout.get("source_text") or "").strip()
+            if not text:
+                return False
+            layout_for_render = dict(layout or {})
+            explicit_align = (block.get("alignment") or "").lower()
+            if explicit_align in {"left", "center", "right", "justify"}:
+                layout_for_render["alignment"] = explicit_align
+            # When rendering into a cell, reuse the cell's default
+            # empty paragraph for the FIRST paragraph so we don't end
+            # up with an extra blank line above every cell.
+            para = None
+            if is_cell and doc_or_cell.paragraphs and not doc_or_cell.paragraphs[0].text:
+                para = doc_or_cell.paragraphs[0]
+            else:
+                para = doc_or_cell.add_paragraph()
+            is_placeholder = bool(layout.get("placeholder_kind")) or (
+                text.startswith("[") and text.endswith("]")
+            )
+            _docx_apply_paragraph_style(para, text, layout_for_render, is_placeholder)
+            if block.get("spacing_before_pt"):
+                try:
+                    para.paragraph_format.space_before = Pt(
+                        float(block["spacing_before_pt"])
+                    )
+                except Exception:
+                    pass
+            return True
 
-    elif kind == "row":
-        cols = block.get("columns") or []
-        if not cols:
-            return
-        # Use a borderless table to lay out columns side-by-side.
-        tbl = doc_or_cell.add_table(rows=1, cols=len(cols))
-        tbl.autofit = True
-        # Apply width percentages if given.
-        total_width_emu = None
-        widths = [c.get("width_pct") for c in cols if isinstance(c, dict)]
-        if all(isinstance(w, (int, float)) and w > 0 for w in widths) and widths:
-            from docx.shared import Inches
-            total_width_emu = Inches(6.5)  # rough A4 minus margins
-        for idx, col in enumerate(cols):
-            cell = tbl.rows[0].cells[idx]
-            # Remove default empty paragraph in the cell so our content
-            # is the first paragraph.
-            if cell.paragraphs and not cell.paragraphs[0].text:
-                p = cell.paragraphs[0]
-                p._element.getparent().remove(p._element)
-            for child in col.get("blocks") or []:
-                _render_planned_block(cell, child, by_id)
-        # Strip the surrounding table borders so it looks like a layout.
-        _strip_table_borders(tbl)
-
-    elif kind == "table":
-        rows = block.get("rows") or []
-        if not rows:
-            return
-        cols_count = max(len(r) for r in rows)
-        if cols_count == 0:
-            return
-        tbl = doc_or_cell.add_table(rows=len(rows), cols=cols_count)
-        tbl.autofit = True
-        if not block.get("border"):
-            _strip_table_borders(tbl)
-        for ri, row in enumerate(rows):
-            for ci in range(cols_count):
-                cell = tbl.rows[ri].cells[ci]
-                # Clear default empty paragraph.
-                if cell.paragraphs and not cell.paragraphs[0].text:
-                    p = cell.paragraphs[0]
-                    p._element.getparent().remove(p._element)
-                if ci >= len(row):
-                    cell.add_paragraph("")
+        if kind == "row":
+            cols = block.get("columns") or []
+            if not cols:
+                return False
+            tbl = doc_or_cell.add_table(rows=1, cols=len(cols))
+            tbl.autofit = True
+            for idx, col in enumerate(cols):
+                cell = tbl.rows[0].cells[idx]
+                col_blocks = col.get("blocks") or []
+                if not col_blocks:
+                    # Leave the cell's default empty paragraph alone.
                     continue
-                cellspec = row[ci] or {}
-                if "id" in cellspec:
-                    try:
-                        eid = int(cellspec["id"])
-                    except (TypeError, ValueError):
-                        cell.add_paragraph("")
-                        continue
-                    if eid not in by_id:
-                        cell.add_paragraph("")
-                        continue
-                    translated, layout = by_id[eid]
-                    layout_for_render = dict(layout or {})
-                    a = (cellspec.get("alignment") or "").lower()
-                    if a in {"left", "center", "right", "justify"}:
-                        layout_for_render["alignment"] = a
-                    text = (translated or "").strip() or (
-                        layout.get("source_text") or ""
-                    ).strip()
-                    if not text:
-                        cell.add_paragraph("")
-                        continue
-                    is_placeholder = bool(layout.get("placeholder_kind")) or (
-                        text.startswith("[") and text.endswith("]")
-                    )
-                    para = cell.add_paragraph()
-                    _docx_apply_paragraph_style(
-                        para, text, layout_for_render, is_placeholder
-                    )
-                elif "text" in cellspec:
-                    para = cell.add_paragraph()
-                    _docx_apply_paragraph_style(
-                        para,
-                        cellspec.get("text") or "",
-                        {"alignment": cellspec.get("alignment") or "left"},
-                        False,
-                    )
-                else:
-                    cell.add_paragraph("")
+                # First child uses the cell's default paragraph; the
+                # recursion knows to reuse it because is_cell=True.
+                wrote_any = False
+                for child in col_blocks:
+                    if _render_planned_block(cell, child, by_id, is_cell=True):
+                        wrote_any = True
+                # Word requires the cell to end with a paragraph.
+                _ensure_trailing_paragraph(cell)
+            _strip_table_borders(tbl)
+            return True
 
-    elif kind == "spacer":
-        try:
+        if kind == "table":
+            rows = block.get("rows") or []
+            if not rows:
+                return False
+            cols_count = max((len(r) for r in rows), default=0)
+            if cols_count == 0:
+                return False
+            tbl = doc_or_cell.add_table(rows=len(rows), cols=cols_count)
+            tbl.autofit = True
+            if not block.get("border"):
+                _strip_table_borders(tbl)
+            for ri, row in enumerate(rows):
+                for ci in range(cols_count):
+                    cell = tbl.rows[ri].cells[ci]
+                    if ci >= len(row) or not row[ci]:
+                        # Leave the cell's default empty paragraph.
+                        continue
+                    cellspec = row[ci]
+                    if "id" in cellspec:
+                        try:
+                            eid = int(cellspec["id"])
+                        except (TypeError, ValueError):
+                            continue
+                        _set_cell_text(
+                            cell,
+                            eid,
+                            by_id,
+                            alignment_override=(cellspec.get("alignment") or "").lower(),
+                        )
+                    elif "text" in cellspec:
+                        _set_cell_literal(
+                            cell,
+                            cellspec.get("text") or "",
+                            alignment=(cellspec.get("alignment") or "left").lower(),
+                        )
+                    # Ensure cell ends with a paragraph.
+                    _ensure_trailing_paragraph(cell)
+            return True
+
+        if kind == "spacer":
             from docx.shared import Pt as DocxPt
             para = doc_or_cell.add_paragraph()
             h_mm = float(block.get("height_mm") or 2.0)
             para.paragraph_format.space_after = DocxPt(h_mm * 2.83)
-        except Exception:
-            pass
+            return True
+
+        return False
+    except Exception as e:
+        logger.warning("Block render failed (kind=%s): %s", block.get("kind"), e)
+        return False
 
 
 def _strip_table_borders(table) -> None:

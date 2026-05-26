@@ -333,14 +333,14 @@ def _build_layout_docx_live(segments, project):
             ),
         }
 
-        # Layout-aware DOCX export is OPT-IN via USE_LAYOUT_PLANNER=1.
-        # The planner can drop content silently (e.g. produce a plan
-        # the renderer half-executes, leaving the DOCX empty after a
-        # few elements), so we keep the proven linear renderer as the
-        # default. Once the planner is verified end-to-end we'll flip
-        # the default.
+        # Layout-aware DOCX export is the DEFAULT. The planner asks
+        # Claude to plan a DOCX skeleton mirroring the original
+        # document's columns / tables / centered titles. On any
+        # exception or empty result we fall through to the linear
+        # renderer so exports never break. To force the linear path
+        # set USE_LAYOUT_PLANNER=0 in the Railway env vars.
         docx_bytes = None
-        if os.getenv("USE_LAYOUT_PLANNER", "0") == "1":
+        if os.getenv("USE_LAYOUT_PLANNER", "1") != "0":
             try:
                 docx_bytes = render_planned_docx_export(
                     source_kind=kind,
