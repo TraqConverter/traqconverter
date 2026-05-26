@@ -37,7 +37,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
-_PLANNER_VERSION = "v2-aggressive-tables"
+_PLANNER_VERSION = "v3-bordered-tables"
 
 
 _SYSTEM_PROMPT = """You are a DOCX layout planner. Given a flat list of \
@@ -160,10 +160,31 @@ Given the page_width W:
        col 2 (≈75%): table of the form rows
 
 6) "Parent/guardian table" — look for elements like
-   "nome e cognome" / "estremi del documento" / "firma" with
-   alignment "left" on the same Y. Treat the next 1-3 rows of
-   data as table data rows. Emit ONE table with border:true,
-   3 columns.
+   "nome e cognome" / "estremi del documento" / "firma" (or
+   their translations: "first name and surname" / "document
+   details" / "signature") with alignment "left" on the same Y.
+   Treat the next 1-3 rows of data as table data rows. Emit ONE
+   table with "border": true, 3 columns. THIS TABLE MUST HAVE
+   VISIBLE BORDERS — set "border": true at the table block level.
+
+7) "Signature box" — wrap any standalone signature placeholder
+   like "[Signature]" or "[Signature: Elena Cuomo]" that sits in
+   a clearly demarcated rectangular area (visible box around it)
+   in a single-cell table with "border": true. This makes the
+   signature box render with visible borders in the rebuild.
+
+============================================================
+BORDER POLICY — IMPORTANT
+============================================================
+Set "border": true on a table when, AND ONLY WHEN, the original
+document shows VISIBLE BORDER LINES around the cells (you'd see
+a thin black/grey rule between rows and columns in the source).
+Government forms, ID cards, and bordered data tables typically
+ARE bordered — emit border:true.
+
+Form-row label/value pairs (loose alignment, no visible grid)
+are NOT bordered — leave border off so they render as an
+invisible layout grid.
 
 ============================================================
 OUTPUT RULES

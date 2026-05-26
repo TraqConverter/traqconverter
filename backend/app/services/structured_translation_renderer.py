@@ -814,7 +814,9 @@ def _render_planned_block(
                 return False
             tbl = doc_or_cell.add_table(rows=len(rows), cols=cols_count)
             tbl.autofit = True
-            if not block.get("border"):
+            if block.get("border"):
+                _apply_table_borders(tbl)
+            else:
                 _strip_table_borders(tbl)
             for ri, row in enumerate(rows):
                 for ci in range(cols_count):
@@ -877,6 +879,41 @@ def _strip_table_borders(table) -> None:
     for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
         b = OxmlElement(f"w:{edge}")
         b.set(qn("w:val"), "nil")
+        borders.append(b)
+    tblPr.append(borders)
+
+
+def _apply_table_borders(table) -> None:
+    """Paint visible single-line borders on every edge of a table so
+    parent/guardian tables and signature boxes actually look bordered
+    in Word. python-docx tables have NO borders by default unless
+    you apply a style or add OOXML borders explicitly."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    # Prefer the built-in Table Grid style when available — it gives
+    # consistent borders even if the user's Word template overrides
+    # tblBorders elsewhere.
+    try:
+        table.style = "Table Grid"
+    except Exception:
+        pass
+
+    tbl = table._element
+    tblPr = tbl.find(qn("w:tblPr"))
+    if tblPr is None:
+        tblPr = OxmlElement("w:tblPr")
+        tbl.insert(0, tblPr)
+    existing = tblPr.find(qn("w:tblBorders"))
+    if existing is not None:
+        tblPr.remove(existing)
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        b = OxmlElement(f"w:{edge}")
+        b.set(qn("w:val"), "single")
+        b.set(qn("w:sz"), "6")          # 0.75pt line
+        b.set(qn("w:space"), "0")
+        b.set(qn("w:color"), "1F2A2E")  # dark text color
         borders.append(b)
     tblPr.append(borders)
 
