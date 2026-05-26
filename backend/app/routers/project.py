@@ -682,7 +682,9 @@ def get_source_url(
     project = get_user_project_or_404(db, project_id, current_user)
     if not project.file_path:
         raise HTTPException(status_code=404, detail="Source file not available")
-    url = generate_presigned_download_url(project.file_path)
+    # inline=True so the browser renders the PDF/image in the iframe
+    # rather than downloading it.
+    url = generate_presigned_download_url(project.file_path, inline=True)
     # Hand the frontend a hint about how to render the file so it can
     # choose <iframe> for PDFs and <img> for images.
     fname = (project.file_name or "").lower()
@@ -713,7 +715,9 @@ def get_rebuild_url(
         # processing or failed). Tell the frontend so it can show a
         # helpful message rather than a broken iframe.
         return {"url": None, "kind": "none", "filename": None}
-    url = generate_presigned_download_url(project.output_file)
+    # inline=True so the browser renders the rebuild in the iframe
+    # rather than triggering a download.
+    url = generate_presigned_download_url(project.output_file, inline=True)
     name = (project.output_file or "").rsplit("/", 1)[-1].lower()
     if name.endswith(".pdf"):
         kind = "pdf"
