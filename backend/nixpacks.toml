@@ -1,13 +1,25 @@
 # Nixpacks build configuration for Railway.
 #
-# We install LibreOffice on the deployment host so the PDF export
-# can convert the (layout-planned) DOCX into a PDF that's visually
-# identical to it. Without LibreOffice the PDF export falls back to
-# a ReportLab pipeline that drifts from the DOCX renderer.
+# We install LibreOffice via apt so the PDF export can convert the
+# (layout-planned) DOCX into a PDF that's visually identical to it.
+# Without LibreOffice the PDF export falls back to a ReportLab
+# pipeline that drifts from the DOCX renderer.
 #
-# `tesseract` is also pinned here because the worker uses it as the
-# fallback OCR engine when Claude Vision isn't configured.
+# Installing libreoffice through `aptPkgs` (Debian apt) is more
+# reliable on the Nixpacks runtime image than trying to pull it from
+# Nix — apt packages get baked into the final container and end up
+# on PATH as `/usr/bin/soffice` (which our exporter probes via
+# shutil.which).
+#
+# `tesseract-ocr` is the fallback OCR engine used when Claude Vision
+# isn't configured. Liberation + DejaVu fonts give LibreOffice
+# acceptable font fallbacks during DOCX→PDF rendering.
 
 [phases.setup]
-nixPkgs = ["python311", "libreoffice", "tesseract"]
-aptPkgs = ["fonts-liberation", "fonts-dejavu-core"]
+aptPkgs = [
+    "libreoffice",
+    "libreoffice-writer",
+    "tesseract-ocr",
+    "fonts-liberation",
+    "fonts-dejavu-core",
+]
