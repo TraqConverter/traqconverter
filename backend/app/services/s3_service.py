@@ -125,19 +125,43 @@ def download_file_from_s3(key: str, destination: Path):
 # Generate Signed Download URL
 # ============================================================
 
-def generate_presigned_download_url(key: str, expiration: int = 3600) -> str:
-    """Generate a temporary secure download URL.
+def generate_presigned_download_url(
+    key: str,
+    expiration: int = 3600,
+    *,
+    inline: bool = False,
+) -> str:
+    """Generate a temporary secure URL to an object.
+
+    Set `inline=True` for URLs that will be loaded into an <iframe>
+    or <img> in the browser. Without it, Supabase Storage serves
+    files with Content-Disposition: attachment by default, which
+    forces the browser to download the file instead of rendering it
+    inline — that bug is what made the editor's Compare view trigger
+    a download instead of opening the preview pane.
 
     Supabase Storage's S3 endpoint supports get_object presigned URLs
     out of the box — same code path as AWS.
     """
+    params: dict = {"Bucket": BUCKET_NAME, "Key": key}
+    if inline:
+        # boto3 maps ResponseContentDisposition onto the
+        # ?response-content-disposition= query parameter on the
+        # signed URL. Setting it to "inline" tells the browser to
+        # render the file directly instead of downloading.
+        params["ResponseContentDisposition"] = "inline"
+
     try:
         url = s3_client.generate_presigned_url(
             "get_object",
-            Params={"Bucket": BUCKET_NAME, "Key": key},
+            Params=params,
             ExpiresIn=expiration,
         )
-        logger.info(f"Generated signed URL for {key}")
+        logger.info(
+            "Generated signed URL for %s (%s)",
+            key,
+            "inline" if inline else "attachment",
+        )
         return url
     except ClientError:
         logger.exception("Failed generating signed URL")
