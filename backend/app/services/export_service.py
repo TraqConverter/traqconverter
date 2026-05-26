@@ -333,25 +333,28 @@ def _build_layout_docx_live(segments, project):
             ),
         }
 
-        # Try the layout-aware path first (asks Claude to plan a DOCX
-        # skeleton that mirrors the original document's columns/tables).
-        # On any failure (missing API key, planner error, malformed
-        # JSON) fall back to the linear renderer so exports never break.
+        # Layout-aware DOCX export is OPT-IN via USE_LAYOUT_PLANNER=1.
+        # The planner can drop content silently (e.g. produce a plan
+        # the renderer half-executes, leaving the DOCX empty after a
+        # few elements), so we keep the proven linear renderer as the
+        # default. Once the planner is verified end-to-end we'll flip
+        # the default.
         docx_bytes = None
-        try:
-            docx_bytes = render_planned_docx_export(
-                source_kind=kind,
-                original_path=str(src_path),
-                pairs=pairs,
-                project_meta=project_meta,
-                company_logo_path=logo_path,
-            )
-        except Exception as e:
-            logger.warning(
-                "Layout-aware DOCX render failed, falling back to linear: %s",
-                e,
-            )
-            docx_bytes = None
+        if os.getenv("USE_LAYOUT_PLANNER", "0") == "1":
+            try:
+                docx_bytes = render_planned_docx_export(
+                    source_kind=kind,
+                    original_path=str(src_path),
+                    pairs=pairs,
+                    project_meta=project_meta,
+                    company_logo_path=logo_path,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Layout-aware DOCX render failed, falling back to linear: %s",
+                    e,
+                )
+                docx_bytes = None
         if not docx_bytes:
             docx_bytes = render_structured_docx_export(
                 source_kind=kind,
