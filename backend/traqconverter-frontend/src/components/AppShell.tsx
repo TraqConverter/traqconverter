@@ -112,6 +112,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     const token = getToken()
 
     const isAuthPage =
+      pathname === "/" ||
       pathname === "/login" ||
       pathname === "/register" ||
       pathname.startsWith("/auth")

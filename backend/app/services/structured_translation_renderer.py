@@ -57,12 +57,14 @@ _PALETTE = {
 
 
 # Map "size" hints from Claude → point sizes that match a certified
-# translator's transcription document.
+# translator's transcription document. Tightened so body text reads
+# at the same visual scale as the original (~9pt) — the previous
+# 10.5pt made everything look oversized in the rebuild.
 _SIZE_PT = {
-    "small": 8.5,
-    "normal": 10.5,
-    "large": 13.0,
-    "xlarge": 16.0,
+    "small": 8.0,
+    "normal": 9.0,
+    "large": 11.0,
+    "xlarge": 14.0,
 }
 
 
