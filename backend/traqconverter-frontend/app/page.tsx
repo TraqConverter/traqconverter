@@ -27,7 +27,6 @@ const ACCENT_RUST = "#b14a3a"
 
 export default function LandingPage() {
   const router = useRouter()
-  const [yearly, setYearly] = useState(false)
 
   // Logged-in visitors don't need the marketing page.
   useEffect(() => {
@@ -42,7 +41,7 @@ export default function LandingPage() {
       <ValueProps />
       <HowItWorks />
       <DeepFeatures />
-      <Pricing yearly={yearly} setYearly={setYearly} />
+      <Pricing />
       <FAQ />
       <FinalCTA />
       <Footer />
@@ -315,7 +314,7 @@ function HeroVisual() {
             ORIGINAL · ITALIAN
           </div>
           <div style={{ fontSize: 9, color: TEXT, fontWeight: 700 }}>
-            MINISTERO DELL'INTERNO
+            COMUNE DI ESEMPIO
           </div>
           <div
             style={{
@@ -326,17 +325,17 @@ function HeroVisual() {
               color: TEXT,
             }}
           >
-            Ricevuta della richiesta CIE
+            Certificato di Residenza
           </div>
           <div style={{ fontSize: 9, color: MUTED, marginBottom: 14 }}>
-            Conserva questo documento, potrai utilizzarlo in Italia…
+            Si certifica che il sottoscritto risiede al seguente indirizzo…
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, fontSize: 8 }}>
             {[
-              ["Comune", "S. BENEDETTO"],
-              ["Cognome", "PIERGALLINI"],
-              ["Nome", "LILIA"],
-              ["Codice Fiscale", "PRGLLI21E70…"],
+              ["Comune", "MILANO"],
+              ["Cognome", "ROSSI"],
+              ["Nome", "MARIA"],
+              ["Codice Fiscale", "RSSMRA80…"],
             ].map(([k, v]) => (
               <div key={k} style={{ display: "contents" }}>
                 <div style={{ color: MUTED }}>{k}</div>
@@ -369,7 +368,7 @@ function HeroVisual() {
             TRANSLATION · ENGLISH
           </div>
           <div style={{ fontSize: 9, color: TEXT, fontWeight: 700 }}>
-            MINISTRY OF THE INTERIOR
+            MUNICIPALITY OF ESEMPIO
           </div>
           <div
             style={{
@@ -380,17 +379,17 @@ function HeroVisual() {
               color: TEXT,
             }}
           >
-            Receipt of the CIE Request
+            Certificate of Residence
           </div>
           <div style={{ fontSize: 9, color: MUTED, marginBottom: 14 }}>
-            Keep this document; you can use it in Italy until you receive…
+            This is to certify that the undersigned resides at the following address…
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, fontSize: 8 }}>
             {[
-              ["Municipality", "S. BENEDETTO"],
-              ["Surname", "PIERGALLINI"],
-              ["Name", "LILIA"],
-              ["Tax Code", "PRGLLI21E70…"],
+              ["Municipality", "MILAN"],
+              ["Surname", "ROSSI"],
+              ["Name", "MARIA"],
+              ["Tax Code", "RSSMRA80…"],
             ].map(([k, v]) => (
               <div key={k} style={{ display: "contents" }}>
                 <div style={{ color: MUTED }}>{k}</div>
@@ -509,8 +508,8 @@ function ValueProps() {
           />
           <FeatureCard
             icon={<IconBrain />}
-            title="Claude + OpenAI under the hood"
-            body="Claude Vision OCR reads stylised IDs and stamps. GPT-4 translates with full context. You review and approve in our CAT-style editor."
+            title="Advanced AI translation engine"
+            body="Vision AI reads stylised IDs, stamps, and scans cleanly. Context-aware language models translate with nuance. You review and approve every segment in our CAT-style editor."
           />
           <FeatureCard
             icon={<IconLock />}
@@ -603,7 +602,7 @@ function HowItWorks() {
             {
               n: "02",
               t: "Review the AI draft",
-              b: "Claude Vision extracts every block. GPT-4 translates with context. You review side-by-side in the editor and tweak anything you want.",
+              b: "Our AI extracts every block of text, then translates it with full document context. You review side-by-side in the editor and tweak anything you want.",
             },
             {
               n: "03",
@@ -830,7 +829,7 @@ function CertMock() {
         I hereby certify that the foregoing is a true and complete translation of the attached document.
       </div>
       <div style={{ marginTop: 18, fontSize: 11, color: MUTED, lineHeight: 1.8 }}>
-        Translator: jane@espressotranslations.com
+        Translator: translator@example.com
         <br />
         Date: 2026-05-26
         <br />
@@ -857,13 +856,7 @@ function CertMock() {
 // ============================================================
 // PRICING
 // ============================================================
-function Pricing({
-  yearly,
-  setYearly,
-}: {
-  yearly: boolean
-  setYearly: (b: boolean) => void
-}) {
+function Pricing() {
   return (
     <section
       id="pricing"
@@ -880,58 +873,6 @@ function Pricing({
           title="Simple plans. Pay only for the pages you translate."
           subtitle="Every plan includes the editor, translation memory, glossary, ISO 17100 certification, and your branding. No setup fees."
         />
-
-        {/* Yearly toggle */}
-        <div className="flex items-center justify-center gap-3 mt-8">
-          <span style={{ color: yearly ? SUBTLE : TEXT, fontSize: 14, fontWeight: 500 }}>
-            Monthly
-          </span>
-          <button
-            type="button"
-            onClick={() => setYearly(!yearly)}
-            style={{
-              width: 48,
-              height: 26,
-              borderRadius: 999,
-              background: yearly ? TEAL : "#d8cfba",
-              position: "relative",
-              transition: "background 0.18s",
-              cursor: "pointer",
-              border: "none",
-            }}
-            aria-label="Toggle yearly billing"
-          >
-            <span
-              style={{
-                position: "absolute",
-                top: 3,
-                left: yearly ? 25 : 3,
-                width: 20,
-                height: 20,
-                borderRadius: "50%",
-                background: "#fff",
-                transition: "left 0.18s",
-                boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
-              }}
-            />
-          </button>
-          <span style={{ color: yearly ? TEXT : SUBTLE, fontSize: 14, fontWeight: 500 }}>
-            Yearly
-          </span>
-          <span
-            style={{
-              background: ACCENT_GOLD,
-              color: "#fff",
-              fontSize: 10,
-              fontWeight: 700,
-              padding: "3px 8px",
-              borderRadius: 999,
-              letterSpacing: "0.06em",
-            }}
-          >
-            SAVE 20%
-          </span>
-        </div>
 
         <div className="grid md:grid-cols-3 gap-5 mt-12">
           <PlanCard
@@ -952,8 +893,8 @@ function Pricing({
           />
           <PlanCard
             name="Basic"
-            price={yearly ? "23" : "29"}
-            period={yearly ? "/mo, billed yearly" : "/month"}
+            price="19"
+            period="/month"
             credits="19 pages / month"
             highlight={false}
             cta="Choose Basic"
@@ -969,8 +910,8 @@ function Pricing({
           />
           <PlanCard
             name="Pro"
-            price={yearly ? "47" : "59"}
-            period={yearly ? "/mo, billed yearly" : "/month"}
+            price="29"
+            period="/month"
             credits="29 pages / month"
             highlight={true}
             cta="Choose Pro"
@@ -1179,7 +1120,7 @@ function FAQ() {
     },
     {
       q: "Will the layout look like the original?",
-      a: "Yes — our Claude Vision OCR captures every text block, photo, stamp, signature, and table. The rebuild reproduces them in place. ID cards, certificates, and government forms come through with their structure intact.",
+      a: "Yes — our vision AI captures every text block, photo, stamp, signature, and table. The rebuild reproduces them in place. ID cards, certificates, and government forms come through with their structure intact.",
     },
     {
       q: "Which languages do you handle?",
