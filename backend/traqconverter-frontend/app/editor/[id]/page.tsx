@@ -1660,6 +1660,15 @@ function officeViewerUrl(srcUrl: string) {
   return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(srcUrl)}`
 }
 
+// Google Docs viewer renders PDFs inline by fetching the URL on
+// Google's servers. We use this for PDF sources because some object
+// stores (Supabase) don't honor the inline content-disposition
+// query param, which causes the browser to download instead of
+// preview when the PDF URL is loaded directly in an iframe.
+function gdocsViewerUrl(srcUrl: string) {
+  return `https://docs.google.com/viewer?url=${encodeURIComponent(srcUrl)}&embedded=true`
+}
+
 function ComparePane({
   label,
   data,
@@ -1676,13 +1685,17 @@ function ComparePane({
   // Pick the iframe source URL based on file kind:
   //  - DOCX (kind="other" with docxFallback) → Office Online viewer
   //    so Word files render inline rather than triggering a download.
-  //  - PDF → the signed URL direct (relies on inline disposition).
+  //  - PDF → Google Docs viewer. Direct iframe of the signed URL was
+  //    triggering a browser download because Supabase Storage doesn't
+  //    consistently honor the response-content-disposition=inline
+  //    query param. Google fetches the PDF on their side and serves
+  //    a renderer iframe, sidestepping the issue entirely.
   //  - Everything else → no iframe; fall through to image/other UI.
   const iframeSrc =
     data?.kind === "other" && docxFallback
       ? officeViewerUrl(docxFallback)
       : data?.kind === "pdf"
-      ? data.url
+      ? gdocsViewerUrl(data.url)
       : null
 
   return (
