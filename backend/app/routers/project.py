@@ -1016,6 +1016,132 @@ def preview_rebuild(
 
 
 # ============================================================
+# SUGGEST GLOSSARY — AI scans all translated segments and proposes
+# glossary entries (recurring proper nouns, technical terms,
+# branded phrases). Returned as proposals — the user reviews and
+# saves the ones they want via POST /glossary.
+# ============================================================
+
+@router.post("/{project_id}/suggest-glossary")
+def suggest_glossary(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Ask Claude to extract recurring terms from the project's
+    translated segments. Returns a list of proposed glossary entries
+    so the user can review + save them on the Glossary page.
+    """
+    import json as _json
+    import re as _re
+    from app.services.ai_translation_service import (
+        _call_model,
+        humanize_lang,
+    )
+
+    project = get_user_project_or_404(db, project_id, current_user)
+    segments = (
+        db.query(TranslationSegment)
+        .filter(TranslationSegment.project_id == project.id)
+        .order_by(TranslationSegment.segment_index)
+        .all()
+    )
+    pairs = [
+        {"source": s.source_text or "", "target": s.translated_text or ""}
+        for s in segments
+        if (s.source_text and s.translated_text)
+    ]
+    if not pairs:
+        return {"proposals": [], "reason": "No translated segments yet"}
+
+    src_name = humanize_lang(project.source_language)
+    tgt_name = humanize_lang(project.target_language)
+
+    system_prompt = (
+        f"You are a translation memory expert. Given a list of "
+        f"{src_name} → {tgt_name} segment pairs, extract a list of "
+        f"GLOSSARY TERMS that should be enforced project-wide. "
+        f"Focus on:\n"
+        f"- Proper nouns (organisations, agencies, departments)\n"
+        f"- Technical / legal / domain terms with a specific "
+        f"translation\n"
+        f"- Recurring phrases that should always use the same wording\n"
+        f"- Brand names and product names\n\n"
+        f"DO NOT propose:\n"
+        f"- Common verbs, adjectives, articles, prepositions\n"
+        f"- Generic everyday vocabulary\n"
+        f"- Single-segment one-offs\n\n"
+        f"Return STRICT JSON ONLY in this shape — no preamble, no "
+        f"markdown fences:\n"
+        f'{{"proposals": [{{"source_term": "...", '
+        f'"target_term": "...", "frequency": <int>, '
+        f'"context": "<short snippet showing one use>"}}]}}\n'
+        f"Cap at 20 most-valuable proposals. Skip the list entirely "
+        f"if no good terms are found."
+    )
+
+    # Compact pairs to keep prompt size reasonable.
+    sample_size = 80
+    sample = pairs[:sample_size]
+    user_payload = "\n\n".join(
+        f"[{i+1}] SRC: {p['source']}\n    TGT: {p['target']}"
+        for i, p in enumerate(sample)
+    )
+
+    try:
+        raw = _call_model(
+            model_key=getattr(project, "model", None),
+            system=system_prompt,
+            user=user_payload,
+            max_tokens=4096,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Glossary extraction failed: {e}"
+        )
+
+    # Strip any accidental ``` fences and parse.
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = _re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned)
+    try:
+        parsed = _json.loads(cleaned)
+        proposals = parsed.get("proposals") or []
+    except Exception:
+        logger.warning("Glossary suggestion: couldn't parse JSON")
+        proposals = []
+
+    # Light validation — drop entries missing either side.
+    cleaned_proposals = []
+    seen_pairs: set[tuple[str, str]] = set()
+    for p in proposals:
+        if not isinstance(p, dict):
+            continue
+        s = (p.get("source_term") or "").strip()
+        t = (p.get("target_term") or "").strip()
+        if not s or not t:
+            continue
+        key = (s.lower(), t.lower())
+        if key in seen_pairs:
+            continue
+        seen_pairs.add(key)
+        cleaned_proposals.append(
+            {
+                "source_term": s,
+                "target_term": t,
+                "frequency": int(p.get("frequency") or 1),
+                "context": (p.get("context") or "")[:200],
+            }
+        )
+
+    return {
+        "proposals": cleaned_proposals,
+        "source_language": project.source_language,
+        "target_language": project.target_language,
+    }
+
+
+# ============================================================
 # REVISE — AI critiques and rewrites every translated segment in
 # the project. Used by the Compare view's "Request revision" button
 # when a reviewer wants the model to polish its own output.

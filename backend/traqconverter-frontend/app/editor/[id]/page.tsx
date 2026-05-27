@@ -44,6 +44,9 @@ type ProjectInfo = {
   file_name: string
   source_language: string
   target_language: string
+  // AI model identifier (e.g. "claude-sonnet-4-6", "gpt-4.1-mini",
+  // or "balanced" / "dtp"). Surfaced in the Compare RE-RUN picker.
+  model?: string | null
   stats: {
     total_segments: number
     translated_segments: number
@@ -244,6 +247,133 @@ export default function EditorPage() {
       )
     } finally {
       setCompareActionBusy(null)
+    }
+  }
+
+  // Glossary-from-Compare flow — small modal pre-filled with the
+  // segment's source + translated text. User trims to the actual
+  // term and saves. Saves via the existing POST /glossary endpoint.
+  const [glossaryDraft, setGlossaryDraft] = useState<{
+    open: boolean
+    sourceTerm: string
+    targetTerm: string
+    notes: string
+    busy: boolean
+  }>({ open: false, sourceTerm: "", targetTerm: "", notes: "", busy: false })
+
+  const openGlossaryFromSegment = (seg: Segment) => {
+    setGlossaryDraft({
+      open: true,
+      sourceTerm: seg.source_text || "",
+      targetTerm: seg.translated_text || "",
+      notes: "",
+      busy: false,
+    })
+  }
+
+  const saveGlossaryDraft = async () => {
+    const src = glossaryDraft.sourceTerm.trim()
+    const tgt = glossaryDraft.targetTerm.trim()
+    if (!src || !tgt) {
+      setError("Source term and target term are both required.")
+      return
+    }
+    try {
+      setGlossaryDraft((g) => ({ ...g, busy: true }))
+      await api.post("/glossary", {
+        source_language: project?.source_language || "auto",
+        target_language: project?.target_language || "en-GB",
+        source_term: src,
+        target_term: tgt,
+        notes: glossaryDraft.notes.trim() || null,
+      })
+      setGlossaryDraft({
+        open: false,
+        sourceTerm: "",
+        targetTerm: "",
+        notes: "",
+        busy: false,
+      })
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.detail ||
+          "Couldn't add that term to the glossary.",
+      )
+      setGlossaryDraft((g) => ({ ...g, busy: false }))
+    }
+  }
+
+  // AI glossary suggestions — pulls 5-20 proposals from the project's
+  // translated segments. User can accept each one with one click.
+  const [glossarySuggestions, setGlossarySuggestions] = useState<{
+    open: boolean
+    loading: boolean
+    proposals: { source_term: string; target_term: string; frequency: number; context: string }[]
+    saving: Set<number>
+  }>({ open: false, loading: false, proposals: [], saving: new Set() })
+
+  const suggestGlossary = async () => {
+    try {
+      setGlossarySuggestions({
+        open: true,
+        loading: true,
+        proposals: [],
+        saving: new Set(),
+      })
+      const res = await api.post(`/projects/${id}/suggest-glossary`)
+      setGlossarySuggestions({
+        open: true,
+        loading: false,
+        proposals: res.data?.proposals || [],
+        saving: new Set(),
+      })
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.detail ||
+          "Couldn't get glossary suggestions.",
+      )
+      setGlossarySuggestions({
+        open: false,
+        loading: false,
+        proposals: [],
+        saving: new Set(),
+      })
+    }
+  }
+
+  const acceptGlossarySuggestion = async (
+    idx: number,
+    p: { source_term: string; target_term: string },
+  ) => {
+    setGlossarySuggestions((s) => ({
+      ...s,
+      saving: new Set(s.saving).add(idx),
+    }))
+    try {
+      await api.post("/glossary", {
+        source_language: project?.source_language || "auto",
+        target_language: project?.target_language || "en-GB",
+        source_term: p.source_term,
+        target_term: p.target_term,
+        notes: null,
+      })
+      // Mark accepted by removing from proposals list.
+      setGlossarySuggestions((s) => ({
+        ...s,
+        proposals: s.proposals.filter((_, i) => i !== idx),
+        saving: new Set(
+          [...s.saving].filter((i) => i !== idx),
+        ),
+      }))
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.detail || "Couldn't add that term.",
+      )
+      setGlossarySuggestions((s) => {
+        const nset = new Set(s.saving)
+        nset.delete(idx)
+        return { ...s, saving: nset }
+      })
     }
   }
 
@@ -1226,6 +1356,26 @@ export default function EditorPage() {
                 </button>
                 <button
                   type="button"
+                  onClick={suggestGlossary}
+                  disabled={compareActionBusy !== null || glossarySuggestions.loading}
+                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
+                  style={{
+                    background: "#ffffff",
+                    color: "#0a5e58",
+                    border: "1px solid #cfe6e2",
+                    cursor:
+                      compareActionBusy !== null || glossarySuggestions.loading
+                        ? "not-allowed"
+                        : "pointer",
+                  }}
+                  title="AI extracts recurring terms from the translated segments"
+                >
+                  {glossarySuggestions.loading
+                    ? "Scanning…"
+                    : "✨ Suggest glossary"}
+                </button>
+                <button
+                  type="button"
                   onClick={requestRevision}
                   disabled={compareActionBusy !== null}
                   className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
@@ -1374,6 +1524,7 @@ export default function EditorPage() {
                   }
                 }}
                 onRetranslate={retranslateSegment}
+                onAddGlossary={openGlossaryFromSegment}
               />
             )}
             </div>
@@ -1970,6 +2121,314 @@ export default function EditorPage() {
         </div>
       )}
 
+      {/* AI GLOSSARY SUGGESTIONS — Claude scans translated segments
+          and proposes recurring terms. User accepts each with one
+          click; rejected ones just stay unaccepted. */}
+      {glossarySuggestions.open && (
+        <div
+          onClick={() =>
+            setGlossarySuggestions((s) => ({ ...s, open: false }))
+          }
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(31,42,46,0.45)",
+            backdropFilter: "blur(2px)",
+            zIndex: 100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="rounded-2xl p-6 w-full max-w-2xl"
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e7ddc5",
+              boxShadow: "0 24px 60px rgba(30,30,20,0.18)",
+              maxHeight: "80vh",
+              overflowY: "auto",
+            }}
+          >
+            <div
+              className="text-[11px] font-semibold tracking-[0.18em] mb-1"
+              style={{ color: "#9a9178" }}
+            >
+              AI GLOSSARY SUGGESTIONS
+            </div>
+            <h3
+              className="text-[18px] font-semibold tracking-tight mb-4"
+              style={{ color: "#1f2a2e" }}
+            >
+              Recurring terms found in this project
+            </h3>
+            {glossarySuggestions.loading && (
+              <div className="text-sm" style={{ color: "#8a8270" }}>
+                Scanning translated segments for recurring terms…
+              </div>
+            )}
+            {!glossarySuggestions.loading &&
+              glossarySuggestions.proposals.length === 0 && (
+                <div className="text-sm" style={{ color: "#8a8270" }}>
+                  No recurring terms surfaced. The AI looks for proper
+                  nouns, technical terms, and recurring phrases — short
+                  or very simple projects often have nothing worth
+                  pinning.
+                </div>
+              )}
+            <div className="space-y-2 mt-2">
+              {glossarySuggestions.proposals.map((p, idx) => {
+                const saving = glossarySuggestions.saving.has(idx)
+                return (
+                  <div
+                    key={idx}
+                    className="rounded-xl p-3 flex items-center gap-3"
+                    style={{
+                      background: "#faf5ee",
+                      border: "1px solid #e7ddc5",
+                    }}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span
+                          className="font-mono text-[13px] font-semibold"
+                          style={{ color: "#1f2a2e" }}
+                        >
+                          {p.source_term}
+                        </span>
+                        <span style={{ color: "#cfc6ad" }}>→</span>
+                        <span
+                          className="font-mono text-[13px] font-semibold"
+                          style={{ color: "#0a7870" }}
+                        >
+                          {p.target_term}
+                        </span>
+                        <span
+                          className="text-[10px] tabular-nums px-1.5 py-0.5 rounded-full"
+                          style={{
+                            background: "#cfe6e2",
+                            color: "#0a5e58",
+                          }}
+                        >
+                          ×{p.frequency}
+                        </span>
+                      </div>
+                      {p.context && (
+                        <div
+                          className="text-[11px] truncate"
+                          style={{ color: "#8a8270" }}
+                          title={p.context}
+                        >
+                          {p.context}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => acceptGlossarySuggestion(idx, p)}
+                      disabled={saving}
+                      className="px-3 py-1.5 rounded-full text-[12px] font-semibold transition shrink-0"
+                      style={{
+                        background: saving ? "#9bc9c5" : "#0a7870",
+                        color: "#fff",
+                        cursor: saving ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {saving ? "Saving…" : "Add"}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex items-center justify-end mt-5">
+              <button
+                type="button"
+                onClick={() =>
+                  setGlossarySuggestions((s) => ({ ...s, open: false }))
+                }
+                className="px-4 py-2 rounded-full text-sm font-semibold"
+                style={{
+                  background: "#ffffff",
+                  color: "#1f2a2e",
+                  border: "1px solid #e7ddc5",
+                }}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GLOSSARY-FROM-COMPARE MODAL — pre-filled with the segment's
+          source + translated text. User trims to the actual term and
+          saves via POST /glossary. Source + target languages come
+          from the project. */}
+      {glossaryDraft.open && (
+        <div
+          onClick={() =>
+            !glossaryDraft.busy &&
+            setGlossaryDraft((g) => ({ ...g, open: false }))
+          }
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(31,42,46,0.45)",
+            backdropFilter: "blur(2px)",
+            zIndex: 100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="rounded-2xl p-6 w-full max-w-lg"
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e7ddc5",
+              boxShadow: "0 24px 60px rgba(30,30,20,0.18)",
+            }}
+          >
+            <div
+              className="text-[11px] font-semibold tracking-[0.18em] mb-1"
+              style={{ color: "#9a9178" }}
+            >
+              ADD TO GLOSSARY
+            </div>
+            <h3
+              className="text-[18px] font-semibold tracking-tight mb-4"
+              style={{ color: "#1f2a2e" }}
+            >
+              Pin this term across the project
+            </h3>
+            <div className="space-y-3">
+              <div>
+                <div
+                  className="text-[11px] font-semibold tracking-[0.12em] mb-1.5"
+                  style={{ color: "#9a9178" }}
+                >
+                  SOURCE TERM
+                </div>
+                <input
+                  value={glossaryDraft.sourceTerm}
+                  onChange={(e) =>
+                    setGlossaryDraft((g) => ({
+                      ...g,
+                      sourceTerm: e.target.value,
+                    }))
+                  }
+                  className="w-full text-sm outline-none px-3 py-2.5 rounded-xl"
+                  style={{
+                    background: "#faf5ee",
+                    border: "1px solid #e7ddc5",
+                    color: "#1f2a2e",
+                  }}
+                />
+              </div>
+              <div>
+                <div
+                  className="text-[11px] font-semibold tracking-[0.12em] mb-1.5"
+                  style={{ color: "#9a9178" }}
+                >
+                  TARGET TERM
+                </div>
+                <input
+                  value={glossaryDraft.targetTerm}
+                  onChange={(e) =>
+                    setGlossaryDraft((g) => ({
+                      ...g,
+                      targetTerm: e.target.value,
+                    }))
+                  }
+                  className="w-full text-sm outline-none px-3 py-2.5 rounded-xl"
+                  style={{
+                    background: "#faf5ee",
+                    border: "1px solid #e7ddc5",
+                    color: "#1f2a2e",
+                  }}
+                />
+              </div>
+              <div>
+                <div
+                  className="text-[11px] font-semibold tracking-[0.12em] mb-1.5"
+                  style={{ color: "#9a9178" }}
+                >
+                  NOTES (OPTIONAL)
+                </div>
+                <input
+                  value={glossaryDraft.notes}
+                  onChange={(e) =>
+                    setGlossaryDraft((g) => ({
+                      ...g,
+                      notes: e.target.value,
+                    }))
+                  }
+                  placeholder="When to use this term…"
+                  className="w-full text-sm outline-none px-3 py-2.5 rounded-xl"
+                  style={{
+                    background: "#faf5ee",
+                    border: "1px solid #e7ddc5",
+                    color: "#1f2a2e",
+                  }}
+                />
+              </div>
+            </div>
+            <p className="text-xs mt-3" style={{ color: "#8a8270" }}>
+              The glossary is team-scoped. Once saved, every project on
+              your team enforces this mapping during translation.
+            </p>
+            <div className="flex items-center justify-end gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() =>
+                  setGlossaryDraft((g) => ({ ...g, open: false }))
+                }
+                disabled={glossaryDraft.busy}
+                className="px-4 py-2 rounded-full text-sm font-semibold"
+                style={{
+                  background: "#ffffff",
+                  color: "#1f2a2e",
+                  border: "1px solid #e7ddc5",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveGlossaryDraft}
+                disabled={
+                  glossaryDraft.busy ||
+                  !glossaryDraft.sourceTerm.trim() ||
+                  !glossaryDraft.targetTerm.trim()
+                }
+                className="px-4 py-2 rounded-full text-sm font-semibold"
+                style={{
+                  background:
+                    glossaryDraft.busy ||
+                    !glossaryDraft.sourceTerm.trim() ||
+                    !glossaryDraft.targetTerm.trim()
+                      ? "#9bc9c5"
+                      : "#0a7870",
+                  color: "#fff",
+                  cursor:
+                    glossaryDraft.busy ||
+                    !glossaryDraft.sourceTerm.trim() ||
+                    !glossaryDraft.targetTerm.trim()
+                      ? "not-allowed"
+                      : "pointer",
+                }}
+              >
+                {glossaryDraft.busy ? "Saving…" : "Add term"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* RENAME MODAL */}
       {renameOpen && (
         <div
@@ -2149,6 +2608,7 @@ function CompareEditPanel({
   onChangeSegment,
   onSave,
   onRetranslate,
+  onAddGlossary,
 }: {
   segments: Segment[]
   activeIdx: number
@@ -2156,6 +2616,7 @@ function CompareEditPanel({
   onChangeSegment: (seg: Segment, text: string) => void
   onSave: (seg: Segment) => Promise<void>
   onRetranslate: (seg: Segment) => Promise<void>
+  onAddGlossary: (seg: Segment) => void
 }) {
   return (
     <div
@@ -2204,6 +2665,23 @@ function CompareEditPanel({
                 >
                   #{String(idx).padStart(2, "0")}
                 </span>
+                <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onAddGlossary(seg)
+                  }}
+                  className="text-[10px] font-semibold tracking-[0.06em] px-2 py-0.5 rounded-full transition"
+                  style={{
+                    background: "#f3ecdb",
+                    color: "#0a5e58",
+                    border: "1px solid #e7ddc5",
+                  }}
+                  title="Add this segment to the glossary"
+                >
+                  + Glossary
+                </button>
                 <button
                   type="button"
                   onClick={(e) => {
@@ -2220,6 +2698,7 @@ function CompareEditPanel({
                 >
                   AI
                 </button>
+                </div>
               </div>
               <div
                 className="text-[11px] mb-1.5 leading-tight"
