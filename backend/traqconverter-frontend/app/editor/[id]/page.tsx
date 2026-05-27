@@ -1337,9 +1337,7 @@ export default function EditorPage() {
               }}
             >
               <div className="text-[12px]" style={{ color: "#8a8270" }}>
-                Original document on the left, translation only on the
-                right (no embedded source or cert — that comes out at
-                Export time).
+                Original document on the left, translation on the right.
               </div>
               <div
                 className="flex items-center gap-2 relative"
