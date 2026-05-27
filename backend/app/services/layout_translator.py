@@ -452,25 +452,164 @@ def _map_pdf_font(font_name: str | None, flags: int) -> str:
     return "helv"
 
 
+def _extract_pdf_via_claude(file_path: str) -> list[ExtractedSegment] | None:
+    """Render each PDF page to an image and OCR it with Claude Vision.
+
+    PNG/JPG uploads go through Claude Vision and get logical-block
+    segmentation (label + value paired into one segment, multi-line
+    headings joined, junk fragments suppressed). Without this path,
+    PDFs hit PyMuPDF text extraction which produces one segment per
+    visual line — splitting "MINISTERO" from "DELL'INTERNO" and
+    leaving form values disconnected from their labels.
+
+    Returns None to signal 'fall back to the PyMuPDF / tesseract
+    path' when Claude isn't configured or the rendering fails.
+    """
+    try:
+        from app.services.claude_vision_ocr import is_available, ocr_image
+    except Exception:
+        return None
+    if not is_available():
+        return None
+
+    import fitz
+    import tempfile
+    from pathlib import Path
+
+    all_segments: list[ExtractedSegment] = []
+    tmp_dir = Path(tempfile.mkdtemp(prefix="pdf_claude_ocr_"))
+    try:
+        doc = fitz.open(file_path)
+        try:
+            for page_index, page in enumerate(doc):
+                # Render at ~200 DPI so fine print is legible. Claude
+                # Vision upscales internally if smaller, but starting
+                # closer to the target gets cleaner reads on stamps,
+                # registration codes, and footer disclaimers.
+                pix = page.get_pixmap(dpi=200, alpha=False)
+                page_png = tmp_dir / f"page_{page_index}.png"
+                pix.save(str(page_png))
+
+                lines = ocr_image(str(page_png))
+                if not lines:
+                    logger.warning(
+                        "Claude Vision returned nothing for PDF page %d — "
+                        "skipping this page in the Claude path",
+                        page_index,
+                    )
+                    continue
+
+                # Convert Claude's line dicts into ExtractedSegment
+                # the same way _extract_image_via_claude does, but
+                # attach the page index so multi-page rebuilds
+                # preserve page boundaries.
+                size_map = {
+                    "small": 8.0,
+                    "normal": 10.5,
+                    "large": 13.0,
+                    "xlarge": 16.0,
+                }
+                for idx, line in enumerate(lines):
+                    text = (line.get("text") or "").strip()
+                    if not text:
+                        continue
+                    if _looks_like_mrz(text):
+                        continue
+                    bbox = line.get("bbox")
+                    if not bbox or len(bbox) != 4:
+                        continue
+                    x0, y0, x1, y1 = bbox
+                    h = max(1.0, y1 - y0)
+                    rel_size = (line.get("size") or "normal").lower()
+                    font_size = size_map.get(
+                        rel_size, max(7.0, min(12.0, h * 0.7))
+                    )
+                    flags = 0
+                    if line.get("bold"):
+                        flags |= 16
+                    if line.get("italic"):
+                        flags |= 2
+                    all_segments.append(
+                        ExtractedSegment(
+                            text=text,
+                            layout={
+                                "kind": "pdf_claude_line",
+                                "page": page_index,
+                                "bbox": [
+                                    float(x0),
+                                    float(y0),
+                                    float(x1),
+                                    float(y1),
+                                ],
+                                "line": idx,
+                                "font_size": font_size,
+                                "ocr_source": "claude",
+                                "claude_kind": line.get("kind") or "text",
+                                "placeholder_kind": line.get("placeholder_kind"),
+                                "alignment": line.get("alignment") or "left",
+                                "bold": bool(line.get("bold")),
+                                "italic": bool(line.get("italic")),
+                                "all_caps": bool(line.get("all_caps")),
+                                "size_hint": rel_size,
+                                "flags": flags,
+                                "font_family": line.get("font_family") or "",
+                            },
+                        )
+                    )
+        finally:
+            try:
+                doc.close()
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning("Claude Vision PDF OCR raised: %s", e)
+        return None
+    finally:
+        # Best-effort tmp cleanup.
+        try:
+            import shutil
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+    if not all_segments:
+        return None
+    logger.info(
+        "Claude Vision PDF OCR: extracted %d logical segments across %d pages",
+        len(all_segments),
+        max((s.layout.get("page", 0) for s in all_segments), default=0) + 1,
+    )
+    return all_segments
+
+
 def _extract_pdf(file_path: str) -> list[ExtractedSegment]:
     """Extract source text at LINE level (not block level).
 
-    Why per-line
-    ------------
-    PyMuPDF text blocks group several visually-consecutive lines into one
-    rectangle. Translating block by block and redrawing the whole block
-    inside its bounding rect loses the original line spacing, alignment,
-    and breaks. Per-line extraction preserves:
-      * the exact bbox of every physical line (so we redact and redraw
-        in-place — no drift)
-      * the line's dominant font, size, colour, bold/italic flags (so
-        the translation visually matches)
+    Preference order:
+      1. Claude Vision OCR (renders each page as an image and applies
+         the same logical-block prompt used for image uploads). Gives
+         PDFs the same segmentation quality as PNG uploads.
+      2. PyMuPDF embedded text extraction (per-line, fast, exact font
+         metrics — used when Claude isn't configured).
+      3. Tesseract page-OCR fallback for scanned PDFs with no usable
+         text layer.
 
-    Scanned PDFs (CamScanner-style: image-only pages plus a noisy OCR
-    text layer) are detected and routed through fresh pytesseract OCR
-    so we never trust an unreliable embedded OCR.
+    Why per-line for (2)
+    --------------------
+    PyMuPDF text blocks group several visually-consecutive lines into
+    one rectangle. Per-line extraction preserves the exact bbox of
+    every physical line, font, size, colour, bold/italic flags.
+
+    Scanned PDFs (CamScanner-style) are detected and routed through
+    fresh pytesseract OCR so we never trust an unreliable embedded
+    OCR text layer.
     """
     import fitz
+
+    # 1) Claude Vision path — preferred when configured.
+    claude_segments = _extract_pdf_via_claude(file_path)
+    if claude_segments:
+        return claude_segments
 
     doc = fitz.open(file_path)
     try:
