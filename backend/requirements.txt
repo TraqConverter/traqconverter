@@ -58,3 +58,5 @@ python-bidi==0.4.2
 arabic-reshaper==3.0.0
 # Claude Vision OCR (optional — used when ANTHROPIC_API_KEY is set)
 anthropic==0.43.0
+# DOCX → HTML for the editor's WYSIWYG right pane (Compare mode).
+mammoth==1.8.0

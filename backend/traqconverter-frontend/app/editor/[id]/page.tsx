@@ -1483,32 +1483,7 @@ export default function EditorPage() {
                 (when EDIT toggle is off). The editor is the primary
                 working surface; the PDF view is for visual review. */}
             {compareEdit ? (
-              <CompareEditPanel
-                segments={segments}
-                activeIdx={activeIdx}
-                setActiveIdx={setActiveIdx}
-                onChangeSegment={(seg, text) => {
-                  setSegments((xs) =>
-                    xs.map((x) =>
-                      x.id === seg.id ? { ...x, translated_text: text } : x,
-                    ),
-                  )
-                }}
-                onSave={async (seg) => {
-                  try {
-                    await api.patch(`/segments/${seg.id}`, {
-                      translated_text: seg.translated_text,
-                    })
-                  } catch (err: any) {
-                    setError(
-                      err?.response?.data?.detail ||
-                        "Couldn't save that edit.",
-                    )
-                  }
-                }}
-                onRetranslate={retranslateSegment}
-                onAddGlossary={openGlossaryFromSegment}
-              />
+              <CompareEditPanel projectId={String(id)} compareOpen={compareMode} />
             ) : (
             <ComparePane
               label="TRANSLATION"
@@ -2613,122 +2588,65 @@ function gdocsViewerUrl(srcUrl: string) {
 // ============================================================
 // CompareEditPanel — the right pane in Compare view.
 //
-// Renders the translated segments as a single editable "document page"
-// styled to mirror the exported DOCX (white A4-ish sheet, serif font,
-// realistic margins). Each segment is its own auto-growing textarea so
-// the user can click anywhere in the translation and edit in place
-// exactly like they would in Word. Edits autosave on blur and the
-// per-segment Glossary / AI actions appear as a floating chip anchored
-// to the active segment so the page itself stays clean.
-function PageEditorLine(props: {
-  seg: Segment
-  idx: number
-  isActive: boolean
-  onFocus: () => void
-  onChange: (text: string) => void
-  onSave: () => void
-  onRetranslate: () => void
-  onAddGlossary: () => void
-}) {
-  const { seg, isActive, onFocus, onChange, onSave, onRetranslate, onAddGlossary } = props
-  const lineStyle = {
-    fontFamily: "inherit",
-    fontSize: "inherit",
-    lineHeight: "inherit",
-    color: "#111",
-    background: isActive ? "#fbf7ea" : "transparent",
-    border: isActive ? "1px solid #cdb98a" : "1px solid transparent",
-    borderRadius: 4,
-    padding: "2px 6px",
-    overflow: "hidden",
-    width: "100%",
-    outline: "none",
-    resize: "none" as const,
-  }
-  const chipStyle = {
-    width: 48,
-    height: 22,
-    fontSize: 10,
-    fontWeight: 600,
-    background: "#ffffff",
-    border: "1px solid #cfe6e2",
-    borderRadius: 999,
-    cursor: "pointer",
-  }
-  return (
-    <div style={{ position: "relative", marginBottom: 8 }}>
-      <textarea
-        value={seg.translated_text || ""}
-        onFocus={onFocus}
-        onChange={(e) => {
-          onChange(e.target.value)
-          const el = e.target as HTMLTextAreaElement
-          el.style.height = "auto"
-          el.style.height = el.scrollHeight + "px"
-        }}
-        onBlur={onSave}
-        ref={(el) => {
-          if (el) {
-            el.style.height = "auto"
-            el.style.height = el.scrollHeight + "px"
-          }
-        }}
-        rows={1}
-        placeholder="(empty)"
-        style={lineStyle}
-      />
-      {isActive ? (
-        <div
-          style={{
-            position: "absolute",
-            top: -2,
-            right: -56,
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-          }}
-        >
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={onAddGlossary}
-            title="Add this segment to the glossary"
-            style={{ ...chipStyle, color: "#0a5e58" }}
-          >
-            + Glos
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={onRetranslate}
-            title="AI retranslate this segment"
-            style={{ ...chipStyle, color: "#0a7870" }}
-          >
-            AI
-          </button>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
+// Fetches the rebuilt translation DOCX converted to HTML (via the
+// backend's mammoth-powered /preview/rebuild-html endpoint) and
+// renders it inside a Word-style page (white A4-ish sheet, drop
+// shadow, serif font, real margins). The page wrapper is
+// contentEditable so the user can click anywhere in the document and
+// edit in place — exactly how they'd see it when they export — with
+// the document's actual layout (tables, headers, paragraphs)
+// preserved from the export pipeline.
 function CompareEditPanel({
-  segments,
-  activeIdx,
-  setActiveIdx,
-  onChangeSegment,
-  onSave,
-  onRetranslate,
-  onAddGlossary,
+  projectId,
+  compareOpen,
 }: {
-  segments: Segment[]
-  activeIdx: number
-  setActiveIdx: (n: number) => void
-  onChangeSegment: (seg: Segment, text: string) => void
-  onSave: (seg: Segment) => Promise<void>
-  onRetranslate: (seg: Segment) => Promise<void>
-  onAddGlossary: (seg: Segment) => void
+  projectId: string
+  compareOpen: boolean
 }) {
+  const [html, setHtml] = useState<string>("")
+  const [loading, setLoading] = useState<boolean>(true)
+  const [error, setError] = useState<string>("")
+  // Bump to force a re-fetch (e.g. after the user clicks "Reload").
+  const [reloadKey, setReloadKey] = useState(0)
+
+  useEffect(() => {
+    if (!compareOpen || !projectId) return
+    let cancelled = false
+    setLoading(true)
+    setError("")
+    const token =
+      (typeof window !== "undefined" &&
+        (localStorage.getItem("token") || sessionStorage.getItem("token"))) ||
+      ""
+    const url = `${process.env.NEXT_PUBLIC_API_URL || ""}/projects/${projectId}/preview/rebuild-html?access_token=${encodeURIComponent(token)}`
+    fetch(url)
+      .then(async (r) => {
+        if (!r.ok) {
+          const text = await r.text().catch(() => "")
+          throw new Error(text || `HTTP ${r.status}`)
+        }
+        return r.text()
+      })
+      .then((text) => {
+        if (!cancelled) setHtml(text)
+      })
+      .catch((e: any) => {
+        if (!cancelled) {
+          setError(
+            typeof e?.message === "string"
+              ? e.message
+              : "Couldn't load the document preview.",
+          )
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, compareOpen, reloadKey])
+
   return (
     <div
       className="rounded-2xl overflow-hidden flex flex-col"
@@ -2742,59 +2660,100 @@ function CompareEditPanel({
           borderBottom: "1px solid #f1e8d1",
         }}
       >
-        <span>TRANSLATION · LIVE EDIT</span>
-        <span className="text-[10px] font-medium tracking-[0.08em]" style={{ color: "#8a8270" }}>
-          {segments.length} segments · click any line to edit
-        </span>
+        <span>TRANSLATION · EDIT THE DOCUMENT</span>
+        <button
+          type="button"
+          onClick={() => setReloadKey((k) => k + 1)}
+          className="text-[10px] font-semibold tracking-[0.08em] px-2 py-1 rounded-md transition"
+          style={{
+            background: "#ffffff",
+            color: "#0a5e58",
+            border: "1px solid #cfe6e2",
+            cursor: "pointer",
+          }}
+          title="Re-render from the latest segments"
+        >
+          ⟳ Refresh
+        </button>
       </div>
       <div
         className="flex-1 overflow-auto"
         style={{ background: "#e8dfc7", minHeight: 0, padding: "24px 0" }}
       >
-        <div
-          style={{
-            background: "#ffffff",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
-            margin: "0 auto",
-            maxWidth: 720,
-            minHeight: 1000,
-            padding: "57px 64px",
-            fontFamily: '"Liberation Serif", "Times New Roman", Georgia, serif',
-            color: "#111",
-            lineHeight: 1.45,
-            fontSize: 14,
-          }}
-        >
-          {segments.length === 0 ? (
+        {loading ? (
+          <div
+            style={{
+              color: "#8a8270",
+              fontStyle: "italic",
+              textAlign: "center",
+              padding: "80px 0",
+            }}
+          >
+            Rendering document…
+          </div>
+        ) : error ? (
+          <div
+            style={{
+              color: "#a14e2e",
+              fontStyle: "italic",
+              textAlign: "center",
+              padding: "40px 24px",
+            }}
+          >
+            {error}
+          </div>
+        ) : (
+          <div
+            style={{
+              background: "#ffffff",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.10)",
+              margin: "0 auto",
+              maxWidth: 794, // ~A4 width @ 96dpi
+              minHeight: 1000,
+              padding: "57px 64px",
+              color: "#111",
+              lineHeight: 1.5,
+              fontSize: 13,
+            }}
+          >
+            <style>{`
+              /* Word-like styling for the mammoth HTML output. */
+              .docx-edit { font-family: "Liberation Serif", "Times New Roman", Georgia, serif; }
+              .docx-edit p { margin: 0 0 8px 0; }
+              .docx-edit h1 { font-size: 18px; font-weight: 700; margin: 12px 0 8px; }
+              .docx-edit h2 { font-size: 15px; font-weight: 700; margin: 10px 0 6px; }
+              .docx-edit h3 { font-size: 13px; font-weight: 700; margin: 8px 0 4px; }
+              .docx-edit table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+              .docx-edit td, .docx-edit th { border: 1px solid #cdb98a; padding: 4px 8px; vertical-align: top; }
+              .docx-edit th { background: #faf5ee; font-weight: 600; }
+              .docx-edit ul, .docx-edit ol { margin: 6px 0 8px 24px; }
+              .docx-edit img { max-width: 100%; height: auto; }
+              .docx-edit :focus { outline: 2px solid #cdb98a; outline-offset: 2px; border-radius: 3px; }
+            `}</style>
+            <div
+              className="docx-edit"
+              contentEditable
+              suppressContentEditableWarning
+              spellCheck
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
             <div
               style={{
+                marginTop: 16,
+                paddingTop: 12,
+                borderTop: "1px dashed #e7ddc5",
+                fontSize: 11,
                 color: "#8a8270",
                 fontStyle: "italic",
-                textAlign: "center",
-                padding: "80px 0",
+                fontFamily: "system-ui, sans-serif",
               }}
             >
-              No translated segments yet.
+              Edits here are a visual preview. To persist changes,
+              edit segments directly via the table below or use the
+              ↻ Re-run option from the toolbar.
             </div>
-          ) : null}
-          {segments.map((seg, idx) => (
-            <PageEditorLine
-              key={seg.id}
-              seg={seg}
-              idx={idx}
-              isActive={idx === activeIdx}
-              onFocus={() => setActiveIdx(idx)}
-              onChange={(text) => onChangeSegment(seg, text)}
-              onSave={() => {
-                void onSave(seg)
-              }}
-              onRetranslate={() => {
-                void onRetranslate(seg)
-              }}
-              onAddGlossary={() => onAddGlossary(seg)}
-            />
-          ))}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -2819,9 +2778,17 @@ function ComparePane({
   // to PDF with Content-Disposition: inline, so the browser's
   // native PDF viewer renders them within a second. No Google /
   // Office viewer round-trip.
+  //
+  // PDF viewer hash params:
+  //   #toolbar=0   — hide the floating toolbar
+  //   #navpanes=0  — hide the thumbnail / bookmarks sidebar
+  //   #view=FitH   — fit document to width on open (no zoomed crop)
+  // Browsers vary on support; Chrome/Edge honour the full set,
+  // Firefox honours `view=`. We append them to whatever URL we have.
+  const PDF_VIEWER_HASH = "#toolbar=0&navpanes=0&view=FitH"
   const iframeSrc =
     data?.kind === "pdf"
-      ? data.url
+      ? data.url + PDF_VIEWER_HASH
       : data?.kind === "other" && docxFallback
       ? officeViewerUrl(docxFallback)
       : null
