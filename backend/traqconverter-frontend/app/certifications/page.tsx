@@ -878,6 +878,107 @@ function TokenLibrary() {
       </header>
       {!collapsed && (
         <div className="px-6 py-5">
+          {/* HOW IT WORKS — step-by-step so a first-time user can
+              build a working template without trial and error. */}
+          <div
+            className="rounded-xl p-4 mb-5"
+            style={{
+              background: "#fbf6ea",
+              border: "1px solid #f1e8d1",
+            }}
+          >
+            <div
+              className="text-[11px] font-semibold tracking-[0.16em] mb-3"
+              style={{ color: "#9a9178" }}
+            >
+              HOW TEMPLATE TOKENS WORK
+            </div>
+            <p
+              className="text-[13px] mb-3 leading-relaxed"
+              style={{ color: "#4a4638" }}
+            >
+              A template is a regular Word document (.docx) with
+              special placeholders like{" "}
+              <code
+                className="font-mono px-1 rounded"
+                style={{ background: "#ede3cc", color: "#1f2a2e" }}
+              >
+                {"{{translator_name}}"}
+              </code>{" "}
+              and{" "}
+              <code
+                className="font-mono px-1 rounded"
+                style={{ background: "#ede3cc", color: "#1f2a2e" }}
+              >
+                {"{{date}}"}
+              </code>{" "}
+              dropped into the text. At export time TraqConverter
+              automatically replaces each placeholder with the real
+              value from that project — translator name, date,
+              source / target languages, page count, certificate
+              number, and so on.
+            </p>
+            <ol
+              className="text-[13px] leading-relaxed pl-5 list-decimal space-y-1.5"
+              style={{ color: "#4a4638" }}
+            >
+              <li>
+                <strong>Draft your template in Word.</strong> Design
+                it however you like — your letterhead, ISO logo,
+                signature line, table layouts, fonts. Save as{" "}
+                <code
+                  className="font-mono"
+                  style={{ background: "#ede3cc", padding: "0 4px", borderRadius: 4, color: "#1f2a2e" }}
+                >
+                  .docx
+                </code>
+                .
+              </li>
+              <li>
+                <strong>Pick the tokens you want auto-filled.</strong>{" "}
+                Click any token tile below — its placeholder copies
+                to your clipboard automatically.
+              </li>
+              <li>
+                <strong>Paste tokens into your Word document.</strong>{" "}
+                Replace any hand-typed details (your name, today's
+                date, the language pair) with the matching placeholder
+                so the same template works for every project.
+              </li>
+              <li>
+                <strong>Upload the .docx here.</strong> We scan it,
+                hash it for tamper detection, and list it in the
+                library below.
+              </li>
+              <li>
+                <strong>Attach it to a project.</strong> When you
+                upload a translation, pick this template — at export
+                time the placeholders get filled with that project's
+                values and the result is appended to the rebuild.
+              </li>
+            </ol>
+            <div
+              className="text-[12px] mt-3 px-3 py-2 rounded-lg"
+              style={{
+                background: "#cfe6e2",
+                color: "#0a5e58",
+                border: "1px solid #b7dad4",
+              }}
+            >
+              <strong>Tip:</strong> need a token that isn't in the
+              list? Email us — we'll add it. Unknown placeholders are
+              left in the document as-is so you'll spot them
+              immediately on export.
+            </div>
+          </div>
+
+          <div
+            className="text-[11px] font-semibold tracking-[0.16em] mb-3"
+            style={{ color: "#9a9178" }}
+          >
+            AVAILABLE TOKENS · CLICK TO COPY
+          </div>
+
           <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
             {TEMPLATE_TOKENS.map((t) => {
               const isCopied = copied === t.name
