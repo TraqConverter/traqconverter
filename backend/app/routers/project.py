@@ -51,6 +51,34 @@ router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
 # ============================================================
+# AVAILABLE TRANSLATION MODELS
+# ------------------------------------------------------------
+# Exposes the model catalog from ai_translation_service to the
+# frontend so the new-project page can render a dropdown. Adding a
+# new model in MODEL_OPTIONS automatically shows up here without
+# any router changes.
+# ============================================================
+@router.get("/translation-models")
+def list_translation_models():
+    from app.services.ai_translation_service import MODEL_OPTIONS
+
+    return {
+        "models": [
+            {
+                "id": key,
+                "label": cfg.get("label") or key,
+                "provider": cfg.get("provider"),
+            }
+            for key, cfg in MODEL_OPTIONS.items()
+            # Hide the "balanced" legacy alias from the picker — it's
+            # still accepted server-side but new users should pick a
+            # specific model.
+            if key != "balanced"
+        ]
+    }
+
+
+# ============================================================
 # UPLOAD PROJECT
 # ============================================================
 

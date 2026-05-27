@@ -518,6 +518,17 @@ def _extract_pdf_via_claude(file_path: str) -> list[ExtractedSegment] | None:
                 except Exception:
                     _looks_like_junk = lambda t: False  # noqa: E731
 
+                # Page orientation: read from PyMuPDF before we OCR'd.
+                # Landscape pages must produce landscape rebuild pages
+                # — otherwise text from a wide form gets squashed into
+                # a portrait section.
+                page_rect = page.rect
+                page_w_pt = float(page_rect.width)
+                page_h_pt = float(page_rect.height)
+                page_orientation = (
+                    "landscape" if page_w_pt > page_h_pt else "portrait"
+                )
+
                 for idx, line in enumerate(lines):
                     text = (line.get("text") or "").strip()
                     if not text:
@@ -568,6 +579,12 @@ def _extract_pdf_via_claude(file_path: str) -> list[ExtractedSegment] | None:
                                 "size_hint": rel_size,
                                 "flags": flags,
                                 "font_family": line.get("font_family") or "",
+                                # Orientation metadata used by the
+                                # DOCX renderer to flip section
+                                # orientation per source page.
+                                "page_orientation": page_orientation,
+                                "page_width_pt": page_w_pt,
+                                "page_height_pt": page_h_pt,
                             },
                         )
                     )

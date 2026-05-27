@@ -1,6 +1,7 @@
 import logging
 import time
 
+import anthropic
 from openai import OpenAI
 from sqlalchemy import update
 from app.config import settings
@@ -12,16 +13,131 @@ from app.models.glossary import Glossary
 
 logger = logging.getLogger(__name__)
 
-# Audit medium fix: previously OpenAI calls had no timeout and no retry,
-# so any blip aborted the whole batch. The OpenAI SDK accepts a default
-# timeout (seconds) and max_retries that handles 429/5xx with backoff.
-client = OpenAI(
-    api_key=settings.OPENAI_API_KEY,
-    timeout=60.0,
-    max_retries=3,
-)
+# ============================================================
+# MODEL CATALOG
+# ============================================================
+# Each entry maps a logical model id (the value stored on the
+# project) to (provider, real_model_name, marketing_label). The
+# frontend new-project page lists these so users pick by speed /
+# quality / cost. Add new entries here when supporting a new model —
+# nothing else in the pipeline needs to change.
+MODEL_OPTIONS: dict[str, dict] = {
+    # Fastest + cheapest GPT — good default for everyday docs.
+    "gpt-4.1-mini": {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "label": "GPT-4.1 Mini (fast, balanced)",
+    },
+    # Higher-quality GPT for tricky / legal / medical docs.
+    "gpt-4.1": {
+        "provider": "openai",
+        "model": "gpt-4.1",
+        "label": "GPT-4.1 (highest quality, slower)",
+    },
+    # Claude Sonnet — Anthropic's quality tier, same model as our
+    # Vision OCR so terminology stays consistent across stages.
+    "claude-sonnet-4-6": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-6",
+        "label": "Claude Sonnet 4.6 (premium quality)",
+    },
+    # Claude Haiku — Anthropic's speed tier.
+    "claude-haiku-4-5": {
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5-20251001",
+        "label": "Claude Haiku 4.5 (fast, low cost)",
+    },
+    # Legacy alias used by older projects ("balanced" was the default
+    # field value before per-model selection landed).
+    "balanced": {
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "label": "Balanced (default)",
+    },
+}
+
+
+def _resolve_model(model_key: str | None) -> dict:
+    """Return the catalog entry for the given key, falling back to
+    'balanced' (gpt-4.1-mini) when the key is unknown / empty."""
+    key = (model_key or "balanced").strip()
+    return MODEL_OPTIONS.get(key, MODEL_OPTIONS["balanced"])
+
+
+# Lazy clients — only instantiated when their provider is first used.
+_openai_client: OpenAI | None = None
+_anthropic_client: anthropic.Anthropic | None = None
+
+
+def _get_openai() -> OpenAI:
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = OpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            timeout=60.0,
+            max_retries=3,
+        )
+    return _openai_client
+
+
+def _get_anthropic() -> anthropic.Anthropic:
+    global _anthropic_client
+    if _anthropic_client is None:
+        _anthropic_client = anthropic.Anthropic(
+            api_key=settings.ANTHROPIC_API_KEY,
+            timeout=60.0,
+            max_retries=3,
+        )
+    return _anthropic_client
+
 
 BATCH_SIZE = 20
+
+
+def _call_model(
+    *,
+    model_key: str | None,
+    system: str,
+    user: str,
+    max_tokens: int = 8192,
+) -> str:
+    """Route a translation call to the right provider+model.
+
+    Returns the generated text. Both providers honour the same
+    system+user message split — for OpenAI we map system→system
+    role, for Anthropic we use the `system` parameter and a single
+    user message.
+    """
+    cfg = _resolve_model(model_key)
+    provider = cfg["provider"]
+    model = cfg["model"]
+
+    if provider == "openai":
+        resp = _get_openai().chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0,
+        )
+        return (resp.choices[0].message.content or "").strip()
+
+    if provider == "anthropic":
+        resp = _get_anthropic().messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=0,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        parts: list[str] = []
+        for block in resp.content:
+            if getattr(block, "type", None) == "text":
+                parts.append(block.text)
+        return "".join(parts).strip()
+
+    raise ValueError(f"Unknown model provider: {provider}")
 
 
 # ============================================================
@@ -211,13 +327,7 @@ def translate_text(
     src_name = humanize_lang(source_lang)
     tgt_name = humanize_lang(target_lang)
 
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[
-            {
-                "role": "system",
-                "content": f"""
-You are a professional translator.
+    system_prompt = f"""You are a professional translator.
 
 Translate from {src_name} to {tgt_name}.
 The output MUST be written in {tgt_name}.
@@ -230,18 +340,14 @@ STRICT RULES:
 
 {glossary_prompt}
 
-Return ONLY the translated text.
-"""
-            },
-            {
-                "role": "user",
-                "content": text
-            }
-        ],
-        temperature=0
-    )
+Return ONLY the translated text — no preamble, no quotes, no commentary."""
 
-    return response.choices[0].message.content.strip()
+    return _call_model(
+        model_key=getattr(project, "model", None) if project else None,
+        system=system_prompt,
+        user=text,
+        max_tokens=2048,
+    )
 
 
 # ============================================================
@@ -381,13 +487,14 @@ ABSOLUTE RULES — these are non-negotiable for legal and identity documents:
 
     prompt = rules + "\nINPUT:\n" + ("\n" + DELIM + "\n").join(texts)
 
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0,
+    # Pull the chosen model off the project; falls back to 'balanced'
+    # (gpt-4.1-mini) when the project has no preference.
+    output = _call_model(
+        model_key=getattr(project, "model", None) if project else None,
+        system="You translate certified-quality documents. Return ONLY the translated segments separated by the configured delimiter — no commentary.",
+        user=prompt,
+        max_tokens=8192,
     )
-
-    output = response.choices[0].message.content or ""
 
     raw = [chunk.strip("\n").strip() for chunk in output.split(DELIM)]
     translations = [chunk for chunk in raw if chunk]
