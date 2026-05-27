@@ -860,6 +860,161 @@ def update_project(
     }
 
 
+# ============================================================
+# REVISE — AI critiques and rewrites every translated segment in
+# the project. Used by the Compare view's "Request revision" button
+# when a reviewer wants the model to polish its own output.
+# ============================================================
+
+class _ReviseProjectPayload(BaseModel):
+    instructions: Optional[str] = None
+    model: Optional[str] = None  # override the project's chosen model
+
+
+@router.post("/{project_id}/revise")
+def revise_project(
+    project_id: UUID,
+    data: _ReviseProjectPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Re-run AI quality pass over every translated segment.
+
+    For each segment we send the AI both the source and the existing
+    translation and ask it to produce an improved version following
+    any free-text instructions the user added on the Compare page.
+    Approval flags are cleared so the reviewer must re-approve.
+    """
+    from app.services.ai_translation_service import (
+        _call_model,
+        humanize_lang,
+    )
+
+    project = get_user_project_or_404(db, project_id, current_user)
+    segments = (
+        db.query(TranslationSegment)
+        .filter(TranslationSegment.project_id == project.id)
+        .order_by(TranslationSegment.segment_index)
+        .all()
+    )
+    if not segments:
+        raise HTTPException(status_code=404, detail="No segments to revise")
+
+    model_key = (data.model or "").strip() or getattr(project, "model", None)
+    instructions = (data.instructions or "").strip()
+    src_name = humanize_lang(project.source_language)
+    tgt_name = humanize_lang(project.target_language)
+
+    system_prompt = (
+        f"You are a senior translation reviewer. Given a {src_name} "
+        f"source segment and an existing {tgt_name} translation, "
+        f"produce an IMPROVED {tgt_name} translation. Preserve names, "
+        f"numbers, dates, IDs exactly. Fix grammar, terminology, and "
+        f"awkward phrasings. Do not change correct translations."
+    )
+    if instructions:
+        system_prompt += (
+            "\n\nUSER INSTRUCTIONS (follow strictly):\n" + instructions
+        )
+    system_prompt += "\n\nReturn ONLY the revised translation — no preamble, no commentary, no quotes."
+
+    revised_count = 0
+    for seg in segments:
+        if not (seg.translated_text and seg.translated_text.strip()):
+            continue
+        user_payload = (
+            f"SOURCE ({src_name}):\n{seg.source_text}\n\n"
+            f"EXISTING TRANSLATION ({tgt_name}):\n{seg.translated_text}"
+        )
+        try:
+            improved = _call_model(
+                model_key=model_key,
+                system=system_prompt,
+                user=user_payload,
+                max_tokens=1024,
+            )
+        except Exception as e:
+            logger.warning("Revise failed on segment %s: %s", seg.id, e)
+            continue
+        improved = (improved or "").strip()
+        if improved and improved != seg.translated_text:
+            seg.translated_text = improved
+            seg.approved = False  # force reviewer to re-approve
+            revised_count += 1
+
+    db.commit()
+    return {
+        "revised": revised_count,
+        "total_segments": len(segments),
+        "model_used": model_key,
+    }
+
+
+# ============================================================
+# RE-RUN — translate the whole project from scratch using a chosen
+# model. Replaces every existing translated_text. Used by the
+# Compare view's "Re-run" button when the user wants to try a
+# different model or just start over.
+# ============================================================
+
+class _RerunProjectPayload(BaseModel):
+    model: Optional[str] = None  # override the project's chosen model
+
+
+@router.post("/{project_id}/rerun")
+def rerun_project(
+    project_id: UUID,
+    data: _RerunProjectPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.ai_translation_service import translate_text
+
+    project = get_user_project_or_404(db, project_id, current_user)
+    segments = (
+        db.query(TranslationSegment)
+        .filter(TranslationSegment.project_id == project.id)
+        .order_by(TranslationSegment.segment_index)
+        .all()
+    )
+    if not segments:
+        raise HTTPException(status_code=404, detail="No segments to retranslate")
+
+    new_model = (data.model or "").strip()
+    if new_model:
+        # Persist the chosen model on the project so future exports +
+        # retranslations use it too.
+        project.model = new_model
+        db.commit()
+
+    retranslated = 0
+    for seg in segments:
+        src = seg.source_text or ""
+        if not src.strip():
+            continue
+        try:
+            translation = translate_text(
+                text=src,
+                source_lang=project.source_language,
+                target_lang=project.target_language,
+                db=db,
+                project=project,
+            )
+        except Exception as e:
+            logger.warning("Rerun failed on segment %s: %s", seg.id, e)
+            continue
+        seg.translated_text = (translation or "").strip()
+        seg.approved = False
+        retranslated += 1
+
+    db.commit()
+    return {
+        "retranslated": retranslated,
+        "total_segments": len(segments),
+        "model_used": project.model,
+    }
+
+
 @router.delete("/{project_id}")
 def delete_project(
     project_id: UUID,
