@@ -312,47 +312,71 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
     # Read the source dimensions. Claude returns bboxes relative to the
     # IMAGE IT SAW, so if we upscale before sending we need to remember
     # the upscaled size and scale bboxes back to the original.
+    #
+    # Claude's hard limit is 5 MB per image. JPEG quality 85 is the
+    # sweet spot — small enough to fit comfortably and still legible
+    # for 8pt text once upscaled. PNG was producing 30 MB+ images on
+    # A4 PDF pages rendered at 200 DPI, which Claude rejected.
+    MAX_LONG_EDGE = 3000
+    MAX_BYTES = 4_500_000  # leave headroom under Claude's 5 MB cap
     try:
         with Image.open(image_path) as pil:
             pil.load()
             orig_w, orig_h = pil.size
             mode = pil.mode
-            # Upscale documents so Claude can read fine print.
-            # ~3000px on the long edge hits a sweet spot: enough
-            # resolution that even 8pt body text is legible to the
-            # model, while staying well under Claude's 8K image cap.
+
             long_edge = max(orig_w, orig_h)
-            TARGET_LONG_EDGE = 3000
-            if long_edge < TARGET_LONG_EDGE:
-                scale_up = TARGET_LONG_EDGE / long_edge
-                up_w = int(orig_w * scale_up)
-                up_h = int(orig_h * scale_up)
+            # Always normalise to ~3000px long edge so Claude gets a
+            # consistent resolution regardless of source DPI. We then
+            # encode as JPEG, which keeps the byte size manageable.
+            if long_edge != MAX_LONG_EDGE:
+                scale = MAX_LONG_EDGE / long_edge
+                send_w = max(1, int(orig_w * scale))
+                send_h = max(1, int(orig_h * scale))
                 send_img = pil.convert("RGB").resize(
-                    (up_w, up_h), Image.LANCZOS
-                )
-                buf = io.BytesIO()
-                send_img.save(buf, format="PNG", optimize=True)
-                img_bytes = buf.getvalue()
-                media_type = "image/png"
-                sent_w, sent_h = up_w, up_h
-                logger.info(
-                    "Claude OCR: upscaled %dx%d → %dx%d before send "
-                    "(x%.2f) for better fine-print recognition",
-                    orig_w, orig_h, up_w, up_h, scale_up,
+                    (send_w, send_h), Image.LANCZOS
                 )
             else:
-                # Image is already large enough — send as-is.
-                with open(image_path, "rb") as f:
-                    img_bytes = f.read()
-                ext = image_path.rsplit(".", 1)[-1].lower()
-                media_type = {
-                    "jpg": "image/jpeg",
-                    "jpeg": "image/jpeg",
-                    "png": "image/png",
-                    "gif": "image/gif",
-                    "webp": "image/webp",
-                }.get(ext, "image/jpeg")
-                sent_w, sent_h = orig_w, orig_h
+                send_img = pil.convert("RGB")
+                send_w, send_h = orig_w, orig_h
+
+            # Encode as JPEG with progressively lower quality until
+            # we fit under MAX_BYTES. Quality 85 is plenty for OCR;
+            # falling further is a safety net for very dense pages.
+            img_bytes = b""
+            for quality in (85, 75, 65, 55):
+                buf = io.BytesIO()
+                send_img.save(
+                    buf,
+                    format="JPEG",
+                    quality=quality,
+                    optimize=True,
+                    progressive=False,
+                )
+                img_bytes = buf.getvalue()
+                if len(img_bytes) <= MAX_BYTES:
+                    break
+
+            # Last-resort: shrink the image if even quality 55 isn't
+            # small enough.
+            shrink_steps = 0
+            while len(img_bytes) > MAX_BYTES and shrink_steps < 3:
+                shrink_steps += 1
+                send_w = max(1, int(send_w * 0.85))
+                send_h = max(1, int(send_h * 0.85))
+                small = send_img.resize((send_w, send_h), Image.LANCZOS)
+                buf = io.BytesIO()
+                small.save(buf, format="JPEG", quality=70, optimize=True)
+                img_bytes = buf.getvalue()
+                send_img = small
+
+            media_type = "image/jpeg"
+            sent_w, sent_h = send_w, send_h
+            logger.info(
+                "Claude OCR: %dx%d → %dx%d JPEG, %d bytes "
+                "(under 5MB cap)",
+                orig_w, orig_h, send_w, send_h, len(img_bytes),
+            )
     except Exception as e:
         logger.warning("Claude OCR: couldn't open source image: %s", e)
         return None
