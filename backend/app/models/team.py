@@ -13,4 +13,14 @@ class Team(Base):
     name = Column(String, nullable=False)
     owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
+    # Optional company address shown on cert templates / exports.
+    address = Column(String, nullable=True)
+
+    # Company stamp — image overlaid at the bottom of every TRANSLATED
+    # page in the rebuild (never on the embedded original pages).
+    # stamp_alignment is "left" | "center" | "right" so different
+    # teams can put it wherever fits their letterhead.
+    stamp_s3_key = Column(String, nullable=True)
+    stamp_alignment = Column(String, nullable=False, default="right")
+
     owner = relationship("User")
