@@ -246,33 +246,44 @@ def _looks_like_junk(text: str) -> bool:
 
     Real words and short labels in our reference docs ("Nome", "Sesso",
     "F", "Cognome", "1") need to survive. We're targeting things like
-    "t", "OD", "( Y CARTA", "Ae : ELETTRONICA" — short, mostly
-    punctuation, broken at non-word boundaries.
+    "t", "OD", "( Y CARTA", "Ae : ELETTRONICA" — partial reads of
+    stylised header text that the model occasionally emits even with
+    the prompt telling it to drop fragments.
     """
     s = text.strip()
     if not s:
         return True
-    # Anything 3+ characters made entirely of letters is fine.
-    if len(s) >= 3 and s.replace(" ", "").isalpha():
+
+    # 1) Anything 3+ characters made entirely of letters / spaces /
+    #    apostrophes / hyphens is fine (real words and phrases).
+    cleaned = s.replace(" ", "").replace("'", "").replace("-", "")
+    if len(s) >= 3 and cleaned.isalpha():
         return False
-    # Letter/digit ratio — junk fragments tend to be heavy on
-    # punctuation or stray brackets.
-    letters_or_digits = sum(1 for c in s if c.isalnum())
+
+    # 2) 1-2 character strings — junk UNLESS they're a known short
+    #    form-field value like "F", "M", "1", "A", "B" (all alpha-
+    #    numeric AND uppercase OR digit).
     if len(s) <= 2:
-        # 1-2 char strings are junk UNLESS they're well-known short
-        # form-field values like "F" or "1" — but to keep this safe
-        # we only drop 1-char alphabetic when surrounded by spaces in
-        # multi-line context. For single short strings here, allow
-        # numerics and capital single letters (often field values).
         if s.isalnum() and (s.isdigit() or s.isupper()):
             return False
         return True
-    # Mostly-punctuation or "X : Y" style fragments
+
+    # 3) Strings that start with stray punctuation (e.g. "( Y CARTA",
+    #    ") A", ".X") — almost always partial reads.
+    if s[0] in "()[]{}/\\<>|" and not s.endswith(")"):
+        # Allow normal parens that close, like "(CIE)" or "(GBR)".
+        return True
+
+    # 4) Two-letter token followed by ": " or "." then more letters —
+    #    classic "Ae : ELETTRONICA" / "X. Y" partial read.
     if _JUNK_RE.match(s):
         return True
-    # Letters < 50% of length and contains stray brackets/punct → junk
+
+    # 5) Letters < 50% of length and contains stray brackets/punct → junk
+    letters_or_digits = sum(1 for c in s if c.isalnum())
     if letters_or_digits / max(1, len(s)) < 0.5:
         return True
+
     return False
 
 

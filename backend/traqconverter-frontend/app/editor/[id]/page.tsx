@@ -160,33 +160,33 @@ export default function EditorPage() {
   const [compareLoading, setCompareLoading] = useState(false)
 
   const loadCompare = async () => {
+    setCompareLoading(true)
+    // Independent calls so one failure doesn't blank the other.
+    // SOURCE — should always succeed if the project has a file_path.
     try {
-      setCompareLoading(true)
-      // Fetch the source URL and BUILD a fresh DOCX rebuild in
-      // parallel. The new build-rebuild-docx endpoint generates a
-      // DOCX from current approved segments, uploads it, and returns
-      // a signed URL — guaranteeing the Compare view always shows
-      // the latest DOCX, never a stale PDF. The Office viewer
-      // renders it inline so the browser never downloads anything.
-      const [srcRes, rebRes] = await Promise.all([
-        api.get(`/projects/${id}/source-url`),
-        api.post(`/projects/${id}/build-rebuild-docx`),
-      ])
+      const srcRes = await api.get(`/projects/${id}/source-url`)
       setSourcePreview({
         url: srcRes.data.url,
         kind: srcRes.data.kind,
         filename: srcRes.data.filename,
       })
+    } catch (err: any) {
+      console.error("COMPARE SOURCE ERROR:", err)
+      setSourcePreview(null)
+    }
+    // REBUILD — build a fresh DOCX. If the build endpoint errors
+    // (no approved segments, planner timeout, etc.), fall back to
+    // the cached output_file so the user at least sees the last
+    // export. Final fallback is an explanatory empty hint.
+    try {
+      const rebRes = await api.post(`/projects/${id}/build-rebuild-docx`)
       setRebuildPreview({
         url: rebRes.data.url,
         kind: rebRes.data.kind,
         filename: rebRes.data.filename,
       })
     } catch (err: any) {
-      console.error("COMPARE LOAD ERROR:", err)
-      // Fall back to the stored rebuild URL if the live build failed
-      // (e.g. no approved segments yet) so the user still sees a
-      // helpful message in the pane.
+      console.error("COMPARE REBUILD BUILD ERROR:", err)
       try {
         const rebRes = await api.get(`/projects/${id}/rebuild-url`)
         setRebuildPreview({
@@ -197,9 +197,8 @@ export default function EditorPage() {
       } catch {
         setRebuildPreview({ url: null, kind: "none", filename: null })
       }
-    } finally {
-      setCompareLoading(false)
     }
+    setCompareLoading(false)
   }
 
   const toggleCompareMode = () => {

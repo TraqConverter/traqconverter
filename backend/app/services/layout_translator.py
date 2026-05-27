@@ -509,11 +509,26 @@ def _extract_pdf_via_claude(file_path: str) -> list[ExtractedSegment] | None:
                     "large": 13.0,
                     "xlarge": 16.0,
                 }
+                # Import junk filter from the OCR module so we apply
+                # the same fragment-dropping logic the image path
+                # uses. Without this, partial reads like "( Y CARTA",
+                # "OD", "Ae : ELETTRONICA" leak into the editor.
+                try:
+                    from app.services.claude_vision_ocr import _looks_like_junk
+                except Exception:
+                    _looks_like_junk = lambda t: False  # noqa: E731
+
                 for idx, line in enumerate(lines):
                     text = (line.get("text") or "").strip()
                     if not text:
                         continue
                     if _looks_like_mrz(text):
+                        continue
+                    kind = line.get("kind") or "text"
+                    # Drop junk fragments — but only for plain text
+                    # blocks. Placeholders like "[Photo]" are allowed
+                    # to be short.
+                    if kind == "text" and _looks_like_junk(text):
                         continue
                     bbox = line.get("bbox")
                     if not bbox or len(bbox) != 4:
@@ -544,7 +559,7 @@ def _extract_pdf_via_claude(file_path: str) -> list[ExtractedSegment] | None:
                                 "line": idx,
                                 "font_size": font_size,
                                 "ocr_source": "claude",
-                                "claude_kind": line.get("kind") or "text",
+                                "claude_kind": kind,
                                 "placeholder_kind": line.get("placeholder_kind"),
                                 "alignment": line.get("alignment") or "left",
                                 "bold": bool(line.get("bold")),
@@ -609,7 +624,15 @@ def _extract_pdf(file_path: str) -> list[ExtractedSegment]:
     # 1) Claude Vision path — preferred when configured.
     claude_segments = _extract_pdf_via_claude(file_path)
     if claude_segments:
+        logger.info(
+            "PDF extraction path: Claude Vision (%d segments)",
+            len(claude_segments),
+        )
         return claude_segments
+    logger.info(
+        "PDF extraction path: Claude Vision unavailable or returned "
+        "nothing — falling back to PyMuPDF / tesseract"
+    )
 
     doc = fitz.open(file_path)
     try:
