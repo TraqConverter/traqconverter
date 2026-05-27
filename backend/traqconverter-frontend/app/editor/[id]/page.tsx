@@ -204,7 +204,11 @@ export default function EditorPage() {
   // the right pane, REQUEST REVISION fires an AI revision pass over
   // every translated segment, RE-RUN re-translates the entire
   // project from source. Both POST endpoints run synchronously.
-  const [compareEdit, setCompareEdit] = useState(false)
+  //
+  // Default to EDIT on so the right pane is the editable segment
+  // list when Compare opens — that's the primary working surface.
+  // Reviewers who want the rendered PDF view can toggle off.
+  const [compareEdit, setCompareEdit] = useState(true)
   const [compareActionBusy, setCompareActionBusy] = useState<
     null | "revise" | "rerun"
   >(null)
@@ -1337,7 +1341,7 @@ export default function EditorPage() {
               }}
             >
               <div className="text-[12px]" style={{ color: "#8a8270" }}>
-                Original document on the left, translation on the right.
+                Source on the left · {compareEdit ? "editable translation" : "rendered preview"} on the right.
               </div>
               <div
                 className="flex items-center gap-2 relative"
@@ -1348,14 +1352,15 @@ export default function EditorPage() {
                   onClick={() => setCompareEdit((v) => !v)}
                   className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
                   style={{
-                    background: compareEdit ? "#0a7870" : "#ffffff",
-                    color: compareEdit ? "#fff" : "#1f2a2e",
+                    background: compareEdit ? "#ffffff" : "#0a7870",
+                    color: compareEdit ? "#1f2a2e" : "#fff",
                     border: `1px solid ${
-                      compareEdit ? "#0a7870" : "#e7ddc5"
+                      compareEdit ? "#e7ddc5" : "#0a7870"
                     }`,
                   }}
+                  title={compareEdit ? "Switch to rendered PDF preview" : "Switch back to the editable view"}
                 >
-                  ✎ {compareEdit ? "Done editing" : "Edit"}
+                  {compareEdit ? "👁  Show preview" : "✎  Edit translation"}
                 </button>
                 <button
                   type="button"
@@ -1462,47 +1467,22 @@ export default function EditorPage() {
             <div
               className="rounded-2xl overflow-hidden grid flex-1"
               style={{
-                gridTemplateColumns: compareEdit ? "1fr 1fr 360px" : "1fr 1fr",
+                gridTemplateColumns: "1fr 1fr",
                 gap: 12,
                 minHeight: 0,
               }}
             >
-            {/* LEFT — ORIGINAL */}
+            {/* LEFT — ORIGINAL (read-only PDF view of the source) */}
             <ComparePane
               label="ORIGINAL"
               data={sourcePreview}
               loading={compareLoading}
               emptyHint="The source file isn't available."
             />
-            {/* RIGHT — REBUILD (translation only, no embedded original
-                or cert page — those would be redundant during review) */}
-            <ComparePane
-              label="TRANSLATION"
-              data={
-                rebuildPreview && rebuildPreview.url
-                  ? {
-                      url: rebuildPreview.url,
-                      kind:
-                        rebuildPreview.kind === "docx"
-                          ? "other"
-                          : (rebuildPreview.kind as "pdf" | "image" | "other"),
-                      filename: rebuildPreview.filename || "",
-                    }
-                  : null
-              }
-              loading={compareLoading}
-              emptyHint={
-                rebuildPreview && !rebuildPreview.url
-                  ? "Rebuild not generated yet — export the project as PDF or DOCX first, then come back here to compare."
-                  : "Loading rebuild…"
-              }
-              docxFallback={
-                rebuildPreview?.kind === "docx" && rebuildPreview.url
-                  ? rebuildPreview.url
-                  : null
-              }
-            />
-            {compareEdit && (
+            {/* RIGHT — EDITABLE TRANSLATION (default) or RENDERED PDF
+                (when EDIT toggle is off). The editor is the primary
+                working surface; the PDF view is for visual review. */}
+            {compareEdit ? (
               <CompareEditPanel
                 segments={segments}
                 activeIdx={activeIdx}
@@ -1529,6 +1509,33 @@ export default function EditorPage() {
                 onRetranslate={retranslateSegment}
                 onAddGlossary={openGlossaryFromSegment}
               />
+            ) : (
+            <ComparePane
+              label="TRANSLATION"
+              data={
+                rebuildPreview && rebuildPreview.url
+                  ? {
+                      url: rebuildPreview.url,
+                      kind:
+                        rebuildPreview.kind === "docx"
+                          ? "other"
+                          : (rebuildPreview.kind as "pdf" | "image" | "other"),
+                      filename: rebuildPreview.filename || "",
+                    }
+                  : null
+              }
+              loading={compareLoading}
+              emptyHint={
+                rebuildPreview && !rebuildPreview.url
+                  ? "Rebuild not generated yet — export the project as PDF or DOCX first, then come back here to compare."
+                  : "Loading rebuild…"
+              }
+              docxFallback={
+                rebuildPreview?.kind === "docx" && rebuildPreview.url
+                  ? rebuildPreview.url
+                  : null
+              }
+            />
             )}
             </div>
           </div>
