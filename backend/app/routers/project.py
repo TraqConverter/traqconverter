@@ -912,12 +912,29 @@ def preview_source(
 
     if fname.endswith(".pdf"):
         media = "application/pdf"
-    elif fname.endswith((".png",)):
-        media = "image/png"
-    elif fname.endswith((".jpg", ".jpeg")):
-        media = "image/jpeg"
-    elif fname.endswith((".webp",)):
-        media = "image/webp"
+    elif fname.endswith((".png", ".jpg", ".jpeg", ".webp")):
+        # Wrap raw images in a single-page PDF so the browser's PDF
+        # viewer renders them with fit-to-page (raw images get shown
+        # at 1:1 native size in iframes which looks like a zoomed-in
+        # mess on high-DPI scans).
+        try:
+            from io import BytesIO as _BIO
+            from PIL import Image
+            img = Image.open(_BIO(bytes_))
+            buf = _BIO()
+            img.convert("RGB").save(buf, format="PDF", resolution=150)
+            bytes_ = buf.getvalue()
+            media = "application/pdf"
+        except Exception as e:
+            logger.warning(
+                "Source image → PDF conversion failed: %s", e
+            )
+            if fname.endswith(".png"):
+                media = "image/png"
+            elif fname.endswith(".webp"):
+                media = "image/webp"
+            else:
+                media = "image/jpeg"
     elif fname.endswith(".docx"):
         # Convert DOCX → PDF so the iframe can render it. LibreOffice
         # is already on the image (Dockerfile installs it for Export
