@@ -47,6 +47,43 @@ def _log_libreoffice_status():
 
 _log_libreoffice_status()
 
+
+# Schema drift guard — adds any newly-introduced columns to existing
+# tables that aren't tracked by a migration yet. Postgres' ADD COLUMN
+# IF NOT EXISTS makes this idempotent. Without this, code that
+# references a new column would 500 on legacy deployments.
+def _ensure_schema_columns():
+    try:
+        from sqlalchemy import text
+        from app.database import engine
+
+        STATEMENTS = [
+            # Cert template selection on a project (added with the
+            # {{token}} template engine).
+            (
+                "ALTER TABLE translation_projects "
+                "ADD COLUMN IF NOT EXISTS certification_template_id UUID "
+                "REFERENCES certifications(id) ON DELETE SET NULL"
+            ),
+        ]
+        with engine.begin() as conn:
+            for stmt in STATEMENTS:
+                try:
+                    conn.execute(text(stmt))
+                except Exception as e:
+                    logger.warning(
+                        "Schema guard statement skipped: %s (%s)",
+                        stmt[:80],
+                        e,
+                    )
+        logger.info("Schema drift guard OK")
+    except Exception as e:
+        logger.warning("Schema drift guard failed (continuing): %s", e)
+
+
+_ensure_schema_columns()
+
+
 # ----------------------------------------------------
 # Sentry (optional — enabled when SENTRY_DSN is set)
 # ----------------------------------------------------

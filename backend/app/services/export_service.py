@@ -231,6 +231,87 @@ def _build_layout_pdf_live(segments, project):
             pass
 
 
+def _resolve_cert_template(project, tmp_dir):
+    """Return the raw bytes of the cert template DOCX the project is
+    bound to, with {{tokens}} already substituted. Returns None when
+    the project has no template, or when fetching/substituting fails
+    (callers fall back to the hardcoded cert block in that case)."""
+    template_id = getattr(project, "certification_template_id", None)
+    if not template_id:
+        return None
+
+    try:
+        from app.database import SessionLocal
+        from app.models.certification import Certification
+        from app.services.cert_template_service import (
+            substitute_in_docx,
+            build_substitution_values,
+        )
+
+        db = SessionLocal()
+        try:
+            cert = (
+                db.query(Certification)
+                .filter(Certification.id == template_id)
+                .first()
+            )
+            if not cert:
+                logger.info(
+                    "Cert template %s not found — falling back to "
+                    "hardcoded block",
+                    template_id,
+                )
+                return None
+            if not (cert.file_name or "").lower().endswith(".docx"):
+                logger.info(
+                    "Cert template %s isn't a DOCX (%s) — skipping "
+                    "substitution",
+                    template_id,
+                    cert.file_name,
+                )
+                return None
+            import os as _os
+            if not _os.path.exists(cert.file_path):
+                logger.info(
+                    "Cert template file missing on disk: %s",
+                    cert.file_path,
+                )
+                return None
+            with open(cert.file_path, "rb") as f:
+                template_bytes = f.read()
+
+            # Resolve the team for {{team_name}} / {{company_address}}.
+            from app.models.team import Team
+            team = (
+                db.query(Team)
+                .filter(Team.id == project.team_id)
+                .first()
+            )
+            # The export pipeline stashes the user email + logo on
+            # the project object as private attrs. Build a fake
+            # "user" with the fields the substitution wants.
+            class _U:
+                pass
+            fake_user = _U()
+            fake_user.email = getattr(project, "_export_user_email", "") or ""
+            fake_user.full_name = ""  # the email username is used as
+                                      # fallback by build_substitution_values
+
+            values = build_substitution_values(
+                user=fake_user,
+                project=project,
+                team=team,
+            )
+            return substitute_in_docx(template_bytes, values)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning(
+            "Cert template substitution failed (using fallback): %s", e
+        )
+        return None
+
+
 def _build_layout_docx_live(segments, project):
     """Build the export DOCX in the new STRUCTURED format — same shape
     as `_build_layout_pdf_live` but emitting .docx instead of .pdf.
@@ -332,6 +413,13 @@ def _build_layout_docx_live(segments, project):
                 "%Y-%m-%d %H:%M UTC"
             ),
         }
+
+        # If the project has a cert template selected, fetch + substitute
+        # placeholders so the rebuild renderer can append it instead of
+        # the hardcoded "I hereby certify..." block.
+        cert_template_bytes = _resolve_cert_template(project, tmp_dir)
+        if cert_template_bytes:
+            project_meta["certification_template_bytes"] = cert_template_bytes
 
         # Layout-aware DOCX export is the DEFAULT. The planner asks
         # Claude to plan a DOCX skeleton mirroring the original
