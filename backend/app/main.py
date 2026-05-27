@@ -148,7 +148,26 @@ app.add_middleware(
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
+
+    # X-Frame-Options blocks iframe embedding by default. The
+    # `/preview/source` and `/preview/rebuild` endpoints are
+    # designed specifically to be loaded inside the editor's
+    # Compare iframes (frontend = www.onlinedoctranslator.ai,
+    # API = api.onlinedoctranslator.ai — different origins). For
+    # those routes we let CSP frame-ancestors authorise the
+    # cross-origin embed and skip the legacy DENY header.
+    path = request.url.path
+    is_preview = "/preview/source" in path or "/preview/rebuild" in path
+    if is_preview:
+        response.headers["Content-Security-Policy"] = (
+            "frame-ancestors 'self' "
+            "https://www.onlinedoctranslator.ai "
+            "https://onlinedoctranslator.ai "
+            "http://localhost:3000"
+        )
+    else:
+        response.headers.setdefault("X-Frame-Options", "DENY")
+
     response.headers.setdefault(
         "Referrer-Policy", "strict-origin-when-cross-origin"
     )
