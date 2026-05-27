@@ -310,7 +310,12 @@ export default function EditorPage() {
     loading: boolean
     proposals: { source_term: string; target_term: string; frequency: number; context: string }[]
     saving: Set<number>
-  }>({ open: false, loading: false, proposals: [], saving: new Set() })
+  }>({
+    open: false,
+    loading: false,
+    proposals: [],
+    saving: new Set<number>(),
+  })
 
   const suggestGlossary = async () => {
     try {
