@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 
@@ -294,6 +294,52 @@ export default function NewProjectPage() {
   const [applyGlossary, setApplyGlossary] = useState(false)
   const [requestCert, setRequestCert] = useState(false)
 
+  // Run Options ── advanced controls (collapsible). All optional —
+  // server defaults kick in when these are left blank.
+  const [showRunOptions, setShowRunOptions] = useState(true)
+  const [runMode, setRunMode] = useState<"translate" | "dtp">("translate")
+  const [aiModel, setAiModel] = useState<string>("")
+  const [models, setModels] = useState<
+    { id: string; label: string; provider: string }[]
+  >([])
+  const [orientation, setOrientation] = useState<"auto" | "portrait" | "landscape">("auto")
+  const [certTemplateId, setCertTemplateId] = useState<string>("")
+  const [certTemplates, setCertTemplates] = useState<
+    { id: string; file_name: string }[]
+  >([])
+  const [instructions, setInstructions] = useState<string>("")
+  const [showInstructionsEditor, setShowInstructionsEditor] = useState(false)
+
+  // Populate the model + template dropdowns once on mount.
+  useEffect(() => {
+    api
+      .get("/projects/translation-models")
+      .then((res) => {
+        const list = res.data?.models || []
+        setModels(list)
+        // Default to the first model marked "balanced/recommended"
+        // or just the first available.
+        if (list.length) setAiModel(list[0].id)
+      })
+      .catch(() => setModels([]))
+    api
+      .get("/certifications")
+      .then((res) => {
+        const items =
+          res.data?.items ||
+          (Array.isArray(res.data) ? res.data : []) ||
+          []
+        setCertTemplates(
+          items
+            .filter((c: any) =>
+              (c.file_name || "").toLowerCase().endsWith(".docx"),
+            )
+            .map((c: any) => ({ id: c.id, file_name: c.file_name })),
+        )
+      })
+      .catch(() => setCertTemplates([]))
+  }, [])
+
   const handlePickFile = () => fileInputRef.current?.click()
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -321,6 +367,22 @@ export default function NewProjectPage() {
       formData.append("use_tm", String(useTM))
       formData.append("apply_glossary", String(applyGlossary))
       formData.append("request_certification", String(requestCert))
+      // The project's "model" field doubles as the run-mode signal
+      // too — "dtp" means "skip translation, just rebuild the doc
+      // editable" while a model id means "translate using this model".
+      if (runMode === "dtp") {
+        formData.append("model", "dtp")
+      } else if (aiModel) {
+        formData.append("model", aiModel)
+      }
+      if (certTemplateId) {
+        formData.append("certification_template_id", certTemplateId)
+      }
+      // Free-text AI instructions — handed to the translator at run
+      // time (lands on project.notes today; future field rename TBD).
+      if (instructions.trim()) {
+        formData.append("notes", instructions.trim())
+      }
 
       const res = await api.post("/projects/upload", formData)
       const projectId = res.data.project_id
@@ -501,6 +563,263 @@ export default function NewProjectPage() {
             />
           </div>
 
+          {/* RUN MODE — Translate (default) vs DTP (Desktop
+              Publishing: rebuild the editable doc without
+              re-translating). Stored as a string on project.model. */}
+          <div
+            className="rounded-2xl p-6"
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e7ddc5",
+              boxShadow: "0 1px 2px rgba(30,30,20,0.03)",
+            }}
+          >
+            <div
+              className="text-[11px] font-semibold tracking-[0.14em] mb-4"
+              style={{ color: "#9a9178" }}
+            >
+              RUN MODE
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {(
+                [
+                  {
+                    value: "translate" as const,
+                    title: "Translate",
+                    sub: "Standard translation workflow into a different language.",
+                  },
+                  {
+                    value: "dtp" as const,
+                    title: "DTP",
+                    sub: "Editable source output with automatic DOCX rebuild — no AI translation.",
+                  },
+                ]
+              ).map((opt) => {
+                const active = runMode === opt.value
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setRunMode(opt.value)}
+                    className="rounded-xl p-4 text-left transition"
+                    style={{
+                      background: active ? "#f6f1e4" : "#ffffff",
+                      border: `1px solid ${active ? "#0a7870" : "#e7ddc5"}`,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <div
+                        className="w-4 h-4 rounded-full flex items-center justify-center"
+                        style={{
+                          background: active ? "#0a7870" : "transparent",
+                          border: `2px solid ${active ? "#0a7870" : "#cfc6ad"}`,
+                        }}
+                      >
+                        {active && (
+                          <div
+                            className="w-1.5 h-1.5 rounded-full"
+                            style={{ background: "#fff" }}
+                          />
+                        )}
+                      </div>
+                      <span
+                        className="font-semibold text-[14px]"
+                        style={{ color: "#1f2a2e" }}
+                      >
+                        {opt.title}
+                      </span>
+                    </div>
+                    <div
+                      className="text-[12px] leading-snug"
+                      style={{ color: "#8a8270" }}
+                    >
+                      {opt.sub}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* RUN OPTIONS — collapsible advanced controls */}
+          <div
+            className="rounded-2xl"
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e7ddc5",
+              boxShadow: "0 1px 2px rgba(30,30,20,0.03)",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setShowRunOptions((v) => !v)}
+              className="w-full flex items-center justify-between px-6 py-4 text-left"
+              style={{
+                borderBottom: showRunOptions
+                  ? "1px solid #f1e8d1"
+                  : "none",
+              }}
+            >
+              <div
+                className="text-[14px] font-semibold"
+                style={{ color: "#1f2a2e" }}
+              >
+                Run Options
+              </div>
+              <div
+                className="text-[11px] font-semibold tracking-[0.14em] px-2.5 py-1 rounded-full"
+                style={{
+                  background: "#cfe6e2",
+                  color: "#0a7870",
+                  border: "1px solid #b7dad4",
+                }}
+              >
+                {showRunOptions ? "HIDE" : "SHOW"}
+              </div>
+            </button>
+
+            {showRunOptions && (
+              <div className="px-6 py-2">
+                {/* AI MODEL */}
+                <RunOptionRow
+                  label="AI Model"
+                  helper="The translator engine used for this project. Defaults to a balanced GPT/Claude variant."
+                >
+                  <select
+                    value={aiModel}
+                    onChange={(e) => setAiModel(e.target.value)}
+                    disabled={runMode === "dtp"}
+                    className="text-sm outline-none rounded-lg px-3 py-2"
+                    style={{
+                      background:
+                        runMode === "dtp" ? "#f6efe0" : "#faf5ee",
+                      border: "1px solid #e7ddc5",
+                      color: runMode === "dtp" ? "#9a9178" : "#1f2a2e",
+                      minWidth: 220,
+                      cursor:
+                        runMode === "dtp" ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {models.length === 0 && (
+                      <option value="">Default (balanced)</option>
+                    )}
+                    {models.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </RunOptionRow>
+
+                {/* PAGE ORIENTATION */}
+                <RunOptionRow
+                  label="Page Orientation"
+                  helper="Match source orientation automatically, or force one. The rebuild adopts this per page."
+                >
+                  <div
+                    className="inline-flex p-1 rounded-full"
+                    style={{
+                      background: "#f3ecdb",
+                      border: "1px solid #e7ddc5",
+                    }}
+                  >
+                    {(["auto", "portrait", "landscape"] as const).map(
+                      (val) => {
+                        const active = orientation === val
+                        return (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => setOrientation(val)}
+                            className="text-[12px] font-semibold tracking-[0.04em] px-3 py-1 rounded-full transition capitalize"
+                            style={{
+                              background: active ? "#ffffff" : "transparent",
+                              color: active ? "#0a7870" : "#6b6558",
+                              boxShadow: active
+                                ? "0 1px 2px rgba(30,30,20,0.06)"
+                                : "none",
+                            }}
+                          >
+                            {val}
+                          </button>
+                        )
+                      },
+                    )}
+                  </div>
+                </RunOptionRow>
+
+                {/* CERT TEMPLATE */}
+                <RunOptionRow
+                  label="Certification template"
+                  helper="DOCX template with {{tokens}} from your Certifications library. Auto-filled at export."
+                >
+                  <select
+                    value={certTemplateId}
+                    onChange={(e) => setCertTemplateId(e.target.value)}
+                    className="text-sm outline-none rounded-lg px-3 py-2"
+                    style={{
+                      background: "#faf5ee",
+                      border: "1px solid #e7ddc5",
+                      color: "#1f2a2e",
+                      minWidth: 220,
+                    }}
+                  >
+                    <option value="">None — use the default cert</option>
+                    {certTemplates.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.file_name}
+                      </option>
+                    ))}
+                  </select>
+                </RunOptionRow>
+
+                {/* INSTRUCTIONS */}
+                <RunOptionRow
+                  label="Instructions"
+                  helper="Free-text guidance handed to the AI (e.g. 'formal register', 'prefer Municipality over City')."
+                  last
+                >
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShowInstructionsEditor((v) => !v)
+                    }
+                    className="text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
+                    style={{
+                      background: instructions
+                        ? "#cfe6e2"
+                        : "#ffffff",
+                      color: instructions ? "#0a5e58" : "#0a7870",
+                      border: `1px solid ${
+                        instructions ? "#b7dad4" : "#cfe6e2"
+                      }`,
+                    }}
+                  >
+                    {instructions ? "Edit instructions" : "+ Add instructions"}
+                  </button>
+                </RunOptionRow>
+
+                {showInstructionsEditor && (
+                  <div className="pb-5">
+                    <textarea
+                      value={instructions}
+                      onChange={(e) => setInstructions(e.target.value)}
+                      rows={4}
+                      placeholder="E.g. Use formal register. Translate 'Comune' as 'Municipality'. Preserve all dates exactly."
+                      className="w-full text-sm outline-none rounded-xl px-3 py-2.5 resize-none"
+                      style={{
+                        background: "#faf5ee",
+                        border: "1px solid #e7ddc5",
+                        color: "#1f2a2e",
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* OPTIONS */}
           <div
             className="rounded-2xl p-6"
@@ -583,6 +902,48 @@ function IconUploadWhite() {
     </svg>
   )
 }
+
+// Run Options row — label on the left, helper text below, control on
+// the right. Mirrors the competitor's expandable settings panel.
+function RunOptionRow({
+  label,
+  helper,
+  children,
+  last,
+}: {
+  label: string
+  helper?: string
+  children: React.ReactNode
+  last?: boolean
+}) {
+  return (
+    <div
+      className="flex items-start justify-between gap-4 py-4"
+      style={{
+        borderBottom: last ? "none" : "1px solid #f4ecd6",
+      }}
+    >
+      <div className="flex-1 min-w-0">
+        <div
+          className="text-[13px] font-semibold"
+          style={{ color: "#1f2a2e" }}
+        >
+          {label}
+        </div>
+        {helper && (
+          <div
+            className="text-[11px] mt-0.5 leading-snug"
+            style={{ color: "#8a8270" }}
+          >
+            {helper}
+          </div>
+        )}
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  )
+}
+
 
 function OptionRow({
   icon,
