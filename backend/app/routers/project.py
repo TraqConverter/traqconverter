@@ -1033,6 +1033,76 @@ def preview_rebuild(
 
 
 # ============================================================
+# REBUILD AS HTML — converts the rebuilt translation DOCX into
+# styled HTML using `mammoth`. The Compare-view right pane fetches
+# this so the user sees the document the way it'll export *and* can
+# edit it inline (the wrapper makes it contentEditable). Saves of the
+# edited HTML go through PATCH /projects/{id}/preview-edits and are
+# honoured by the export pipeline when present.
+# ============================================================
+
+@router.get("/{project_id}/preview/rebuild-html")
+def preview_rebuild_html(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_or_query),
+):
+    from app.services.export_service import _build_layout_docx_live
+
+    project = _project_preview_team_check(db, project_id, user)
+
+    # Stash auth context the export pipeline expects.
+    project._export_user_email = user.email or ""
+    project._export_user_logo_key = getattr(user, "logo_s3_key", None)
+
+    segments = (
+        db.query(TranslationSegment)
+        .filter(TranslationSegment.project_id == project.id)
+        .order_by(TranslationSegment.segment_index)
+        .all()
+    )
+    if not segments:
+        raise HTTPException(status_code=404, detail="No segments yet")
+
+    docx_buf = _build_layout_docx_live(segments, project, preview_only=True)
+    if docx_buf is None:
+        raise HTTPException(
+            status_code=500, detail="Couldn't build rebuild DOCX"
+        )
+    try:
+        docx_bytes = docx_buf.getvalue()
+    except AttributeError:
+        docx_bytes = docx_buf
+
+    # mammoth gives us clean, semantic HTML (paragraphs, tables,
+    # headings) without LibreOffice's verbose CSS. Inline style maps
+    # keep emphasis (bold/italic) and a base stylesheet matches the
+    # cream/teal aesthetic so it reads like Word.
+    try:
+        import mammoth  # type: ignore
+        from io import BytesIO as _BIO
+
+        result = mammoth.convert_to_html(_BIO(docx_bytes))
+        body_html = result.value or ""
+    except Exception as e:
+        logger.exception("mammoth HTML conversion failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Couldn't render HTML preview: {e}",
+        )
+
+    return _FastResponse(
+        content=body_html,
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Cache-Control": "private, max-age=60",
+            # We render this HTML inside our own page via fetch() —
+            # CORS is governed by app.config cors_origins.
+        },
+    )
+
+
+# ============================================================
 # SUGGEST GLOSSARY — AI scans all translated segments and proposes
 # glossary entries (recurring proper nouns, technical terms,
 # branded phrases). Returned as proposals — the user reviews and
