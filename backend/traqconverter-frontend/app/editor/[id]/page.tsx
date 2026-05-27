@@ -2611,6 +2611,107 @@ function gdocsViewerUrl(srcUrl: string) {
 // with the translated text; changes save on blur. A small AI
 // retranslate button per row triggers the existing handler.
 // ============================================================
+// CompareEditPanel — the right pane in Compare view.
+//
+// Renders the translated segments as a single editable "document page"
+// styled to mirror the exported DOCX (white A4-ish sheet, serif font,
+// realistic margins). Each segment is its own auto-growing textarea so
+// the user can click anywhere in the translation and edit in place
+// exactly like they would in Word. Edits autosave on blur and the
+// per-segment Glossary / AI actions appear as a floating chip anchored
+// to the active segment so the page itself stays clean.
+function PageEditorLine(props: {
+  seg: Segment
+  idx: number
+  isActive: boolean
+  onFocus: () => void
+  onChange: (text: string) => void
+  onSave: () => void
+  onRetranslate: () => void
+  onAddGlossary: () => void
+}) {
+  const { seg, isActive, onFocus, onChange, onSave, onRetranslate, onAddGlossary } = props
+  const lineStyle = {
+    fontFamily: "inherit",
+    fontSize: "inherit",
+    lineHeight: "inherit",
+    color: "#111",
+    background: isActive ? "#fbf7ea" : "transparent",
+    border: isActive ? "1px solid #cdb98a" : "1px solid transparent",
+    borderRadius: 4,
+    padding: "2px 6px",
+    overflow: "hidden",
+    width: "100%",
+    outline: "none",
+    resize: "none" as const,
+  }
+  const chipStyle = {
+    width: 48,
+    height: 22,
+    fontSize: 10,
+    fontWeight: 600,
+    background: "#ffffff",
+    border: "1px solid #cfe6e2",
+    borderRadius: 999,
+    cursor: "pointer",
+  }
+  return (
+    <div style={{ position: "relative", marginBottom: 8 }}>
+      <textarea
+        value={seg.translated_text || ""}
+        onFocus={onFocus}
+        onChange={(e) => {
+          onChange(e.target.value)
+          const el = e.target as HTMLTextAreaElement
+          el.style.height = "auto"
+          el.style.height = el.scrollHeight + "px"
+        }}
+        onBlur={onSave}
+        ref={(el) => {
+          if (el) {
+            el.style.height = "auto"
+            el.style.height = el.scrollHeight + "px"
+          }
+        }}
+        rows={1}
+        placeholder="(empty)"
+        style={lineStyle}
+      />
+      {isActive ? (
+        <div
+          style={{
+            position: "absolute",
+            top: -2,
+            right: -56,
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+          }}
+        >
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={onAddGlossary}
+            title="Add this segment to the glossary"
+            style={{ ...chipStyle, color: "#0a5e58" }}
+          >
+            + Glos
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={onRetranslate}
+            title="AI retranslate this segment"
+            style={{ ...chipStyle, color: "#0a7870" }}
+          >
+            AI
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function CompareEditPanel({
   segments,
   activeIdx,
@@ -2631,110 +2732,69 @@ function CompareEditPanel({
   return (
     <div
       className="rounded-2xl overflow-hidden flex flex-col"
-      style={{
-        background: "#ffffff",
-        border: "1px solid #e7ddc5",
-        minHeight: 0,
-      }}
+      style={{ background: "#e8dfc7", border: "1px solid #e7ddc5", minHeight: 0 }}
     >
       <div
-        className="px-4 py-2.5 text-[11px] font-semibold tracking-[0.14em]"
+        className="px-4 py-2.5 flex items-center justify-between text-[11px] font-semibold tracking-[0.14em]"
         style={{
           color: "#9a9178",
           background: "#faf5ee",
           borderBottom: "1px solid #f1e8d1",
         }}
       >
-        EDIT SEGMENTS · {segments.length} TOTAL
+        <span>TRANSLATION · LIVE EDIT</span>
+        <span className="text-[10px] font-medium tracking-[0.08em]" style={{ color: "#8a8270" }}>
+          {segments.length} segments · click any line to edit
+        </span>
       </div>
       <div
         className="flex-1 overflow-auto"
-        style={{ background: "#fbf6ea", minHeight: 0, padding: 12 }}
+        style={{ background: "#e8dfc7", minHeight: 0, padding: "24px 0" }}
       >
-        {segments.map((seg, idx) => {
-          const isActive = idx === activeIdx
-          return (
+        <div
+          style={{
+            background: "#ffffff",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+            margin: "0 auto",
+            maxWidth: 720,
+            minHeight: 1000,
+            padding: "57px 64px",
+            fontFamily: '"Liberation Serif", "Times New Roman", Georgia, serif',
+            color: "#111",
+            lineHeight: 1.45,
+            fontSize: 14,
+          }}
+        >
+          {segments.length === 0 ? (
             <div
-              key={seg.id}
-              onClick={() => setActiveIdx(idx)}
-              className="rounded-xl p-3 mb-2"
               style={{
-                background: isActive ? "#ffffff" : "#ffffff",
-                border: `1px solid ${isActive ? "#0a7870" : "#e7ddc5"}`,
-                boxShadow: isActive
-                  ? "0 1px 4px rgba(10,120,112,0.12)"
-                  : "none",
+                color: "#8a8270",
+                fontStyle: "italic",
+                textAlign: "center",
+                padding: "80px 0",
               }}
             >
-              <div
-                className="flex items-center justify-between mb-1.5"
-                style={{ color: "#8a8270" }}
-              >
-                <span
-                  className="font-mono text-[10px] tabular-nums"
-                >
-                  #{String(idx).padStart(2, "0")}
-                </span>
-                <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onAddGlossary(seg)
-                  }}
-                  className="text-[10px] font-semibold tracking-[0.06em] px-2 py-0.5 rounded-full transition"
-                  style={{
-                    background: "#f3ecdb",
-                    color: "#0a5e58",
-                    border: "1px solid #e7ddc5",
-                  }}
-                  title="Add this segment to the glossary"
-                >
-                  + Glossary
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onRetranslate(seg)
-                  }}
-                  className="text-[10px] font-semibold tracking-[0.06em] px-2 py-0.5 rounded-full transition"
-                  style={{
-                    background: "#f3ecdb",
-                    color: "#0a7870",
-                    border: "1px solid #e7ddc5",
-                  }}
-                  title="AI retranslate this segment"
-                >
-                  AI
-                </button>
-                </div>
-              </div>
-              <div
-                className="text-[11px] mb-1.5 leading-tight"
-                style={{ color: "#8a8270" }}
-              >
-                {seg.source_text}
-              </div>
-              <textarea
-                value={seg.translated_text || ""}
-                onChange={(e) => onChangeSegment(seg, e.target.value)}
-                onBlur={() => onSave(seg)}
-                rows={Math.max(
-                  2,
-                  Math.min(6, (seg.translated_text || "").split("\n").length + 1),
-                )}
-                className="w-full text-[12px] leading-snug outline-none rounded-lg px-2 py-1.5 resize-none"
-                style={{
-                  background: "#faf5ee",
-                  border: "1px solid #e7ddc5",
-                  color: "#1f2a2e",
-                  fontFamily: "inherit",
-                }}
-              />
+              No translated segments yet.
             </div>
-          )
-        })}
+          ) : null}
+          {segments.map((seg, idx) => (
+            <PageEditorLine
+              key={seg.id}
+              seg={seg}
+              idx={idx}
+              isActive={idx === activeIdx}
+              onFocus={() => setActiveIdx(idx)}
+              onChange={(text) => onChangeSegment(seg, text)}
+              onSave={() => {
+                void onSave(seg)
+              }}
+              onRetranslate={() => {
+                void onRetranslate(seg)
+              }}
+              onAddGlossary={() => onAddGlossary(seg)}
+            />
+          ))}
+        </div>
       </div>
     </div>
   )
