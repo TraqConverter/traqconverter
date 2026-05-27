@@ -861,6 +861,161 @@ def update_project(
 
 
 # ============================================================
+# FAST PREVIEW STREAMERS
+# ------------------------------------------------------------
+# Earlier Compare relied on Google Docs / Office Online viewers
+# which add 5-15s of latency because they fetch + parse + render
+# the file on Google's / Microsoft's servers. These endpoints
+# stream the file directly from our backend with
+# Content-Disposition: inline, so the browser's native PDF / image
+# viewer takes over. Authentication accepts either Bearer header
+# OR ?access_token=… because <iframe> can't send custom headers.
+# ============================================================
+from app.dependencies import get_current_user_or_query  # noqa: E402
+from fastapi.responses import Response as _FastResponse  # noqa: E402
+
+
+def _project_preview_team_check(db, project_id, user):
+    """Return the project if the user can view it, else 404."""
+    return get_user_project_or_404(db, project_id, user)
+
+
+@router.get("/{project_id}/preview/source")
+def preview_source(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_or_query),
+):
+    """Stream the source file inline. For PDFs the browser's native
+    viewer renders within ~1s. For images the browser displays them
+    immediately. Anything else (DOCX, etc.) gets converted to PDF
+    via LibreOffice first so the iframe always renders something.
+    """
+    import requests as _req
+    from pathlib import Path as _Path
+    import tempfile
+    from app.services.s3_service import generate_presigned_download_url
+    from app.services.export_service import _convert_docx_to_pdf
+
+    project = _project_preview_team_check(db, project_id, user)
+    if not project.file_path:
+        raise HTTPException(status_code=404, detail="Source not available")
+
+    url = generate_presigned_download_url(project.file_path)
+    r = _req.get(url, timeout=20)
+    if not r.ok:
+        raise HTTPException(
+            status_code=502, detail="Couldn't fetch source from storage"
+        )
+    bytes_ = r.content
+    fname = (project.file_name or project.file_path).lower()
+
+    if fname.endswith(".pdf"):
+        media = "application/pdf"
+    elif fname.endswith((".png",)):
+        media = "image/png"
+    elif fname.endswith((".jpg", ".jpeg")):
+        media = "image/jpeg"
+    elif fname.endswith((".webp",)):
+        media = "image/webp"
+    elif fname.endswith(".docx"):
+        # Convert DOCX → PDF so the iframe can render it. LibreOffice
+        # is already on the image (Dockerfile installs it for Export
+        # PDF). If conversion fails we still serve the raw DOCX, which
+        # the browser will offer as a download.
+        with tempfile.TemporaryDirectory() as tmp:
+            converted = _convert_docx_to_pdf(bytes_)
+        if converted:
+            bytes_ = converted
+            media = "application/pdf"
+        else:
+            media = (
+                "application/vnd.openxmlformats-officedocument"
+                ".wordprocessingml.document"
+            )
+    else:
+        media = "application/octet-stream"
+
+    return _FastResponse(
+        content=bytes_,
+        media_type=media,
+        headers={
+            "Content-Disposition": "inline",
+            # Cache for 5 min — the source doesn't change during a
+            # single review session, no need to re-fetch on every
+            # iframe load.
+            "Cache-Control": "private, max-age=300",
+        },
+    )
+
+
+@router.get("/{project_id}/preview/rebuild")
+def preview_rebuild(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_or_query),
+):
+    """Build a fresh DOCX rebuild on demand, convert to PDF via
+    LibreOffice, and stream inline. Browser native PDF viewer
+    renders within seconds — no Office Online round-trip.
+    """
+    from app.services.export_service import (
+        _build_layout_docx_live,
+        _convert_docx_to_pdf,
+    )
+
+    project = _project_preview_team_check(db, project_id, user)
+
+    # Stash auth context the export pipeline expects.
+    project._export_user_email = user.email or ""
+    project._export_user_logo_key = getattr(user, "logo_s3_key", None)
+
+    segments = (
+        db.query(TranslationSegment)
+        .filter(TranslationSegment.project_id == project.id)
+        .order_by(TranslationSegment.segment_index)
+        .all()
+    )
+    if not segments:
+        raise HTTPException(status_code=404, detail="No segments yet")
+
+    # preview_only=True skips the embedded original pages AND the
+    # certification block — the Compare view shows the original in
+    # the left pane already and the cert is irrelevant for review.
+    docx_buf = _build_layout_docx_live(segments, project, preview_only=True)
+    if docx_buf is None:
+        raise HTTPException(
+            status_code=500, detail="Couldn't build rebuild DOCX"
+        )
+    try:
+        docx_bytes = docx_buf.getvalue()
+    except AttributeError:
+        docx_bytes = docx_buf
+
+    pdf_bytes = _convert_docx_to_pdf(docx_bytes)
+    if not pdf_bytes:
+        # LibreOffice not available — stream the DOCX as-is so at
+        # least the user gets the file (the browser will download).
+        return _FastResponse(
+            content=docx_bytes,
+            media_type=(
+                "application/vnd.openxmlformats-officedocument"
+                ".wordprocessingml.document"
+            ),
+            headers={"Content-Disposition": "inline"},
+        )
+
+    return _FastResponse(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": "inline",
+            "Cache-Control": "private, max-age=60",
+        },
+    )
+
+
+# ============================================================
 # REVISE — AI critiques and rewrites every translated segment in
 # the project. Used by the Compare view's "Request revision" button
 # when a reviewer wants the model to polish its own output.

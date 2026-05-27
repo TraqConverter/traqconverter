@@ -160,44 +160,29 @@ export default function EditorPage() {
   const [compareLoading, setCompareLoading] = useState(false)
 
   const loadCompare = async () => {
+    // FAST PATH — point both panes at our streaming preview
+    // endpoints. They convert DOCX → PDF on the server and stream
+    // back with Content-Disposition: inline so the browser's native
+    // PDF viewer takes over (~1s rendering vs 5-15s with Google /
+    // Office viewers). Auth rides in the URL via access_token.
     setCompareLoading(true)
-    // Independent calls so one failure doesn't blank the other.
-    // SOURCE — should always succeed if the project has a file_path.
-    try {
-      const srcRes = await api.get(`/projects/${id}/source-url`)
-      setSourcePreview({
-        url: srcRes.data.url,
-        kind: srcRes.data.kind,
-        filename: srcRes.data.filename,
-      })
-    } catch (err: any) {
-      console.error("COMPARE SOURCE ERROR:", err)
-      setSourcePreview(null)
-    }
-    // REBUILD — build a fresh DOCX. If the build endpoint errors
-    // (no approved segments, planner timeout, etc.), fall back to
-    // the cached output_file so the user at least sees the last
-    // export. Final fallback is an explanatory empty hint.
-    try {
-      const rebRes = await api.post(`/projects/${id}/build-rebuild-docx`)
-      setRebuildPreview({
-        url: rebRes.data.url,
-        kind: rebRes.data.kind,
-        filename: rebRes.data.filename,
-      })
-    } catch (err: any) {
-      console.error("COMPARE REBUILD BUILD ERROR:", err)
-      try {
-        const rebRes = await api.get(`/projects/${id}/rebuild-url`)
-        setRebuildPreview({
-          url: rebRes.data.url,
-          kind: rebRes.data.kind,
-          filename: rebRes.data.filename,
-        })
-      } catch {
-        setRebuildPreview({ url: null, kind: "none", filename: null })
-      }
-    }
+    const token =
+      (typeof window !== "undefined" &&
+        (localStorage.getItem("token") || sessionStorage.getItem("token"))) ||
+      ""
+
+    // Cache-bust on each open so the rebuild reflects fresh edits.
+    const v = Date.now()
+    setSourcePreview({
+      url: `${process.env.NEXT_PUBLIC_API_URL || ""}/projects/${id}/preview/source?access_token=${encodeURIComponent(token)}&v=${v}`,
+      kind: "pdf",
+      filename: project?.file_name || "source",
+    })
+    setRebuildPreview({
+      url: `${process.env.NEXT_PUBLIC_API_URL || ""}/projects/${id}/preview/rebuild?access_token=${encodeURIComponent(token)}&v=${v}`,
+      kind: "pdf",
+      filename: "rebuild.pdf",
+    })
     setCompareLoading(false)
   }
 
@@ -1217,8 +1202,9 @@ export default function EditorPage() {
               }}
             >
               <div className="text-[12px]" style={{ color: "#8a8270" }}>
-                Original on the left, rebuilt translation on the right.
-                Use the buttons to revise or re-run the translation.
+                Original document on the left, translation only on the
+                right (no embedded source or cert — that comes out at
+                Export time).
               </div>
               <div
                 className="flex items-center gap-2 relative"
@@ -1335,9 +1321,10 @@ export default function EditorPage() {
               loading={compareLoading}
               emptyHint="The source file isn't available."
             />
-            {/* RIGHT — REBUILD */}
+            {/* RIGHT — REBUILD (translation only, no embedded original
+                or cert page — those would be redundant during review) */}
             <ComparePane
-              label="REBUILT OUTPUT"
+              label="TRANSLATION"
               data={
                 rebuildPreview && rebuildPreview.url
                   ? {
@@ -2278,20 +2265,16 @@ function ComparePane({
   emptyHint: string
   docxFallback?: string | null
 }) {
-  // Pick the iframe source URL based on file kind:
-  //  - DOCX (kind="other" with docxFallback) → Office Online viewer
-  //    so Word files render inline rather than triggering a download.
-  //  - PDF → Google Docs viewer. Direct iframe of the signed URL was
-  //    triggering a browser download because Supabase Storage doesn't
-  //    consistently honor the response-content-disposition=inline
-  //    query param. Google fetches the PDF on their side and serves
-  //    a renderer iframe, sidestepping the issue entirely.
-  //  - Everything else → no iframe; fall through to image/other UI.
+  // Pick the iframe source URL based on file kind. PDFs and DOCXs
+  // both come through our backend's preview endpoint pre-converted
+  // to PDF with Content-Disposition: inline, so the browser's
+  // native PDF viewer renders them within a second. No Google /
+  // Office viewer round-trip.
   const iframeSrc =
-    data?.kind === "other" && docxFallback
+    data?.kind === "pdf"
+      ? data.url
+      : data?.kind === "other" && docxFallback
       ? officeViewerUrl(docxFallback)
-      : data?.kind === "pdf"
-      ? gdocsViewerUrl(data.url)
       : null
 
   return (
