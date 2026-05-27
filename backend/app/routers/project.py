@@ -68,6 +68,7 @@ async def upload_project(
     use_tm: bool = Form(True),
     apply_glossary: bool = Form(True),
     request_certification: bool = Form(False),
+    certification_template_id: Optional[str] = Form(None),
 
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
@@ -153,6 +154,11 @@ async def upload_project(
             use_tm=use_tm,
             apply_glossary=apply_glossary,
             add_certification=request_certification,
+            certification_template_id=(
+                UUID(certification_template_id)
+                if certification_template_id
+                else None
+            ),
 
             status=ProjectStatus.PENDING,
             progress_percent=0,
@@ -765,37 +771,64 @@ def download_project(
 # the original document and any rebuild remain reachable.
 # ============================================================
 
-class _RenameProjectPayload(BaseModel):
-    file_name: str
+class _PatchProjectPayload(BaseModel):
+    file_name: Optional[str] = None
+    certification_template_id: Optional[str] = None
 
 
 @router.patch("/{project_id}")
-def rename_project(
+def update_project(
     project_id: UUID,
-    data: _RenameProjectPayload,
+    data: _PatchProjectPayload,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Partial update — supports rename + changing the cert template
+    independently. Only the fields the caller sends are touched."""
     project = get_user_project_or_404(db, project_id, current_user)
 
-    new_name = (data.file_name or "").strip()
-    if not new_name:
-        raise HTTPException(
-            status_code=400, detail="file_name can't be empty"
-        )
-    # Keep an extension on the visible name so DOCX/PDF export
-    # filenames don't get awkward — if the user dropped it, splice
-    # the original extension back on.
-    original_ext = ""
-    if project.file_name and "." in project.file_name:
-        original_ext = "." + project.file_name.rsplit(".", 1)[-1]
-    if original_ext and not new_name.lower().endswith(original_ext.lower()):
-        new_name = new_name + original_ext
+    if data.file_name is not None:
+        new_name = data.file_name.strip()
+        if not new_name:
+            raise HTTPException(
+                status_code=400, detail="file_name can't be empty"
+            )
+        # Keep an extension on the visible name so DOCX/PDF export
+        # filenames don't get awkward — if the user dropped it, splice
+        # the original extension back on.
+        original_ext = ""
+        if project.file_name and "." in project.file_name:
+            original_ext = "." + project.file_name.rsplit(".", 1)[-1]
+        if original_ext and not new_name.lower().endswith(original_ext.lower()):
+            new_name = new_name + original_ext
+        project.file_name = new_name[:255]
 
-    project.file_name = new_name[:255]  # keep it sensible
+    if data.certification_template_id is not None:
+        # Empty string clears the template.
+        if data.certification_template_id == "":
+            project.certification_template_id = None
+        else:
+            try:
+                project.certification_template_id = UUID(
+                    data.certification_template_id
+                )
+            except (ValueError, TypeError):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid certification_template_id",
+                )
+
     db.commit()
     db.refresh(project)
-    return {"id": str(project.id), "file_name": project.file_name}
+    return {
+        "id": str(project.id),
+        "file_name": project.file_name,
+        "certification_template_id": (
+            str(project.certification_template_id)
+            if project.certification_template_id
+            else None
+        ),
+    }
 
 
 @router.delete("/{project_id}")

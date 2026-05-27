@@ -502,6 +502,11 @@ export default function CertificationsPage() {
         </div>
       )}
 
+      {/* TOKEN LIBRARY — click any token to copy {{token}} to your
+          clipboard, then paste it into your DOCX template anywhere
+          you want that value substituted at export time. */}
+      <TokenLibrary />
+
       {/* DROPZONE — only when there are no items so it doesn't crowd the page */}
       {!loading && items.length === 0 && !showUpload && (
         <div
@@ -778,6 +783,160 @@ export default function CertificationsPage() {
     </div>
   )
 }
+
+// ============================================================
+// TokenLibrary — click any token to copy {{token}} to clipboard so
+// users can paste it into their cert template DOCX without typing.
+// ============================================================
+const TEMPLATE_TOKENS: { name: string; description: string }[] = [
+  { name: "translator_name", description: "Logged-in user's full name" },
+  { name: "translator_email", description: "Logged-in user's email" },
+  { name: "translator_title", description: "User's role (e.g. Project manager)" },
+  { name: "date", description: "Today's date — 2026-05-27" },
+  { name: "date_long", description: "Today's date — 27 May 2026" },
+  { name: "source_language", description: "Project source language" },
+  { name: "target_language", description: "Project target language" },
+  { name: "document_name", description: "Source file name" },
+  { name: "page_count", description: "Number of source pages" },
+  { name: "word_count", description: "Total source words" },
+  { name: "segment_count", description: "Total segment count" },
+  { name: "project_id", description: "Project unique identifier" },
+  { name: "certificate_number", description: "Auto-generated unique cert number" },
+  { name: "team_name", description: "Your team / company name" },
+  { name: "company_address", description: "Company address (Settings)" },
+]
+
+function TokenLibrary() {
+  const [copied, setCopied] = useState<string | null>(null)
+  const [collapsed, setCollapsed] = useState(false)
+
+  const copyToken = async (name: string) => {
+    const text = `{{${name}}}`
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // Fallback for older browsers — create a hidden input.
+      const ta = document.createElement("textarea")
+      ta.value = text
+      document.body.appendChild(ta)
+      ta.select()
+      try {
+        document.execCommand("copy")
+      } catch {}
+      document.body.removeChild(ta)
+    }
+    setCopied(name)
+    setTimeout(() => setCopied(null), 1400)
+  }
+
+  return (
+    <section
+      className="rounded-2xl"
+      style={{
+        background: "#ffffff",
+        border: "1px solid #e7ddc5",
+        boxShadow: "0 1px 2px rgba(30,30,20,0.03)",
+      }}
+    >
+      <header
+        className="flex items-center justify-between px-6 py-4 cursor-pointer"
+        onClick={() => setCollapsed((c) => !c)}
+        style={{ borderBottom: collapsed ? "none" : "1px solid #f1e8d1" }}
+      >
+        <div className="flex items-center gap-3">
+          <div
+            className="w-9 h-9 rounded-lg flex items-center justify-center"
+            style={{ background: "#cfe6e2", color: "#0a7870" }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 7h16M4 12h16M4 17h10" />
+            </svg>
+          </div>
+          <div>
+            <div
+              className="text-[15px] font-semibold"
+              style={{ color: "#1f2a2e" }}
+            >
+              Template tokens
+            </div>
+            <div className="text-xs" style={{ color: "#8a8270" }}>
+              Click any token to copy it. Paste into your DOCX template
+              wherever you want that value substituted at export time.
+            </div>
+          </div>
+        </div>
+        <span
+          style={{
+            fontSize: 20,
+            color: "#0a7870",
+            transform: collapsed ? "rotate(0deg)" : "rotate(45deg)",
+            transition: "transform 0.18s",
+          }}
+        >
+          +
+        </span>
+      </header>
+      {!collapsed && (
+        <div className="px-6 py-5">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
+            {TEMPLATE_TOKENS.map((t) => {
+              const isCopied = copied === t.name
+              return (
+                <button
+                  key={t.name}
+                  type="button"
+                  onClick={() => copyToken(t.name)}
+                  className="rounded-xl px-3 py-2.5 text-left transition flex items-start gap-2"
+                  style={{
+                    background: isCopied ? "#cfe6e2" : "#faf5ee",
+                    border: `1px solid ${isCopied ? "#0a7870" : "#e7ddc5"}`,
+                    cursor: "pointer",
+                  }}
+                  title={`Click to copy {{${t.name}}}`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <code
+                      className="block text-[12px] font-mono font-semibold truncate"
+                      style={{ color: isCopied ? "#0a5e58" : "#1f2a2e" }}
+                    >
+                      {`{{${t.name}}}`}
+                    </code>
+                    <div
+                      className="text-[10.5px] mt-0.5 leading-tight"
+                      style={{ color: "#8a8270" }}
+                    >
+                      {t.description}
+                    </div>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: isCopied ? "#0a7870" : "#9a9178",
+                      flexShrink: 0,
+                      marginTop: 2,
+                    }}
+                  >
+                    {isCopied ? "Copied ✓" : "Copy"}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+          <p
+            className="text-[11px] mt-4"
+            style={{ color: "#8a8270" }}
+          >
+            Tokens only work in <strong>.docx</strong> templates. After
+            upload, the system scans your DOCX and tells you which
+            tokens it found.
+          </p>
+        </div>
+      )}
+    </section>
+  )
+}
+
 
 function KindPill({
   label,

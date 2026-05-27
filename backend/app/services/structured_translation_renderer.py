@@ -1019,46 +1019,13 @@ def render_planned_docx_export(
     for block in plan.get("blocks") or []:
         _render_planned_block(doc, block, by_id)
 
-    # ---- Final page : certification block (unchanged) ----
+    # ---- Final page : certification (template or hardcoded) ----
     doc.add_page_break()
-    if company_logo_path and os.path.isfile(company_logo_path):
-        try:
-            p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = p.add_run()
-            run.add_picture(company_logo_path, width=Inches(2))
-        except Exception as e:
-            logger.warning("DOCX: couldn't embed logo: %s", e)
-
-    title = doc.add_paragraph()
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title_run = title.add_run("CERTIFIED TRANSLATION STATEMENT")
-    title_run.bold = True
-    title_run.font.size = Pt(14)
-    title_run.font.name = "Times New Roman"
-    title_run.font.color.rgb = RGBColor(
-        int(_PALETTE["text"][1:3], 16),
-        int(_PALETTE["text"][3:5], 16),
-        int(_PALETTE["text"][5:7], 16),
+    _append_certification_page(
+        doc,
+        project_meta,
+        company_logo_path,
     )
-
-    src_lang = project_meta.get("source_language") or ""
-    tgt_lang = project_meta.get("target_language") or ""
-    cert_lines = project_meta.get("certification_lines") or [
-        "I hereby certify that the foregoing is a true and complete "
-        "translation of the attached document.",
-        "",
-        f"Translator: {project_meta.get('translator_email', '')}",
-        f"Date: {project_meta.get('certification_date', '')}",
-        f"Source language: {src_lang or '—'}",
-        f"Target language: {tgt_lang or '—'}",
-    ]
-    for line in cert_lines:
-        p = doc.add_paragraph()
-        if line:
-            r = p.add_run(line)
-            r.font.name = "Times New Roman"
-            r.font.size = Pt(10.5)
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -1131,9 +1098,62 @@ def render_structured_docx_export(
             except Exception:
                 pass
 
-    # ---- Final page : certification block ----
+    # ---- Final page : certification (template or hardcoded) ----
     doc.add_page_break()
-    if company_logo_path and os.path.isfile(company_logo_path):
+    _append_certification_page(doc, project_meta, company_logo_path)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+# ============================================================
+# CERT PAGE — template-aware
+# ============================================================
+
+def _append_certification_page(doc, project_meta, company_logo_path):
+    """Append the final certification page to a python-docx Document.
+
+    When the project has a cert template configured, the export
+    pipeline pre-substitutes its {{tokens}} and stashes the bytes in
+    `project_meta['certification_template_bytes']`. We copy every
+    block of that template into the rebuild doc (preserving its
+    formatting). Otherwise we render the previous hardcoded cert
+    block, optionally prefixed by the user's logo.
+    """
+    from docx import Document as _Doc
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from copy import deepcopy
+    import os as _os
+    import io as _io
+
+    template_bytes = project_meta.get("certification_template_bytes")
+    if template_bytes:
+        # User-provided template path. Walk every body element of the
+        # substituted template and clone it into the rebuild doc so
+        # the user's branding, layout, and inline images come through
+        # intact.
+        try:
+            src_doc = _Doc(_io.BytesIO(template_bytes))
+            for element in src_doc.element.body.iterchildren():
+                # Skip the sectPr (section/page settings) — the
+                # rebuild doc already has its own.
+                if element.tag == qn("w:sectPr"):
+                    continue
+                doc.element.body.append(deepcopy(element))
+            return
+        except Exception as e:
+            logger.warning(
+                "Failed to embed cert template, falling back to "
+                "default block: %s",
+                e,
+            )
+
+    # Default hardcoded cert page.
+    if company_logo_path and _os.path.isfile(company_logo_path):
         try:
             p = doc.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1154,6 +1174,8 @@ def render_structured_docx_export(
         int(_PALETTE["text"][5:7], 16),
     )
 
+    src_lang = project_meta.get("source_language") or ""
+    tgt_lang = project_meta.get("target_language") or ""
     cert_lines = project_meta.get("certification_lines") or [
         "I hereby certify that the foregoing is a true and complete "
         "translation of the attached document.",
@@ -1169,8 +1191,3 @@ def render_structured_docx_export(
             r = p.add_run(line)
             r.font.name = "Times New Roman"
             r.font.size = Pt(10.5)
-
-    buf = io.BytesIO()
-    doc.save(buf)
-    buf.seek(0)
-    return buf.getvalue()

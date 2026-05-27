@@ -105,6 +105,16 @@ class TranslationProject(Base):
     # Certification
     # --------------------------------
     certification_override_text = Column(String, nullable=True)
+    # Optional team-scoped cert template (from the Certifications
+    # library). When set, the export pipeline downloads this DOCX,
+    # substitutes {{tokens}} with project/user values, and uses the
+    # result as the certification page instead of the hardcoded
+    # "I hereby certify..." block.
+    certification_template_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("certifications.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     # --------------------------------
     # Metadata

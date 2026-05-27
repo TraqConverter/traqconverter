@@ -181,6 +181,67 @@ def download_certification(
 
 
 # ============================================================
+# SCAN — detect {{token}} placeholders in a template DOCX so the
+# upload UI can show the user which fields will be auto-filled.
+# ============================================================
+
+@router.get("/{cert_id}/scan")
+def scan_certification(
+    cert_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.cert_template_service import scan_docx_for_tokens
+
+    team = _resolve_team(db, current_user)
+    cert = (
+        db.query(Certification)
+        .filter(Certification.id == cert_id, Certification.team_id == team.id)
+        .first()
+    )
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+
+    name = (cert.file_name or "").lower()
+    if not name.endswith(".docx"):
+        return {
+            "is_template": False,
+            "reason": (
+                "Only .docx templates support placeholder substitution. "
+                "Re-upload as DOCX to enable dynamic fields."
+            ),
+            "found": [],
+            "unknown": [],
+            "supported": [],
+        }
+    if not os.path.exists(cert.file_path):
+        raise HTTPException(status_code=410, detail="File missing on disk")
+
+    with open(cert.file_path, "rb") as f:
+        docx_bytes = f.read()
+    scan = scan_docx_for_tokens(docx_bytes)
+    scan["is_template"] = bool(scan.get("found") or scan.get("unknown"))
+    return scan
+
+
+# ============================================================
+# PREVIEW SUPPORTED FIELDS — UI can call this on the upload screen
+# (before any cert is saved) to show what tokens are available.
+# ============================================================
+
+@router.get("/template-fields")
+def template_fields():
+    from app.services.cert_template_service import SUPPORTED_FIELDS
+
+    return {
+        "fields": [
+            {"name": name, "description": desc}
+            for name, desc in SUPPORTED_FIELDS
+        ]
+    }
+
+
+# ============================================================
 # DELETE
 # ============================================================
 
