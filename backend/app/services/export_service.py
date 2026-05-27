@@ -270,15 +270,36 @@ def _resolve_cert_template(project, tmp_dir):
                     cert.file_name,
                 )
                 return None
+            # File could live on local disk (legacy) or in Supabase
+            # Storage (new). Try local first, then fall back to a
+            # signed URL fetch from object storage.
             import os as _os
-            if not _os.path.exists(cert.file_path):
-                logger.info(
-                    "Cert template file missing on disk: %s",
-                    cert.file_path,
-                )
+            template_bytes: bytes = b""
+            if (
+                cert.file_path
+                and _os.path.exists(cert.file_path)
+                and _os.path.isfile(cert.file_path)
+            ):
+                with open(cert.file_path, "rb") as f:
+                    template_bytes = f.read()
+            else:
+                try:
+                    from app.services.s3_service import (
+                        generate_presigned_download_url,
+                    )
+                    import requests as _req
+                    url = generate_presigned_download_url(cert.file_path)
+                    r = _req.get(url, timeout=15)
+                    r.raise_for_status()
+                    template_bytes = r.content
+                except Exception as e:
+                    logger.warning(
+                        "Couldn't fetch cert template from storage: %s",
+                        e,
+                    )
+                    return None
+            if not template_bytes:
                 return None
-            with open(cert.file_path, "rb") as f:
-                template_bytes = f.read()
 
             # Resolve the team for {{team_name}} / {{company_address}}.
             from app.models.team import Team

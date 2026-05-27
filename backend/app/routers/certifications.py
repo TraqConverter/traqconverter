@@ -106,6 +106,21 @@ async def upload_certification(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Upload a certification template / signed affidavit / ISO 17100 cert.
+
+    Storage strategy: upload to Supabase Storage (S3-compatible) so
+    the file survives Railway redeploys. We store the storage KEY in
+    ``cert.file_path`` — the download endpoint hands back a signed
+    URL that the frontend can follow.
+
+    Local disk was the old behaviour and is the reason previously-
+    uploaded certs vanished after a redeploy with "Couldn't download
+    that file."
+    """
+    import tempfile
+    from pathlib import Path as _Path
+    from app.services.s3_service import upload_file_to_s3
+
     validate_file_extension(file.filename)
     validate_file_size(file)
 
@@ -115,29 +130,45 @@ async def upload_certification(
 
     team = _resolve_team(db, current_user)
 
-    # Save the file
-    directory = os.path.join(BASE_DIR, str(team.id))
-    os.makedirs(directory, exist_ok=True)
-
-    # Prefix with a uuid so two uploads with the same filename can coexist
-    safe_id = uuid.uuid4().hex[:8]
-    safe_name = f"{safe_id}_{file.filename}"
-    file_path = os.path.join(directory, safe_name)
-
     raw = await file.read()
     file_hash = hashlib.sha256(raw).hexdigest()
 
+    # Write to a temp file so we can hand a Path to upload_file_to_s3
+    # (the helper takes Path because the project upload flow uses one).
+    tmp_path: Optional[_Path] = None
+    s3_key: Optional[str] = None
     try:
-        with open(file_path, "wb") as f:
-            f.write(raw)
+        suffix = ""
+        if file.filename and "." in file.filename:
+            suffix = "." + file.filename.rsplit(".", 1)[-1]
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(raw)
+            tmp_path = _Path(tmp.name)
+        # Give it a friendlier name so the storage key is identifiable.
+        # upload_file_to_s3 uses the input Path's `.name`.
+        renamed = tmp_path.with_name(file.filename or tmp_path.name)
+        try:
+            tmp_path.rename(renamed)
+            tmp_path = renamed
+        except Exception:
+            pass
+        s3_key = upload_file_to_s3(tmp_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Couldn't save file: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Couldn't upload certification: {e}"
+        )
+    finally:
+        if tmp_path and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
     cert = Certification(
         team_id=team.id,
         uploaded_by=current_user.id,
         file_name=file.filename,
-        file_path=file_path,
+        file_path=s3_key,
         kind=kind_upper,
         notes=(notes or "").strip() or None,
         file_hash=file_hash,
@@ -161,6 +192,16 @@ def download_certification(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Hand the client a short-lived signed URL to the cert file.
+
+    The frontend opens this URL in a new tab / triggers download from
+    it. Storing the file in Supabase means it survives container
+    restarts (the old local-disk behaviour was why downloads broke
+    after every redeploy).
+    """
+    from app.services.s3_service import generate_presigned_download_url
+    from fastapi.responses import RedirectResponse
+
     team = _resolve_team(db, current_user)
     cert = (
         db.query(Certification)
@@ -169,15 +210,26 @@ def download_certification(
     )
     if not cert:
         raise HTTPException(status_code=404, detail="Certification not found")
+    if not cert.file_path:
+        raise HTTPException(status_code=410, detail="File missing")
 
-    if not os.path.exists(cert.file_path):
-        raise HTTPException(status_code=410, detail="File missing on disk")
+    # Legacy local-disk path — keep working for any cert uploaded
+    # before the Supabase migration.
+    if os.path.exists(cert.file_path) and os.path.isfile(cert.file_path):
+        return FileResponse(
+            cert.file_path,
+            filename=cert.file_name,
+            media_type=cert.mime_type or "application/octet-stream",
+        )
 
-    return FileResponse(
-        cert.file_path,
-        filename=cert.file_name,
-        media_type=cert.mime_type or "application/octet-stream",
-    )
+    # New Supabase path — file_path holds the storage key.
+    try:
+        url = generate_presigned_download_url(cert.file_path)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Couldn't generate download link: {e}"
+        )
+    return RedirectResponse(url=url, status_code=307)
 
 
 # ============================================================
@@ -214,11 +266,28 @@ def scan_certification(
             "unknown": [],
             "supported": [],
         }
-    if not os.path.exists(cert.file_path):
-        raise HTTPException(status_code=410, detail="File missing on disk")
 
-    with open(cert.file_path, "rb") as f:
-        docx_bytes = f.read()
+    # Two storage paths to support: legacy local disk + new Supabase.
+    docx_bytes: bytes = b""
+    if cert.file_path and os.path.exists(cert.file_path) and os.path.isfile(cert.file_path):
+        with open(cert.file_path, "rb") as f:
+            docx_bytes = f.read()
+    else:
+        try:
+            from app.services.s3_service import (
+                generate_presigned_download_url,
+            )
+            import requests as _req
+            url = generate_presigned_download_url(cert.file_path)
+            r = _req.get(url, timeout=15)
+            r.raise_for_status()
+            docx_bytes = r.content
+        except Exception as e:
+            raise HTTPException(
+                status_code=410,
+                detail=f"Couldn't fetch template from storage: {e}",
+            )
+
     scan = scan_docx_for_tokens(docx_bytes)
     scan["is_template"] = bool(scan.get("found") or scan.get("unknown"))
     return scan
