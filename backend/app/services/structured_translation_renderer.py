@@ -862,6 +862,61 @@ def _render_planned_block(
         return False
 
 
+def _detect_page_orientation(page_pairs) -> str:
+    """Look at the first segment's layout for a `page_orientation`
+    hint (set by the PDF extractor). Returns "landscape" or
+    "portrait" (default). Image / single-page sources without a
+    hint stay portrait, which is the right default."""
+    for _, layout in page_pairs:
+        o = (layout or {}).get("page_orientation")
+        if o in ("landscape", "portrait"):
+            return o
+        # Some sources only have bbox / width / height — fall back
+        # to deriving orientation from the page dimensions.
+        w = (layout or {}).get("page_width_pt")
+        h = (layout or {}).get("page_height_pt")
+        if w and h:
+            try:
+                return "landscape" if float(w) > float(h) else "portrait"
+            except (TypeError, ValueError):
+                pass
+    return "portrait"
+
+
+def _apply_orientation_to_current_section(doc, orientation: str) -> None:
+    """Set the LAST section's orientation + matching page dims.
+
+    python-docx tracks orientation and page dimensions independently
+    — swapping orientation alone does nothing visible unless we also
+    swap width and height.
+    """
+    from docx.enum.section import WD_ORIENT
+
+    section = doc.sections[-1]
+    is_landscape = orientation == "landscape"
+    want_orient = WD_ORIENT.LANDSCAPE if is_landscape else WD_ORIENT.PORTRAIT
+    if section.orientation == want_orient:
+        return
+    section.orientation = want_orient
+    # Swap dims so the page is actually the right shape.
+    section.page_width, section.page_height = (
+        section.page_height,
+        section.page_width,
+    )
+
+
+def _start_new_section_with_orientation(doc, orientation: str) -> None:
+    """Insert a section break and configure the new section to the
+    target orientation. Used between source pages so a portrait
+    page can be followed by a landscape page (or vice versa) in
+    the same rebuild file."""
+    from docx.enum.section import WD_SECTION
+
+    # add_section gives us a fresh section starting on a new page.
+    doc.add_section(WD_SECTION.NEW_PAGE)
+    _apply_orientation_to_current_section(doc, orientation)
+
+
 def _append_team_stamp(doc, stamp_path: str, alignment: str) -> None:
     """Drop the company stamp at the bottom of the current rebuild
     page. Alignment is left / center / right.
@@ -1080,10 +1135,17 @@ def render_planned_docx_export(
         project_meta.get("stamp_alignment") or "right"
     ).lower()
     for i, (page_index, page_pairs) in enumerate(pages_pairs):
+        # Set the section orientation to match this source page. A
+        # landscape source page must produce a landscape rebuild
+        # page so a wide form/table doesn't get squashed into a
+        # portrait section. We use a NEW section per page so each
+        # one can have its own orientation (Word's section model
+        # scopes orientation to a section).
+        orientation = _detect_page_orientation(page_pairs)
         if i > 0:
-            # Page break between source pages so source-page N+1's
-            # translation always starts on a fresh page.
-            doc.add_page_break()
+            _start_new_section_with_orientation(doc, orientation)
+        else:
+            _apply_orientation_to_current_section(doc, orientation)
         elements, by_id, page_w, page_h = _build_layout_plan_input(page_pairs)
         if elements:
             plan = plan_layout(elements, page_width=page_w, page_height=page_h)
