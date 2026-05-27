@@ -1088,6 +1088,7 @@ def render_planned_docx_export(
     pairs: list[tuple[str, dict[str, Any]]],
     project_meta: dict[str, Any],
     company_logo_path: str | None = None,
+    preview_only: bool = False,
 ) -> bytes | None:
     """Layout-aware DOCX export. Returns the DOCX bytes, or None when
     the layout planner is unavailable or fails — callers should fall
@@ -1124,10 +1125,14 @@ def render_planned_docx_export(
         section.right_margin = Cm(1.5)
 
     # ---- Page 1..N : original document ----
-    if source_kind == "IMAGE":
-        _embed_image_full_page(doc, original_path)
-    elif source_kind == "PDF":
-        _embed_pdf_pages_as_images(doc, original_path)
+    # In preview mode the Compare view shows the original on its
+    # own pane, so we skip the embed here to make the rebuild PDF
+    # a pure translation document (faster + less visual noise).
+    if not preview_only:
+        if source_kind == "IMAGE":
+            _embed_image_full_page(doc, original_path)
+        elif source_kind == "PDF":
+            _embed_pdf_pages_as_images(doc, original_path)
 
     # ---- Translated section, ONE rebuild page per source page ----
     stamp_path = project_meta.get("stamp_path")
@@ -1171,17 +1176,24 @@ def render_planned_docx_export(
             _append_team_stamp(doc, stamp_path, stamp_alignment)
 
     # ---- Final page : certification (template or hardcoded) ----
-    doc.add_page_break()
-    _append_certification_page(
-        doc,
-        project_meta,
-        company_logo_path,
-    )
+    # Skip in preview mode — the cert is for the final export, not
+    # for reviewers comparing translations.
+    if not preview_only:
+        doc.add_page_break()
+        _append_certification_page(
+            doc,
+            project_meta,
+            company_logo_path,
+        )
 
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
-    logger.info("Layout-aware DOCX renderer: produced %d-byte file", len(buf.getvalue()))
+    logger.info(
+        "Layout-aware DOCX renderer: produced %d-byte file (preview_only=%s)",
+        len(buf.getvalue()),
+        preview_only,
+    )
     return buf.getvalue()
 
 
@@ -1192,6 +1204,7 @@ def render_structured_docx_export(
     pairs: list[tuple[str, dict[str, Any]]],
     project_meta: dict[str, Any],
     company_logo_path: str | None = None,
+    preview_only: bool = False,
 ) -> bytes:
     """Produce the full export as a DOCX — same structural rules as
     the PDF builder above so the two exports look like siblings."""
@@ -1202,10 +1215,11 @@ def render_structured_docx_export(
     doc = Document()
 
     # ---- Page 1+ : original document ----
-    if source_kind == "IMAGE":
-        _embed_image_full_page(doc, original_path)
-    elif source_kind == "PDF":
-        _embed_pdf_pages_as_images(doc, original_path)
+    if not preview_only:
+        if source_kind == "IMAGE":
+            _embed_image_full_page(doc, original_path)
+        elif source_kind == "PDF":
+            _embed_pdf_pages_as_images(doc, original_path)
 
     # ---- Pages N+ : structured translation ----
     src_lang = project_meta.get("source_language") or ""
@@ -1250,8 +1264,9 @@ def render_structured_docx_export(
                 pass
 
     # ---- Final page : certification (template or hardcoded) ----
-    doc.add_page_break()
-    _append_certification_page(doc, project_meta, company_logo_path)
+    if not preview_only:
+        doc.add_page_break()
+        _append_certification_page(doc, project_meta, company_logo_path)
 
     buf = io.BytesIO()
     doc.save(buf)

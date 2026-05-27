@@ -382,7 +382,7 @@ def _resolve_team_stamp(project, tmp_dir):
         return None, "right"
 
 
-def _build_layout_docx_live(segments, project):
+def _build_layout_docx_live(segments, project, preview_only: bool = False):
     """Build the export DOCX in the new STRUCTURED format — same shape
     as `_build_layout_pdf_live` but emitting .docx instead of .pdf.
 
@@ -390,6 +390,11 @@ def _build_layout_docx_live(segments, project):
         Pages N+     : clean structured translation (alignment, bold,
                        italic, font family, placeholders all preserved)
         Final page   : certification block (optional company logo)
+
+    ``preview_only`` skips the embedded original pages AND the cert
+    page so the Compare view can show JUST the translated content
+    (the original is already visible in the left Compare pane;
+    the cert page would be noise during review).
     """
     if project is None or not segments:
         return None
@@ -514,6 +519,7 @@ def _build_layout_docx_live(segments, project):
                     pairs=pairs,
                     project_meta=project_meta,
                     company_logo_path=logo_path,
+                    preview_only=preview_only,
                 )
             except Exception as e:
                 logger.warning(
@@ -528,6 +534,7 @@ def _build_layout_docx_live(segments, project):
                 pairs=pairs,
                 project_meta=project_meta,
                 company_logo_path=logo_path,
+                preview_only=preview_only,
             )
 
         out = BytesIO()
