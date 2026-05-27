@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Optional
 from uuid import UUID
 from pathlib import Path
 from app.models.translation_segment import TranslationSegment
