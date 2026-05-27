@@ -862,6 +862,46 @@ def _render_planned_block(
         return False
 
 
+def _append_team_stamp(doc, stamp_path: str, alignment: str) -> None:
+    """Drop the company stamp at the bottom of the current rebuild
+    page. Alignment is left / center / right.
+
+    Implementation: a single paragraph with the image as an inline
+    shape and the paragraph's alignment set. Sitting at the end of
+    the page content means it falls naturally above the next page
+    break (or above the cert page) — close to "bottom of the page"
+    without needing section-scoped footers (which would also stamp
+    the embedded original pages).
+    """
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Inches, Pt
+    import os as _os
+
+    if not stamp_path or not _os.path.isfile(stamp_path):
+        return
+
+    alignment = (alignment or "right").lower()
+    align_map = {
+        "left": WD_ALIGN_PARAGRAPH.LEFT,
+        "center": WD_ALIGN_PARAGRAPH.CENTER,
+        "right": WD_ALIGN_PARAGRAPH.RIGHT,
+    }
+    word_align = align_map.get(alignment, WD_ALIGN_PARAGRAPH.RIGHT)
+
+    para = doc.add_paragraph()
+    para.alignment = word_align
+    # Pull spacing in so the stamp hugs the bottom of content.
+    pf = para.paragraph_format
+    pf.space_before = Pt(12)
+    pf.space_after = Pt(0)
+    run = para.add_run()
+    try:
+        # 1.4" wide is a typical office-stamp size on A4.
+        run.add_picture(stamp_path, width=Inches(1.4))
+    except Exception as e:
+        logger.warning("Couldn't embed team stamp: %s", e)
+
+
 def _strip_table_borders(table) -> None:
     """Remove ALL borders from a python-docx Table so it looks like a
     pure layout grid rather than a visible table."""
@@ -1035,28 +1075,38 @@ def render_planned_docx_export(
         _embed_pdf_pages_as_images(doc, original_path)
 
     # ---- Translated section, ONE rebuild page per source page ----
+    stamp_path = project_meta.get("stamp_path")
+    stamp_alignment = (
+        project_meta.get("stamp_alignment") or "right"
+    ).lower()
     for i, (page_index, page_pairs) in enumerate(pages_pairs):
         if i > 0:
             # Page break between source pages so source-page N+1's
             # translation always starts on a fresh page.
             doc.add_page_break()
         elements, by_id, page_w, page_h = _build_layout_plan_input(page_pairs)
-        if not elements:
-            continue
-        plan = plan_layout(elements, page_width=page_w, page_height=page_h)
-        if not plan:
-            # Per-page fall back: render this page's pairs as plain
-            # paragraphs so the page isn't blank.
-            for translated, layout in page_pairs:
-                body = (translated or "").strip()
-                if not body:
-                    continue
-                para = doc.add_paragraph()
-                is_placeholder = bool((layout or {}).get("placeholder_kind"))
-                _docx_apply_paragraph_style(para, body, layout, is_placeholder)
-            continue
-        for block in plan.get("blocks") or []:
-            _render_planned_block(doc, block, by_id)
+        if elements:
+            plan = plan_layout(elements, page_width=page_w, page_height=page_h)
+            if plan:
+                for block in plan.get("blocks") or []:
+                    _render_planned_block(doc, block, by_id)
+            else:
+                # Per-page fall back: render this page's pairs as
+                # plain paragraphs so the page isn't blank.
+                for translated, layout in page_pairs:
+                    body = (translated or "").strip()
+                    if not body:
+                        continue
+                    para = doc.add_paragraph()
+                    is_placeholder = bool((layout or {}).get("placeholder_kind"))
+                    _docx_apply_paragraph_style(para, body, layout, is_placeholder)
+
+        # Company stamp goes at the BOTTOM of this translated page,
+        # before the page break that starts the next page. Not added
+        # to the embedded-original pages — those were rendered above
+        # via _embed_*_full_page / _embed_pdf_pages_as_images.
+        if stamp_path:
+            _append_team_stamp(doc, stamp_path, stamp_alignment)
 
     # ---- Final page : certification (template or hardcoded) ----
     doc.add_page_break()

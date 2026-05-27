@@ -65,6 +65,21 @@ def _ensure_schema_columns():
                 "ADD COLUMN IF NOT EXISTS certification_template_id UUID "
                 "REFERENCES certifications(id) ON DELETE SET NULL"
             ),
+            # Company stamp + address on the team — overlaid at the
+            # bottom of every translated rebuild page.
+            (
+                "ALTER TABLE teams "
+                "ADD COLUMN IF NOT EXISTS stamp_s3_key VARCHAR"
+            ),
+            (
+                "ALTER TABLE teams "
+                "ADD COLUMN IF NOT EXISTS stamp_alignment VARCHAR "
+                "DEFAULT 'right' NOT NULL"
+            ),
+            (
+                "ALTER TABLE teams "
+                "ADD COLUMN IF NOT EXISTS address VARCHAR"
+            ),
         ]
         with engine.begin() as conn:
             for stmt in STATEMENTS:

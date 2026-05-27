@@ -333,6 +333,55 @@ def _resolve_cert_template(project, tmp_dir):
         return None
 
 
+def _resolve_team_stamp(project, tmp_dir):
+    """Fetch the team's company stamp image (if any) into the export's
+    temp dir. Returns (local_path, alignment) or (None, "right") when
+    no stamp is configured or the download fails.
+
+    Alignment values: "left" | "center" | "right". The default
+    matches the schema default — most letterheads keep stamps on the
+    right side of the page footer.
+    """
+    try:
+        from app.database import SessionLocal
+        from app.models.team import Team
+        from app.services.s3_service import generate_presigned_download_url
+        import requests as _req
+        from pathlib import Path as _Path
+
+        db = SessionLocal()
+        try:
+            team = (
+                db.query(Team)
+                .filter(Team.id == project.team_id)
+                .first()
+            )
+            if not team or not team.stamp_s3_key:
+                return None, "right"
+            alignment = (team.stamp_alignment or "right").lower()
+            if alignment not in {"left", "center", "right"}:
+                alignment = "right"
+
+            url = generate_presigned_download_url(team.stamp_s3_key)
+            r = _req.get(url, timeout=15)
+            if not r.ok:
+                logger.warning(
+                    "Couldn't fetch team stamp: HTTP %s", r.status_code
+                )
+                return None, alignment
+            ext = team.stamp_s3_key.rsplit(".", 1)[-1].lower()
+            if ext not in {"png", "jpg", "jpeg"}:
+                ext = "png"
+            stamp_path = _Path(tmp_dir) / f"stamp.{ext}"
+            stamp_path.write_bytes(r.content)
+            return str(stamp_path), alignment
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Team stamp resolve failed: %s", e)
+        return None, "right"
+
+
 def _build_layout_docx_live(segments, project):
     """Build the export DOCX in the new STRUCTURED format — same shape
     as `_build_layout_pdf_live` but emitting .docx instead of .pdf.
@@ -441,6 +490,14 @@ def _build_layout_docx_live(segments, project):
         cert_template_bytes = _resolve_cert_template(project, tmp_dir)
         if cert_template_bytes:
             project_meta["certification_template_bytes"] = cert_template_bytes
+
+        # Resolve the team's company stamp once per export. The
+        # renderer overlays it at the bottom of every translated page
+        # (never on the embedded original pages).
+        stamp_path, stamp_alignment = _resolve_team_stamp(project, tmp_dir)
+        if stamp_path:
+            project_meta["stamp_path"] = stamp_path
+            project_meta["stamp_alignment"] = stamp_alignment
 
         # Layout-aware DOCX export is the DEFAULT. The planner asks
         # Claude to plan a DOCX skeleton mirroring the original
