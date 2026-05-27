@@ -57,14 +57,14 @@ _PALETTE = {
 
 
 # Map "size" hints from Claude → point sizes that match a certified
-# translator's transcription document. Tightened so body text reads
-# at the same visual scale as the original (~9pt) — the previous
-# 10.5pt made everything look oversized in the rebuild.
+# translator's transcription document. Tightened again so one source
+# page maps onto one rebuild page even when the original is dense
+# (typical ID/government forms run 15-25 form rows + tables).
 _SIZE_PT = {
-    "small": 8.0,
-    "normal": 9.0,
-    "large": 11.0,
-    "xlarge": 14.0,
+    "small": 7.0,
+    "normal": 8.0,
+    "large": 10.0,
+    "xlarge": 12.5,
 }
 
 
@@ -920,6 +920,27 @@ def _apply_table_borders(table) -> None:
     tblPr.append(borders)
 
 
+def _group_pairs_by_page(
+    pairs: list[tuple[str, dict[str, Any]]],
+) -> list[tuple[int, list[tuple[str, dict[str, Any]]]]]:
+    """Split (translated, layout) pairs into groups keyed by their
+    source page number. Returns an ordered list of (page_index,
+    pairs_on_that_page) so the caller can render each source page
+    onto its own rebuild page with a page break between.
+
+    Pairs without a recognisable `page` key default to page 0, which
+    keeps single-page (image) sources working without changes.
+    """
+    by_page: dict[int, list[tuple[str, dict[str, Any]]]] = {}
+    for translated, layout in pairs:
+        try:
+            page_idx = int((layout or {}).get("page", 0) or 0)
+        except (TypeError, ValueError):
+            page_idx = 0
+        by_page.setdefault(page_idx, []).append((translated, layout))
+    return sorted(by_page.items(), key=lambda kv: kv[0])
+
+
 def _build_layout_plan_input(
     pairs: list[tuple[str, dict[str, Any]]],
 ) -> tuple[list[dict[str, Any]], dict[int, tuple[str, dict[str, Any]]], float, float]:
@@ -985,12 +1006,12 @@ def render_planned_docx_export(
     if not is_available():
         return None
 
-    elements, by_id, page_w, page_h = _build_layout_plan_input(pairs)
-    if not elements:
-        return None
-
-    plan = plan_layout(elements, page_width=page_w, page_height=page_h)
-    if not plan:
+    # Group segments by their source page so each source page produces
+    # exactly one rebuild page. Previously we planned ALL segments as
+    # one layout, which let the rebuild spill across multiple pages
+    # even for a single-page source.
+    pages_pairs = _group_pairs_by_page(pairs)
+    if not pages_pairs:
         return None
 
     from docx import Document
@@ -999,25 +1020,43 @@ def render_planned_docx_export(
 
     doc = Document()
 
-    # Tighten section margins so the translated content has the same
-    # available area as the original document (the linear renderer's
-    # 1" margins left too little room and forced overflow onto a
-    # second page).
+    # Tighter section margins so the translated content fits the same
+    # footprint as the original document.
     for section in doc.sections:
-        section.top_margin = Cm(1.5)
-        section.bottom_margin = Cm(1.5)
-        section.left_margin = Cm(1.8)
-        section.right_margin = Cm(1.8)
+        section.top_margin = Cm(1.2)
+        section.bottom_margin = Cm(1.2)
+        section.left_margin = Cm(1.5)
+        section.right_margin = Cm(1.5)
 
-    # ---- Page 1+ : original document ----
+    # ---- Page 1..N : original document ----
     if source_kind == "IMAGE":
         _embed_image_full_page(doc, original_path)
     elif source_kind == "PDF":
         _embed_pdf_pages_as_images(doc, original_path)
 
-    # ---- Translated section, structured per the layout plan ----
-    for block in plan.get("blocks") or []:
-        _render_planned_block(doc, block, by_id)
+    # ---- Translated section, ONE rebuild page per source page ----
+    for i, (page_index, page_pairs) in enumerate(pages_pairs):
+        if i > 0:
+            # Page break between source pages so source-page N+1's
+            # translation always starts on a fresh page.
+            doc.add_page_break()
+        elements, by_id, page_w, page_h = _build_layout_plan_input(page_pairs)
+        if not elements:
+            continue
+        plan = plan_layout(elements, page_width=page_w, page_height=page_h)
+        if not plan:
+            # Per-page fall back: render this page's pairs as plain
+            # paragraphs so the page isn't blank.
+            for translated, layout in page_pairs:
+                body = (translated or "").strip()
+                if not body:
+                    continue
+                para = doc.add_paragraph()
+                is_placeholder = bool((layout or {}).get("placeholder_kind"))
+                _docx_apply_paragraph_style(para, body, layout, is_placeholder)
+            continue
+        for block in plan.get("blocks") or []:
+            _render_planned_block(doc, block, by_id)
 
     # ---- Final page : certification (template or hardcoded) ----
     doc.add_page_break()
