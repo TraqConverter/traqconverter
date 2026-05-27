@@ -690,13 +690,12 @@ export default function NewProjectPage() {
                     value={aiModel}
                     onChange={(e) => setAiModel(e.target.value)}
                     disabled={runMode === "dtp"}
-                    className="text-sm outline-none rounded-lg px-3 py-2"
+                    className="text-sm outline-none rounded-lg px-3 py-2 w-full max-w-[260px]"
                     style={{
                       background:
                         runMode === "dtp" ? "#f6efe0" : "#faf5ee",
                       border: "1px solid #e7ddc5",
                       color: runMode === "dtp" ? "#9a9178" : "#1f2a2e",
-                      minWidth: 220,
                       cursor:
                         runMode === "dtp" ? "not-allowed" : "pointer",
                     }}
@@ -757,12 +756,11 @@ export default function NewProjectPage() {
                   <select
                     value={certTemplateId}
                     onChange={(e) => setCertTemplateId(e.target.value)}
-                    className="text-sm outline-none rounded-lg px-3 py-2"
+                    className="text-sm outline-none rounded-lg px-3 py-2 w-full max-w-[260px]"
                     style={{
                       background: "#faf5ee",
                       border: "1px solid #e7ddc5",
                       color: "#1f2a2e",
-                      minWidth: 220,
                     }}
                   >
                     <option value="">None — use the default cert</option>
@@ -903,8 +901,11 @@ function IconUploadWhite() {
   )
 }
 
-// Run Options row — label on the left, helper text below, control on
-// the right. Mirrors the competitor's expandable settings panel.
+// Run Options row — single horizontal row: label on the left (fixed
+// width so labels don't get squashed by wide dropdowns), control on
+// the right. Helper text sits BELOW the label so it can wrap freely
+// without pushing the control off-screen. Mirrors the competitor's
+// expandable settings panel layout.
 function RunOptionRow({
   label,
   helper,
@@ -918,28 +919,34 @@ function RunOptionRow({
 }) {
   return (
     <div
-      className="flex items-start justify-between gap-4 py-4"
+      className="grid items-start gap-4 py-4"
       style={{
+        // Label gets a fixed ~160px so it never wraps to 6 lines just
+        // because the control is wide. Control takes the remaining
+        // space and right-aligns its inner element.
+        gridTemplateColumns: "160px 1fr",
         borderBottom: last ? "none" : "1px solid #f4ecd6",
       }}
     >
-      <div className="flex-1 min-w-0">
+      <div className="min-w-0">
         <div
-          className="text-[13px] font-semibold"
+          className="text-[13px] font-semibold leading-snug"
           style={{ color: "#1f2a2e" }}
         >
           {label}
         </div>
         {helper && (
           <div
-            className="text-[11px] mt-0.5 leading-snug"
+            className="text-[11px] mt-1 leading-snug"
             style={{ color: "#8a8270" }}
           >
             {helper}
           </div>
         )}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="flex items-center justify-end min-w-0">
+        {children}
+      </div>
     </div>
   )
 }
