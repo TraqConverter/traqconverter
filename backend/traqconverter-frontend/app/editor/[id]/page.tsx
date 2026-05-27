@@ -212,6 +212,86 @@ export default function EditorPage() {
     }
   }
 
+  // Compare mode actions — EDIT toggles an inline segments panel in
+  // the right pane, REQUEST REVISION fires an AI revision pass over
+  // every translated segment, RE-RUN re-translates the entire
+  // project from source. Both POST endpoints run synchronously.
+  const [compareEdit, setCompareEdit] = useState(false)
+  const [compareActionBusy, setCompareActionBusy] = useState<
+    null | "revise" | "rerun"
+  >(null)
+  const [showRerunPicker, setShowRerunPicker] = useState(false)
+  const [translationModels, setTranslationModels] = useState<
+    { id: string; label: string; provider: string }[]
+  >([])
+
+  useEffect(() => {
+    // Populate the model picker once per editor open.
+    api
+      .get("/projects/translation-models")
+      .then((res) => setTranslationModels(res.data?.models || []))
+      .catch(() => setTranslationModels([]))
+  }, [])
+
+  const requestRevision = async () => {
+    const instructions = window.prompt(
+      "Optional instructions for the AI reviewer (e.g. 'use more " +
+        "formal language', 'prefer Municipality over City'). Leave " +
+        "empty for a default quality pass.",
+      "",
+    )
+    if (instructions === null) return // cancelled
+    try {
+      setCompareActionBusy("revise")
+      const res = await api.post(`/projects/${id}/revise`, {
+        instructions: instructions.trim() || null,
+      })
+      // Refresh segments + the rebuild so Compare reflects the new
+      // text immediately.
+      await fetchProject()
+      await loadCompare()
+      const revised = res.data?.revised ?? 0
+      const total = res.data?.total_segments ?? 0
+      alert(`Revision complete — ${revised} / ${total} segments improved.`)
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.detail || "Revision request failed.",
+      )
+    } finally {
+      setCompareActionBusy(null)
+    }
+  }
+
+  const rerunTranslation = async (modelOverride?: string | null) => {
+    if (
+      !confirm(
+        "Re-run translation? This replaces every existing translation " +
+          "for this project. Approval flags will be cleared.",
+      )
+    )
+      return
+    try {
+      setCompareActionBusy("rerun")
+      setShowRerunPicker(false)
+      const res = await api.post(`/projects/${id}/rerun`, {
+        model: modelOverride || null,
+      })
+      await fetchProject()
+      await loadCompare()
+      const n = res.data?.retranslated ?? 0
+      const total = res.data?.total_segments ?? 0
+      alert(
+        `Re-run complete — ${n} / ${total} segments translated using ${
+          res.data?.model_used || "the project's model"
+        }.`,
+      )
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || "Re-run failed.")
+    } finally {
+      setCompareActionBusy(null)
+    }
+  }
+
   // Rename + delete state for the title chrome.
   const [renameOpen, setRenameOpen] = useState(false)
   const [renamingDraft, setRenamingDraft] = useState("")
@@ -349,6 +429,100 @@ export default function EditorPage() {
       await refreshCommentsForActive()
     } catch (err: any) {
       setError(err?.response?.data?.detail || "Couldn't resolve that comment.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Reopen — flip resolved back to false so the discussion is live
+  // again. Useful when a reviewer was hasty marking it "Revised".
+  const reopenComment = async (commentId: string) => {
+    try {
+      setBusy(`reopen:${commentId}`)
+      await api.patch(`/segments/comments/${commentId}/reopen`)
+      await refreshCommentsForActive()
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || "Couldn't reopen that comment.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Edit — author-only. Backend rejects non-authors with 403, which
+  // we surface in the error banner.
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
+  const [editingCommentDraft, setEditingCommentDraft] = useState("")
+
+  const startEditComment = (commentId: string, currentText: string) => {
+    setEditingCommentId(commentId)
+    setEditingCommentDraft(currentText)
+  }
+
+  const cancelEditComment = () => {
+    setEditingCommentId(null)
+    setEditingCommentDraft("")
+  }
+
+  const saveEditComment = async (commentId: string) => {
+    const text = editingCommentDraft.trim()
+    if (!text) {
+      setError("Comment can't be empty.")
+      return
+    }
+    try {
+      setBusy(`edit:${commentId}`)
+      await api.patch(`/segments/comments/${commentId}`, { text })
+      cancelEditComment()
+      await refreshCommentsForActive()
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || "Couldn't update that comment.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const deleteComment = async (commentId: string) => {
+    if (!confirm("Delete this comment? This can't be undone.")) return
+    try {
+      setBusy(`delete:${commentId}`)
+      await api.delete(`/segments/comments/${commentId}`)
+      await refreshCommentsForActive()
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || "Couldn't delete that comment.")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // AI retranslate a single segment. Optional instructions are
+  // collected via a prompt() so the user can nudge the model
+  // (e.g. "more formal", "use 'Municipality of'") for that one
+  // segment without touching the project glossary.
+  const retranslateSegment = async (seg: Segment) => {
+    const instructions = window.prompt(
+      "Optional instructions for the AI (e.g. 'more formal', " +
+        "'use Municipality of' instead of City). Leave empty for a " +
+        "clean re-translation.",
+      "",
+    )
+    if (instructions === null) return  // user cancelled
+    try {
+      setBusy(`retranslate:${seg.id}`)
+      const res = await api.post(`/segments/${seg.id}/retranslate`, {
+        instructions: instructions.trim() || null,
+      })
+      const newText: string = res.data?.translated_text || ""
+      setSegments((xs) =>
+        xs.map((x) =>
+          x.id === seg.id
+            ? { ...x, translated_text: newText, approved: false }
+            : x,
+        ),
+      )
+    } catch (err: any) {
+      setError(
+        err?.response?.data?.detail || "Couldn't retranslate that segment.",
+      )
     } finally {
       setBusy(null)
     }
@@ -1020,18 +1194,140 @@ export default function EditorPage() {
           rebuilt output on the right. */}
       <div
         className="grid grid-cols-1 gap-4"
-        style={{ gridTemplateColumns: "minmax(0, 1fr) 360px" }}
+        style={{
+          // In compare mode we hide the right-hand sidebar so the
+          // two preview panes get the full content width — without
+          // this the source + rebuild were cramped at ~45% width each.
+          gridTemplateColumns: compareMode
+            ? "minmax(0, 1fr)"
+            : "minmax(0, 1fr) 360px",
+        }}
       >
         {compareMode ? (
-          <div
-            className="rounded-2xl overflow-hidden grid"
-            style={{
-              gridTemplateColumns: "1fr 1fr",
-              gap: 12,
-              height: "calc(100vh - 240px)",
-              minHeight: 560,
-            }}
-          >
+          <div className="flex flex-col" style={{ minHeight: 0 }}>
+            {/* Compare actions toolbar — EDIT toggles inline segment
+                editing, REQUEST REVISION fires AI revision over every
+                translated segment, RE-RUN re-translates the whole
+                project with a chosen model. */}
+            <div
+              className="flex items-center justify-between gap-3 mb-3 px-4 py-3 rounded-2xl"
+              style={{
+                background: "#ffffff",
+                border: "1px solid #e7ddc5",
+              }}
+            >
+              <div className="text-[12px]" style={{ color: "#8a8270" }}>
+                Original on the left, rebuilt translation on the right.
+                Use the buttons to revise or re-run the translation.
+              </div>
+              <div
+                className="flex items-center gap-2 relative"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  onClick={() => setCompareEdit((v) => !v)}
+                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
+                  style={{
+                    background: compareEdit ? "#0a7870" : "#ffffff",
+                    color: compareEdit ? "#fff" : "#1f2a2e",
+                    border: `1px solid ${
+                      compareEdit ? "#0a7870" : "#e7ddc5"
+                    }`,
+                  }}
+                >
+                  ✎ {compareEdit ? "Done editing" : "Edit"}
+                </button>
+                <button
+                  type="button"
+                  onClick={requestRevision}
+                  disabled={compareActionBusy !== null}
+                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
+                  style={{
+                    background: "#ffffff",
+                    color: "#0a7870",
+                    border: "1px solid #cfe6e2",
+                    cursor:
+                      compareActionBusy !== null ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {compareActionBusy === "revise"
+                    ? "Revising…"
+                    : "💬 Request revision"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowRerunPicker((v) => !v)}
+                  disabled={compareActionBusy !== null}
+                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
+                  style={{
+                    background: "#ffffff",
+                    color: "#1f2a2e",
+                    border: "1px solid #e7ddc5",
+                    cursor:
+                      compareActionBusy !== null ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {compareActionBusy === "rerun" ? "Re-running…" : "↻ Re-run"}
+                </button>
+                {showRerunPicker && (
+                  <div
+                    className="absolute right-0 top-full mt-2 z-30 rounded-xl py-1 w-72"
+                    style={{
+                      background: "#ffffff",
+                      border: "1px solid #e7ddc5",
+                      boxShadow: "0 8px 24px rgba(30,30,20,0.12)",
+                    }}
+                  >
+                    <div
+                      className="px-3 py-2 text-[10px] font-semibold tracking-[0.14em]"
+                      style={{
+                        color: "#9a9178",
+                        borderBottom: "1px solid #f1e8d1",
+                      }}
+                    >
+                      RE-RUN WITH MODEL
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => rerunTranslation(null)}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-[#faf5ee]"
+                      style={{ color: "#1f2a2e" }}
+                    >
+                      Same model (
+                      <span className="font-mono text-xs">
+                        {project?.model || "balanced"}
+                      </span>
+                      )
+                    </button>
+                    <div
+                      className="border-t my-1"
+                      style={{ borderColor: "#f1e8d1" }}
+                    />
+                    {translationModels.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => rerunTranslation(m.id)}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-[#faf5ee]"
+                        style={{ color: "#1f2a2e" }}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div
+              className="rounded-2xl overflow-hidden grid flex-1"
+              style={{
+                gridTemplateColumns: compareEdit ? "1fr 1fr 360px" : "1fr 1fr",
+                gap: 12,
+                minHeight: 0,
+              }}
+            >
             {/* LEFT — ORIGINAL */}
             <ComparePane
               label="ORIGINAL"
@@ -1066,6 +1362,34 @@ export default function EditorPage() {
                   : null
               }
             />
+            {compareEdit && (
+              <CompareEditPanel
+                segments={segments}
+                activeIdx={activeIdx}
+                setActiveIdx={setActiveIdx}
+                onChangeSegment={(seg, text) => {
+                  setSegments((xs) =>
+                    xs.map((x) =>
+                      x.id === seg.id ? { ...x, translated_text: text } : x,
+                    ),
+                  )
+                }}
+                onSave={async (seg) => {
+                  try {
+                    await api.patch(`/segments/${seg.id}`, {
+                      translated_text: seg.translated_text,
+                    })
+                  } catch (err: any) {
+                    setError(
+                      err?.response?.data?.detail ||
+                        "Couldn't save that edit.",
+                    )
+                  }
+                }}
+                onRetranslate={retranslateSegment}
+              />
+            )}
+            </div>
           </div>
         ) : null}
 
@@ -1080,7 +1404,7 @@ export default function EditorPage() {
           <div
             className="grid items-center text-[11px] font-semibold tracking-[0.14em] px-5 py-3"
             style={{
-              gridTemplateColumns: "60px 1fr 1fr 80px 60px",
+              gridTemplateColumns: "60px 1fr 1fr 80px 36px 60px",
               background: "#faf5ee",
               borderBottom: "1px solid #f1e8d1",
               color: "#9a9178",
@@ -1090,6 +1414,7 @@ export default function EditorPage() {
             <div>SOURCE · {project.source_language?.toUpperCase() || ""}</div>
             <div>TARGET · {project.target_language?.toUpperCase() || ""}</div>
             <div className="text-right">TM</div>
+            <div className="text-right" title="AI retranslate">AI</div>
             <div className="text-right">✓</div>
           </div>
 
@@ -1106,7 +1431,7 @@ export default function EditorPage() {
                   onClick={() => setActiveIdx(idx)}
                   className="grid items-start px-5 py-4 text-sm cursor-pointer transition"
                   style={{
-                    gridTemplateColumns: "60px 1fr 1fr 80px 60px",
+                    gridTemplateColumns: "60px 1fr 1fr 80px 36px 60px",
                     borderBottom: "1px solid #f4ecd6",
                     background: isActive ? "#faf5ee" : "#ffffff",
                     color: "#1f2a2e",
@@ -1162,6 +1487,42 @@ export default function EditorPage() {
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation()
+                        retranslateSegment(seg)
+                      }}
+                      disabled={busy === `retranslate:${seg.id}`}
+                      aria-label="AI retranslate this segment"
+                      title="AI retranslate this segment"
+                      className="w-6 h-6 rounded-full flex items-center justify-center transition"
+                      style={{
+                        background:
+                          busy === `retranslate:${seg.id}`
+                            ? "#cfe6e2"
+                            : "#f3ecdb",
+                        color: "#0a7870",
+                        border: "1px solid #e7ddc5",
+                      }}
+                    >
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        {/* Sparkle / "regenerate" icon */}
+                        <path d="M21 12a9 9 0 1 1-3-6.7" />
+                        <path d="M21 4v5h-5" />
+                      </svg>
+                    </button>
+                  </div>
+                  <div className="flex justify-end pt-0.5">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
                         toggleApprove(seg)
                       }}
                       disabled={busy === `approve:${seg.id}`}
@@ -1198,7 +1559,9 @@ export default function EditorPage() {
         </div>
         )}
 
-        {/* SIDEBAR */}
+        {/* SIDEBAR — hidden in compare mode so the side-by-side panes
+            get the full content width. */}
+        {!compareMode && (
         <aside
           className="rounded-2xl overflow-hidden flex flex-col h-fit sticky top-4"
           style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
@@ -1277,15 +1640,81 @@ export default function EditorPage() {
                             {relativeTime(c.created_at)}
                           </div>
                         </div>
-                        <div
-                          className="text-sm leading-relaxed mb-2"
-                          style={{
-                            color: "#1f2a2e",
-                            textDecoration: c.resolved ? "line-through" : "none",
-                          }}
-                        >
-                          {c.text}
-                        </div>
+                        {editingCommentId === c.id ? (
+                          <div className="mb-2">
+                            <textarea
+                              autoFocus
+                              value={editingCommentDraft}
+                              onChange={(e) =>
+                                setEditingCommentDraft(e.target.value)
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && !e.shiftKey) {
+                                  e.preventDefault()
+                                  saveEditComment(c.id)
+                                }
+                                if (e.key === "Escape") cancelEditComment()
+                              }}
+                              rows={3}
+                              className="w-full text-sm leading-relaxed outline-none rounded-lg px-3 py-2 resize-none"
+                              style={{
+                                background: "#ffffff",
+                                border: "1px solid #0a7870",
+                                color: "#1f2a2e",
+                              }}
+                            />
+                            <div className="flex items-center justify-end gap-2 mt-2">
+                              <button
+                                type="button"
+                                onClick={cancelEditComment}
+                                className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full"
+                                style={{
+                                  background: "#ffffff",
+                                  color: "#1f2a2e",
+                                  border: "1px solid #e7ddc5",
+                                }}
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => saveEditComment(c.id)}
+                                disabled={
+                                  busy === `edit:${c.id}` ||
+                                  !editingCommentDraft.trim()
+                                }
+                                className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full"
+                                style={{
+                                  background:
+                                    busy === `edit:${c.id}` ||
+                                    !editingCommentDraft.trim()
+                                      ? "#9bc9c5"
+                                      : "#0a7870",
+                                  color: "#fff",
+                                }}
+                              >
+                                {busy === `edit:${c.id}` ? "Saving…" : "Save"}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div
+                            className="text-sm leading-relaxed mb-2"
+                            style={{
+                              color: "#1f2a2e",
+                              textDecoration: c.resolved
+                                ? "line-through"
+                                : "none",
+                            }}
+                          >
+                            {c.text}
+                          </div>
+                        )}
+                        {/* Action row: resolve / reopen + edit + delete.
+                            Edit + delete remain available even after a
+                            comment is resolved so reviewers can clean up
+                            the discussion log retroactively. */}
+                        <div className="flex items-center gap-2 flex-wrap">
                         {!c.resolved ? (
                           <button
                             type="button"
@@ -1303,6 +1732,7 @@ export default function EditorPage() {
                               : "Mark as revised"}
                           </button>
                         ) : (
+                          <>
                           <span
                             className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full inline-flex items-center gap-1"
                             style={{ background: "#d8ead6", color: "#2d5a24" }}
@@ -1321,7 +1751,55 @@ export default function EditorPage() {
                             </svg>
                             Revised
                           </span>
+                          <button
+                            type="button"
+                            onClick={() => reopenComment(c.id)}
+                            disabled={busy === `reopen:${c.id}`}
+                            className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full transition"
+                            style={{
+                              background: "#ffffff",
+                              color: "#1f2a2e",
+                              border: "1px solid #e7ddc5",
+                            }}
+                          >
+                            {busy === `reopen:${c.id}` ? "Reopening…" : "Reopen"}
+                          </button>
+                          </>
                         )}
+                        {/* Edit + delete are always available — even
+                            on resolved comments — so reviewers can
+                            clean up the discussion log retroactively.
+                            Backend enforces author-only access. */}
+                        {editingCommentId !== c.id && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => startEditComment(c.id, c.text)}
+                              className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full transition"
+                              style={{
+                                background: "#ffffff",
+                                color: "#0a7870",
+                                border: "1px solid #cfe6e2",
+                              }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteComment(c.id)}
+                              disabled={busy === `delete:${c.id}`}
+                              className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full transition"
+                              style={{
+                                background: "#ffffff",
+                                color: "#7a2f24",
+                                border: "1px solid #f2d4cf",
+                              }}
+                            >
+                              {busy === `delete:${c.id}` ? "Deleting…" : "Delete"}
+                            </button>
+                          </>
+                        )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1412,6 +1890,7 @@ export default function EditorPage() {
             )}
           </div>
         </aside>
+        )}
       </div>
 
       {/* APPROVE ALL — confirmation modal */}
@@ -1668,6 +2147,123 @@ function officeViewerUrl(srcUrl: string) {
 function gdocsViewerUrl(srcUrl: string) {
   return `https://docs.google.com/viewer?url=${encodeURIComponent(srcUrl)}&embedded=true`
 }
+
+// ============================================================
+// CompareEditPanel — scrollable list of editable segments shown in
+// a 3rd column next to the rebuild preview when the user toggles
+// EDIT on the Compare view. Each row is a textarea pre-populated
+// with the translated text; changes save on blur. A small AI
+// retranslate button per row triggers the existing handler.
+// ============================================================
+function CompareEditPanel({
+  segments,
+  activeIdx,
+  setActiveIdx,
+  onChangeSegment,
+  onSave,
+  onRetranslate,
+}: {
+  segments: Segment[]
+  activeIdx: number
+  setActiveIdx: (n: number) => void
+  onChangeSegment: (seg: Segment, text: string) => void
+  onSave: (seg: Segment) => Promise<void>
+  onRetranslate: (seg: Segment) => Promise<void>
+}) {
+  return (
+    <div
+      className="rounded-2xl overflow-hidden flex flex-col"
+      style={{
+        background: "#ffffff",
+        border: "1px solid #e7ddc5",
+        minHeight: 0,
+      }}
+    >
+      <div
+        className="px-4 py-2.5 text-[11px] font-semibold tracking-[0.14em]"
+        style={{
+          color: "#9a9178",
+          background: "#faf5ee",
+          borderBottom: "1px solid #f1e8d1",
+        }}
+      >
+        EDIT SEGMENTS · {segments.length} TOTAL
+      </div>
+      <div
+        className="flex-1 overflow-auto"
+        style={{ background: "#fbf6ea", minHeight: 0, padding: 12 }}
+      >
+        {segments.map((seg, idx) => {
+          const isActive = idx === activeIdx
+          return (
+            <div
+              key={seg.id}
+              onClick={() => setActiveIdx(idx)}
+              className="rounded-xl p-3 mb-2"
+              style={{
+                background: isActive ? "#ffffff" : "#ffffff",
+                border: `1px solid ${isActive ? "#0a7870" : "#e7ddc5"}`,
+                boxShadow: isActive
+                  ? "0 1px 4px rgba(10,120,112,0.12)"
+                  : "none",
+              }}
+            >
+              <div
+                className="flex items-center justify-between mb-1.5"
+                style={{ color: "#8a8270" }}
+              >
+                <span
+                  className="font-mono text-[10px] tabular-nums"
+                >
+                  #{String(idx).padStart(2, "0")}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onRetranslate(seg)
+                  }}
+                  className="text-[10px] font-semibold tracking-[0.06em] px-2 py-0.5 rounded-full transition"
+                  style={{
+                    background: "#f3ecdb",
+                    color: "#0a7870",
+                    border: "1px solid #e7ddc5",
+                  }}
+                  title="AI retranslate this segment"
+                >
+                  AI
+                </button>
+              </div>
+              <div
+                className="text-[11px] mb-1.5 leading-tight"
+                style={{ color: "#8a8270" }}
+              >
+                {seg.source_text}
+              </div>
+              <textarea
+                value={seg.translated_text || ""}
+                onChange={(e) => onChangeSegment(seg, e.target.value)}
+                onBlur={() => onSave(seg)}
+                rows={Math.max(
+                  2,
+                  Math.min(6, (seg.translated_text || "").split("\n").length + 1),
+                )}
+                className="w-full text-[12px] leading-snug outline-none rounded-lg px-2 py-1.5 resize-none"
+                style={{
+                  background: "#faf5ee",
+                  border: "1px solid #e7ddc5",
+                  color: "#1f2a2e",
+                  fontFamily: "inherit",
+                }}
+              />
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 
 function ComparePane({
   label,

@@ -108,3 +108,100 @@ def resolve_comment(
     db.commit()
 
     return {"status": "resolved"}
+
+
+# =========================================
+# EDIT COMMENT — author can change text anytime, even after it's
+# been marked resolved. Path is /segments/comments/{id} so it
+# doesn't collide with the segment update at /segments/{id}.
+# =========================================
+
+class CommentEdit(BaseModel):
+    text: str
+
+
+@router.patch("/comments/{comment_id}")
+def edit_comment(
+    comment_id: UUID,
+    data: CommentEdit,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    comment = (
+        db.query(SegmentComment)
+        .filter(SegmentComment.id == comment_id)
+        .first()
+    )
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    # Only the author can edit their own comment.
+    if str(comment.user_id) != str(current_user.id):
+        raise HTTPException(
+            status_code=403, detail="Only the author can edit this comment"
+        )
+    text = (data.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Comment can't be empty")
+    comment.text = text
+    db.commit()
+    db.refresh(comment)
+    return {
+        "id": str(comment.id),
+        "text": comment.text,
+        "resolved": comment.resolved,
+        "created_at": comment.created_at,
+    }
+
+
+# =========================================
+# DELETE COMMENT — author OR project member; deletes work even on
+# resolved comments. Lets reviewers clean up the discussion log.
+# =========================================
+
+@router.delete("/comments/{comment_id}")
+def delete_comment(
+    comment_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    comment = (
+        db.query(SegmentComment)
+        .filter(SegmentComment.id == comment_id)
+        .first()
+    )
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    # Only the author can delete their own comment for now. (Owners
+    # can take this further later if it becomes a need.)
+    if str(comment.user_id) != str(current_user.id):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the author can delete this comment",
+        )
+    db.delete(comment)
+    db.commit()
+    return {"status": "deleted"}
+
+
+# =========================================
+# REOPEN COMMENT — flip resolved back to false. Lets reviewers
+# revisit a discussion they prematurely marked resolved.
+# =========================================
+
+@router.patch("/comments/{comment_id}/reopen")
+def reopen_comment(
+    comment_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    comment = (
+        db.query(SegmentComment)
+        .filter(SegmentComment.id == comment_id)
+        .first()
+    )
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    comment.resolved = False
+    db.commit()
+    db.refresh(comment)
+    return {"status": "reopened", "resolved": False}
