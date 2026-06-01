@@ -572,19 +572,21 @@ def process_translation_job(project_id: str):
         # ====================================================
         # CLAUDE-AUTHORED REBUILD (premium path)
         # ----------------------------------------------------
-        # In addition to the segment-driven rebuild above, kick off
-        # a separate "premium" rebuild where we hand the original PDF
-        # straight to Claude Sonnet and ask Claude to author the
-        # entire DOCX (translation + layout) — the same workflow as
-        # uploading the PDF into Claude.ai. This produces a much
-        # better visual match for complex documents (tables, stamps,
-        # multi-column headers). Stored in `authored_docx_s3_key` and
-        # preferred by the preview + export endpoints.
+        # Gated on project.model == "claude-authored", which is set
+        # by the Rebuild engine toggle on the new-translation page.
+        # When active, we hand the original PDF straight to Claude
+        # Sonnet (same workflow as uploading into Claude.ai) and
+        # store the result in `authored_docx_s3_key`. Preview +
+        # export endpoints prefer it over the segment-driven build.
         #
         # Failures here are non-fatal — the segment-driven output is
         # still available as a fallback.
         # ====================================================
-        if source_kind == "PDF":
+        wants_authored = (
+            source_kind == "PDF"
+            and (getattr(project, "model", "") or "") == "claude-authored"
+        )
+        if wants_authored:
             try:
                 from app.services.claude_authored_rebuild import (
                     author_rebuild_docx,

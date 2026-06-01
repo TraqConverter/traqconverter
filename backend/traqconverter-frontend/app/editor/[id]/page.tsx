@@ -1436,6 +1436,44 @@ export default function EditorPage() {
                 </button>
                 <button
                   type="button"
+                  onClick={async () => {
+                    if (
+                      !window.confirm(
+                        "Rebuild this document with Claude? Claude will read the original PDF and author a fresh DOCX from scratch. This usually takes 1–3 minutes.",
+                      )
+                    ) return
+                    try {
+                      setCompareActionBusy("rerun")
+                      await api.post(`/projects/${id}/rebuild-with-claude`)
+                      await loadCompare()
+                      // Force the WYSIWYG pane to re-fetch.
+                      window.alert("Claude rebuild complete. The right pane has refreshed.")
+                    } catch (err: any) {
+                      setError(
+                        err?.response?.data?.detail ||
+                          "Couldn't run Claude rebuild.",
+                      )
+                    } finally {
+                      setCompareActionBusy(null)
+                    }
+                  }}
+                  disabled={compareActionBusy !== null}
+                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
+                  style={{
+                    background: "#0a7870",
+                    color: "#ffffff",
+                    border: "1px solid #0a7870",
+                    cursor:
+                      compareActionBusy !== null ? "not-allowed" : "pointer",
+                  }}
+                  title="Send the original PDF to Claude and have Claude author a fresh translated DOCX"
+                >
+                  {compareActionBusy === "rerun" && false
+                    ? "Rebuilding…"
+                    : "✦ Rebuild with Claude"}
+                </button>
+                <button
+                  type="button"
                   onClick={() => setShowRerunPicker((v) => !v)}
                   disabled={compareActionBusy !== null}
                   className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"

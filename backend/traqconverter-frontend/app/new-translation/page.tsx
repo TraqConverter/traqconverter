@@ -298,6 +298,12 @@ export default function NewProjectPage() {
   // server defaults kick in when these are left blank.
   const [showRunOptions, setShowRunOptions] = useState(true)
   const [runMode, setRunMode] = useState<"translate" | "dtp">("translate")
+  // Rebuild engine — Claude-direct (Claude authors the whole DOCX
+  // from the PDF, premium quality, slow) vs. Segment-pipeline
+  // (per-segment LLM translation, fast, lets you pick the model).
+  const [rebuildEngine, setRebuildEngine] = useState<
+    "claude-authored" | "segment-pipeline"
+  >("claude-authored")
   const [aiModel, setAiModel] = useState<string>("")
   const [models, setModels] = useState<
     { id: string; label: string; provider: string }[]
@@ -367,11 +373,15 @@ export default function NewProjectPage() {
       formData.append("use_tm", String(useTM))
       formData.append("apply_glossary", String(applyGlossary))
       formData.append("request_certification", String(requestCert))
-      // The project's "model" field doubles as the run-mode signal
-      // too — "dtp" means "skip translation, just rebuild the doc
-      // editable" while a model id means "translate using this model".
+      // The project's "model" field doubles as the run-mode + engine
+      // signal. Values are mutually exclusive:
+      //   "dtp"              → skip translation, just rebuild editable
+      //   "claude-authored"  → Claude authors the whole DOCX (premium)
+      //   <model id>         → segment-pipeline w/ that LLM
       if (runMode === "dtp") {
         formData.append("model", "dtp")
+      } else if (rebuildEngine === "claude-authored") {
+        formData.append("model", "claude-authored")
       } else if (aiModel) {
         formData.append("model", aiModel)
       }
@@ -681,35 +691,130 @@ export default function NewProjectPage() {
 
             {showRunOptions && (
               <div className="px-6 py-2">
-                {/* AI MODEL */}
+                {/* REBUILD ENGINE */}
                 <RunOptionRow
-                  label="AI Model"
-                  helper="The translator engine used for this project. Defaults to a balanced GPT/Claude variant."
+                  label="Rebuild engine"
+                  helper="Claude-direct sends the PDF straight to Claude Sonnet and asks Claude to author the entire translated DOCX (same workflow as Claude.ai — slow, premium quality). Segment pipeline uses per-segment LLM translation with the model of your choice (fast, lets you pick GPT vs Claude variants)."
                 >
-                  <select
-                    value={aiModel}
-                    onChange={(e) => setAiModel(e.target.value)}
-                    disabled={runMode === "dtp"}
-                    className="text-sm outline-none rounded-lg px-3 py-2 w-full max-w-[260px]"
+                  <div
                     style={{
-                      background:
-                        runMode === "dtp" ? "#f6efe0" : "#faf5ee",
-                      border: "1px solid #e7ddc5",
-                      color: runMode === "dtp" ? "#9a9178" : "#1f2a2e",
-                      cursor:
-                        runMode === "dtp" ? "not-allowed" : "pointer",
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 8,
+                      width: "100%",
+                      maxWidth: 520,
                     }}
                   >
-                    {models.length === 0 && (
-                      <option value="">Default (balanced)</option>
-                    )}
-                    {models.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
+                    {(
+                      [
+                        {
+                          id: "claude-authored",
+                          title: "Claude-direct",
+                          desc: "Claude authors the whole DOCX from the PDF. Premium quality, slower.",
+                        },
+                        {
+                          id: "segment-pipeline",
+                          title: "Segment pipeline",
+                          desc: "Per-segment LLM translation. Fast. Pick the model below.",
+                        },
+                      ] as const
+                    ).map((opt) => {
+                      const active = rebuildEngine === opt.id
+                      const disabled = runMode === "dtp"
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => !disabled && setRebuildEngine(opt.id)}
+                          disabled={disabled}
+                          className="text-left p-3 rounded-xl transition"
+                          style={{
+                            background: disabled
+                              ? "#f6efe0"
+                              : active
+                              ? "#ffffff"
+                              : "#faf5ee",
+                            border: active
+                              ? "2px solid #0a7870"
+                              : "1px solid #e7ddc5",
+                            color: disabled ? "#9a9178" : "#1f2a2e",
+                            cursor: disabled ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          <div
+                            className="flex items-center gap-2 text-[13px] font-semibold"
+                            style={{ marginBottom: 4 }}
+                          >
+                            <span
+                              style={{
+                                width: 14,
+                                height: 14,
+                                borderRadius: 999,
+                                border: active
+                                  ? "4px solid #0a7870"
+                                  : "1px solid #cdb98a",
+                                background: "#ffffff",
+                                display: "inline-block",
+                                flexShrink: 0,
+                              }}
+                            />
+                            {opt.title}
+                            {opt.id === "claude-authored" && (
+                              <span
+                                className="text-[9px] font-semibold tracking-[0.08em] px-1.5 py-0.5 rounded"
+                                style={{
+                                  background: "#0a7870",
+                                  color: "#ffffff",
+                                  marginLeft: 4,
+                                }}
+                              >
+                                RECOMMENDED
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            className="text-[11px]"
+                            style={{ color: "#6b6558", lineHeight: 1.4 }}
+                          >
+                            {opt.desc}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
                 </RunOptionRow>
+
+                {/* AI MODEL — only shown when Segment pipeline is selected. */}
+                {rebuildEngine === "segment-pipeline" && (
+                  <RunOptionRow
+                    label="AI Model"
+                    helper="The translator engine used per segment. Only applies when Rebuild engine is set to Segment pipeline."
+                  >
+                    <select
+                      value={aiModel}
+                      onChange={(e) => setAiModel(e.target.value)}
+                      disabled={runMode === "dtp"}
+                      className="text-sm outline-none rounded-lg px-3 py-2 w-full max-w-[260px]"
+                      style={{
+                        background:
+                          runMode === "dtp" ? "#f6efe0" : "#faf5ee",
+                        border: "1px solid #e7ddc5",
+                        color: runMode === "dtp" ? "#9a9178" : "#1f2a2e",
+                        cursor:
+                          runMode === "dtp" ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {models.length === 0 && (
+                        <option value="">Default (balanced)</option>
+                      )}
+                      {models.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
+                      ))}
+                    </select>
+                  </RunOptionRow>
+                )}
 
                 {/* PAGE ORIENTATION */}
                 <RunOptionRow
@@ -817,7 +922,6 @@ export default function NewProjectPage() {
               </div>
             )}
           </div>
-
           {/* OPTIONS */}
           <div
             className="rounded-2xl p-6"
