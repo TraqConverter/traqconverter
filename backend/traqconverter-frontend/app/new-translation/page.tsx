@@ -696,9 +696,10 @@ export default function NewProjectPage() {
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: 8,
+                      gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)",
+                      gap: 6,
                       width: "100%",
+                      minWidth: 0,
                     }}
                   >
                     {(
@@ -738,7 +739,8 @@ export default function NewProjectPage() {
                           }}
                         >
                           <div
-                            className="flex items-center gap-2 text-[12px] font-semibold whitespace-nowrap"
+                            className="flex items-center gap-1.5 text-[11px] font-semibold"
+                            style={{ minWidth: 0 }}
                           >
                             <span
                               style={{
