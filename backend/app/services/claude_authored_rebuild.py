@@ -271,7 +271,7 @@ def _run_script_in_sandbox(
             f.write(script)
             f.write("\n")
 
-        cmd = [sys.executable, "-I", "-S", str(script_path)]
+        cmd = [sys.executable, str(script_path)]
         # -I: isolate (ignore PYTHONPATH env, user site-packages)
         # -S: don't run site.py
         # We do want python-docx, so we set PYTHONPATH back to the
