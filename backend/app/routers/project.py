@@ -1441,6 +1441,86 @@ def revise_project(
 # different model or just start over.
 # ============================================================
 
+# ============================================================
+# REBUILD WITH CLAUDE — on-demand "Premium rebuild" for an existing
+# project. Downloads the original PDF, runs the Claude-authored
+# rebuild service (sends PDF → Claude Sonnet → python-docx script →
+# DOCX), uploads the result to Supabase, and points
+# project.authored_docx_s3_key at it. Edited HTML is cleared so the
+# new authored DOCX is what the preview shows.
+#
+# Triggered by the "Rebuild with Claude" button in the editor
+# toolbar — used when the project was created before authored
+# rebuild was wired, or when the user wants a fresh authored pass.
+# ============================================================
+
+@router.post("/{project_id}/rebuild-with-claude")
+def rebuild_with_claude(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    import tempfile
+    from pathlib import Path as _P
+
+    from app.services.s3_service import (
+        download_file_from_s3,
+        upload_file_to_s3,
+    )
+    from app.services.claude_authored_rebuild import author_rebuild_docx
+
+    project = get_user_project_or_404(db, project_id, current_user)
+
+    # Only meaningful for PDF source projects — Claude needs the PDF
+    # to see the layout.
+    if (project.source_kind or "").upper() != "PDF":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Claude-direct rebuild only works for PDF source "
+                "projects (this project is " + str(project.source_kind) + ")."
+            ),
+        )
+
+    tmp_dir = _P(tempfile.mkdtemp())
+    try:
+        src_path = tmp_dir / (project.file_name or "source.pdf")
+        download_file_from_s3(project.file_path, src_path)
+        with open(src_path, "rb") as f:
+            pdf_bytes = f.read()
+
+        docx_bytes = author_rebuild_docx(
+            pdf_bytes=pdf_bytes,
+            source_lang=project.source_language or "",
+            target_lang=project.target_language or "",
+        )
+
+        out_path = tmp_dir / f"authored_{project.id}.docx"
+        with open(out_path, "wb") as f:
+            f.write(docx_bytes)
+
+        key = upload_file_to_s3(out_path)
+        project.authored_docx_s3_key = key
+        # User's prior HTML edits no longer match the new structure —
+        # clear them so the preview reflects the new authored DOCX.
+        project.edited_html = None
+        db.commit()
+    except Exception as e:
+        logger.exception("On-demand rebuild-with-claude failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Claude rebuild failed: " + str(e),
+        )
+    finally:
+        import shutil as _sh
+        _sh.rmtree(tmp_dir, ignore_errors=True)
+
+    return {
+        "ok": True,
+        "authored_docx_s3_key": project.authored_docx_s3_key,
+    }
+
+
 class _RerunProjectPayload(BaseModel):
     model: Optional[str] = None  # override the project's chosen model
 
