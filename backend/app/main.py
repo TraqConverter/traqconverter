@@ -80,6 +80,16 @@ def _ensure_schema_columns():
                 "ALTER TABLE teams "
                 "ADD COLUMN IF NOT EXISTS address VARCHAR"
             ),
+            # Claude-authored rebuild path (option 1 — PDF goes
+            # straight to Claude, Claude authors the DOCX).
+            (
+                "ALTER TABLE translation_projects "
+                "ADD COLUMN IF NOT EXISTS authored_docx_s3_key VARCHAR"
+            ),
+            (
+                "ALTER TABLE translation_projects "
+                "ADD COLUMN IF NOT EXISTS edited_html TEXT"
+            ),
         ]
         with engine.begin() as conn:
             for stmt in STATEMENTS:
