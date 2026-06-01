@@ -117,6 +117,20 @@ class TranslationProject(Base):
     )
 
     # --------------------------------
+    # Claude-authored rebuild
+    # --------------------------------
+    # Supabase storage key for the DOCX that Claude authored directly
+    # from the source PDF (the "premium" rebuild path). When set, the
+    # preview + export endpoints serve this DOCX instead of building
+    # one from segments via the structured renderer.
+    authored_docx_s3_key = Column(String, nullable=True)
+    # User-edited HTML override of the authored DOCX. The WYSIWYG
+    # right pane in the editor auto-saves into this field every ~1.5s
+    # of inactivity. On export we convert this HTML back to DOCX so
+    # the user's visual edits actually land in the exported file.
+    edited_html = Column(String, nullable=True)
+
+    # --------------------------------
     # Metadata
     # --------------------------------
     created_at = Column(DateTime, default=datetime.utcnow)

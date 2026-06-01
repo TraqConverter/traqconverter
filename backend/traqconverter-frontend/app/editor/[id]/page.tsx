@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState, useCallback } from "react"
+import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 
@@ -149,7 +149,12 @@ export default function EditorPage() {
   // output PDF so a reviewer can verify the rebuild visually. When
   // active, the segments table is replaced with these two panes
   // (the right-side sidebar stays).
-  const [compareMode, setCompareMode] = useState(false)
+  //
+  // Compare mode is now the DEFAULT view — opening a project drops
+  // the user straight into the source-vs-WYSIWYG side-by-side. A
+  // "Segments" pill in the toolbar reveals the per-row table for
+  // power users who want to drop into segment-level editing.
+  const [compareMode, setCompareMode] = useState(true)
   const [sourcePreview, setSourcePreview] = useState<{
     url: string
     kind: "pdf" | "image" | "other"
@@ -225,18 +230,32 @@ export default function EditorPage() {
       .catch(() => setTranslationModels([]))
   }, [])
 
-  const requestRevision = async () => {
-    const instructions = window.prompt(
-      "Optional instructions for the AI reviewer (e.g. 'use more " +
-        "formal language', 'prefer Municipality over City'). Leave " +
-        "empty for a default quality pass.",
-      "",
-    )
-    if (instructions === null) return // cancelled
+  // Request Revision modal — replaces the old window.prompt. Lets
+  // the user pick which AI engine reviews the translation and add
+  // optional instructions. The backend /revise endpoint already
+  // accepts a `model` field.
+  const [revisionModal, setRevisionModal] = useState<{
+    open: boolean
+    instructions: string
+    model: string
+  }>({ open: false, instructions: "", model: "" })
+
+  const openRevisionModal = () => {
+    setRevisionModal({
+      open: true,
+      instructions: "",
+      model:
+        project?.model || translationModels[0]?.id || "claude-sonnet-4-6",
+    })
+  }
+
+  const submitRevision = async () => {
     try {
       setCompareActionBusy("revise")
+      setRevisionModal((m) => ({ ...m, open: false }))
       const res = await api.post(`/projects/${id}/revise`, {
-        instructions: instructions.trim() || null,
+        instructions: revisionModal.instructions.trim() || null,
+        model: revisionModal.model || null,
       })
       // Refresh segments + the rebuild so Compare reflects the new
       // text immediately.
@@ -253,6 +272,10 @@ export default function EditorPage() {
       setCompareActionBusy(null)
     }
   }
+
+  // Kept for the toolbar button — opens the modal instead of doing
+  // the work directly.
+  const requestRevision = openRevisionModal
 
   // Glossary-from-Compare flow — small modal pre-filled with the
   // segment's source + translated text. User trims to the actual
@@ -486,6 +509,16 @@ export default function EditorPage() {
     if (!id) return
     fetchProject()
   }, [id, fetchProject])
+
+  // Compare mode is the default view — auto-prime the source +
+  // rebuild URLs as soon as we have a project, so the two panes
+  // render immediately without the user clicking anything.
+  useEffect(() => {
+    if (project && compareMode && !sourcePreview) {
+      loadCompare()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project, compareMode])
 
   // Poll for translation completion when the project is still processing.
   useEffect(() => {
@@ -1053,21 +1086,22 @@ export default function EditorPage() {
             Delete
           </button>
 
-          {/* COMPARE — swaps the segments table for a side-by-side
-              view of the ORIGINAL document and the REBUILT output
-              PDF so a reviewer can visually verify the rebuild. */}
+          {/* SEGMENTS — inverse of Compare. Compare is the default
+              view; this pill toggles into the per-row segment
+              editor for power users who want to drop down to
+              segment-level editing, TM matches, glossary, etc. */}
           <button
             type="button"
             onClick={toggleCompareMode}
             className="inline-flex items-center gap-2 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
             style={{
-              background: compareMode ? "#0a7870" : "#ffffff",
-              color: compareMode ? "#ffffff" : "#1f2a2e",
-              border: compareMode
+              background: !compareMode ? "#0a7870" : "#ffffff",
+              color: !compareMode ? "#ffffff" : "#1f2a2e",
+              border: !compareMode
                 ? "1px solid #0a7870"
                 : "1px solid #e7ddc5",
             }}
-            title="Compare the original document with the rebuilt output"
+            title="Drop into the per-row segment editor"
           >
             <svg
               width="14"
@@ -1079,10 +1113,11 @@ export default function EditorPage() {
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <rect x="3" y="4" width="8" height="16" rx="1.5" />
-              <rect x="13" y="4" width="8" height="16" rx="1.5" />
+              <line x1="4" y1="6" x2="20" y2="6" />
+              <line x1="4" y1="12" x2="20" y2="12" />
+              <line x1="4" y1="18" x2="20" y2="18" />
             </svg>
-            {compareMode ? "Hide compare" : "Compare"}
+            {compareMode ? "Segments" : "Back to compare"}
           </button>
 
           {/* STATUS PILL with dropdown */}
@@ -2251,6 +2286,137 @@ export default function EditorPage() {
           source + translated text. User trims to the actual term and
           saves via POST /glossary. Source + target languages come
           from the project. */}
+      {/* REQUEST REVISION modal — choose model + add instructions. */}
+      {revisionModal.open && (
+        <div
+          onClick={() =>
+            setRevisionModal((m) => ({ ...m, open: false }))
+          }
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(31,42,46,0.45)",
+            backdropFilter: "blur(2px)",
+            zIndex: 100,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 520,
+              maxWidth: "92vw",
+              background: "#fbf6ea",
+              borderRadius: 18,
+              boxShadow: "0 18px 40px rgba(0,0,0,0.25)",
+              padding: 24,
+              border: "1px solid #e7ddc5",
+            }}
+          >
+            <div
+              className="text-[11px] font-semibold tracking-[0.16em]"
+              style={{ color: "#8a8270", marginBottom: 6 }}
+            >
+              REQUEST REVISION
+            </div>
+            <div
+              className="text-[16px] font-semibold"
+              style={{ color: "#1f2a2e", marginBottom: 16 }}
+            >
+              Have an AI reviewer improve the whole translation
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label
+                className="text-[11px] font-semibold tracking-[0.08em]"
+                style={{ color: "#6b6558", display: "block", marginBottom: 6 }}
+              >
+                AI ENGINE
+              </label>
+              <select
+                value={revisionModal.model}
+                onChange={(e) =>
+                  setRevisionModal((m) => ({ ...m, model: e.target.value }))
+                }
+                className="w-full text-[13px] px-3 py-2 rounded-lg outline-none"
+                style={{
+                  background: "#ffffff",
+                  border: "1px solid #e7ddc5",
+                  color: "#1f2a2e",
+                }}
+              >
+                {translationModels.length === 0 ? (
+                  <option value="">Default</option>
+                ) : (
+                  translationModels.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label} {m.provider ? `· ${m.provider}` : ""}
+                    </option>
+                  ))
+                )}
+              </select>
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label
+                className="text-[11px] font-semibold tracking-[0.08em]"
+                style={{ color: "#6b6558", display: "block", marginBottom: 6 }}
+              >
+                INSTRUCTIONS (OPTIONAL)
+              </label>
+              <textarea
+                value={revisionModal.instructions}
+                onChange={(e) =>
+                  setRevisionModal((m) => ({
+                    ...m,
+                    instructions: e.target.value,
+                  }))
+                }
+                rows={4}
+                placeholder="e.g. 'use more formal language', 'prefer Municipality over City', 'British spelling'…"
+                className="w-full text-[13px] px-3 py-2 rounded-lg outline-none resize-none"
+                style={{
+                  background: "#ffffff",
+                  border: "1px solid #e7ddc5",
+                  color: "#1f2a2e",
+                  fontFamily: "inherit",
+                }}
+              />
+            </div>
+            <div
+              style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  setRevisionModal((m) => ({ ...m, open: false }))
+                }
+                className="text-[13px] font-semibold px-4 py-2 rounded-full transition"
+                style={{
+                  background: "#ffffff",
+                  color: "#1f2a2e",
+                  border: "1px solid #e7ddc5",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitRevision}
+                className="text-[13px] font-semibold px-4 py-2 rounded-full transition"
+                style={{
+                  background: "#0a7870",
+                  color: "#ffffff",
+                  border: "1px solid #0a7870",
+                }}
+              >
+                Run revision
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {glossaryDraft.open && (
         <div
           onClick={() =>
@@ -2608,6 +2774,12 @@ function CompareEditPanel({
   const [error, setError] = useState<string>("")
   // Bump to force a re-fetch (e.g. after the user clicks "Reload").
   const [reloadKey, setReloadKey] = useState(0)
+  // Save status indicator. "idle" = no pending edits. "dirty" =
+  // edits pending but the debounce hasn't fired yet. "saving" = in
+  // flight. "saved" = the last save just landed.
+  const [saveState, setSaveState] = useState<
+    "idle" | "dirty" | "saving" | "saved"
+  >("idle")
 
   useEffect(() => {
     if (!compareOpen || !projectId) return
@@ -2647,6 +2819,34 @@ function CompareEditPanel({
     }
   }, [projectId, compareOpen, reloadKey])
 
+  // Debounced auto-save: every time the user edits, wait 1.5s of
+  // inactivity then PATCH /projects/{id}/edited-html with the current
+  // innerHTML so it persists. Cancel + reschedule on every input.
+  const saveTimerRef = useRef<number | null>(null)
+
+  const scheduleSave = (currentHtml: string) => {
+    setSaveState("dirty")
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current)
+    }
+    saveTimerRef.current = window.setTimeout(async () => {
+      try {
+        setSaveState("saving")
+        await api.patch(`/projects/${projectId}/edited-html`, {
+          html: currentHtml,
+        })
+        setSaveState("saved")
+        // Drop back to idle after a short visual flash.
+        window.setTimeout(() => setSaveState("idle"), 1200)
+      } catch {
+        setSaveState("idle")
+        // We don't surface this to the user — autosave failures are
+        // soft. The Refresh button will re-render from the server
+        // copy if anything diverges.
+      }
+    }, 1500) as unknown as number
+  }
+
   return (
     <div
       className="rounded-2xl overflow-hidden flex flex-col"
@@ -2661,20 +2861,49 @@ function CompareEditPanel({
         }}
       >
         <span>TRANSLATION · EDIT THE DOCUMENT</span>
-        <button
-          type="button"
-          onClick={() => setReloadKey((k) => k + 1)}
-          className="text-[10px] font-semibold tracking-[0.08em] px-2 py-1 rounded-md transition"
-          style={{
-            background: "#ffffff",
-            color: "#0a5e58",
-            border: "1px solid #cfe6e2",
-            cursor: "pointer",
-          }}
-          title="Re-render from the latest segments"
-        >
-          ⟳ Refresh
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {saveState !== "idle" && (
+            <span
+              className="text-[10px] font-medium tracking-[0.06em]"
+              style={{
+                color:
+                  saveState === "saved"
+                    ? "#2d6a4f"
+                    : saveState === "saving"
+                    ? "#0a7870"
+                    : "#9a7330",
+              }}
+            >
+              {saveState === "dirty"
+                ? "● Unsaved edits"
+                : saveState === "saving"
+                ? "↻ Saving…"
+                : "✓ Saved"}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={async () => {
+              if (!window.confirm("Discard your edits and re-render from the original?")) return
+              try {
+                await api.delete(`/projects/${projectId}/edited-html`)
+              } catch {
+                /* ignore */
+              }
+              setReloadKey((k) => k + 1)
+            }}
+            className="text-[10px] font-semibold tracking-[0.08em] px-2 py-1 rounded-md transition"
+            style={{
+              background: "#ffffff",
+              color: "#0a5e58",
+              border: "1px solid #cfe6e2",
+              cursor: "pointer",
+            }}
+            title="Discard edits and re-render from the original"
+          >
+            ⟳ Refresh
+          </button>
+        </div>
       </div>
       <div
         className="flex-1 overflow-auto"
@@ -2736,6 +2965,29 @@ function CompareEditPanel({
               suppressContentEditableWarning
               spellCheck
               dangerouslySetInnerHTML={{ __html: html }}
+              onInput={(e) => {
+                const target = e.currentTarget as HTMLDivElement
+                scheduleSave(target.innerHTML)
+              }}
+              onBlur={(e) => {
+                // Force-save on blur even if the debounce hasn't
+                // fired — gives a stronger guarantee that leaving
+                // the page captures the user's work.
+                const target = e.currentTarget as HTMLDivElement
+                if (saveTimerRef.current) {
+                  window.clearTimeout(saveTimerRef.current)
+                  saveTimerRef.current = null
+                }
+                api
+                  .patch(`/projects/${projectId}/edited-html`, {
+                    html: target.innerHTML,
+                  })
+                  .then(() => {
+                    setSaveState("saved")
+                    window.setTimeout(() => setSaveState("idle"), 1200)
+                  })
+                  .catch(() => setSaveState("idle"))
+              }}
             />
             <div
               style={{
@@ -2748,9 +3000,9 @@ function CompareEditPanel({
                 fontFamily: "system-ui, sans-serif",
               }}
             >
-              Edits here are a visual preview. To persist changes,
-              edit segments directly via the table below or use the
-              ↻ Re-run option from the toolbar.
+              Edits here autosave every ~1.5 seconds. When you click
+              Export, the exported DOCX/PDF reflects exactly what you
+              see on this page.
             </div>
           </div>
         )}

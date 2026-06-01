@@ -880,6 +880,83 @@ def _project_preview_team_check(db, project_id, user):
     return get_user_project_or_404(db, project_id, user)
 
 
+# ============================================================
+# Resolve the rebuild DOCX bytes for a project, preferring (in
+# order):
+#   1. edited_html  — HTML edited in the WYSIWYG right pane,
+#                     converted back to DOCX via htmldocx.
+#   2. authored_docx_s3_key — Claude-authored DOCX (option 1).
+#   3. segment-driven _build_layout_docx_live as the final fallback.
+#
+# This is what the preview, the HTML preview, and the export
+# endpoints all rely on so a single resolution lives in one place.
+# ============================================================
+
+def _resolve_rebuild_docx_bytes(
+    project, segments, *, preview_only: bool = True
+) -> bytes:
+    from io import BytesIO
+
+    # 1) User edited HTML → preferred source of truth.
+    edited_html = getattr(project, "edited_html", None)
+    if edited_html and edited_html.strip():
+        try:
+            from htmldocx import HtmlToDocx  # type: ignore
+            from docx import Document
+
+            parser = HtmlToDocx()
+            doc = Document()
+            parser.add_html_to_document(edited_html, doc)
+            buf = BytesIO()
+            doc.save(buf)
+            return buf.getvalue()
+        except Exception:
+            logger.exception(
+                "HTML→DOCX conversion failed — falling back to "
+                "authored DOCX or segment renderer"
+            )
+
+    # 2) Claude-authored DOCX in storage → download and return.
+    authored_key = getattr(project, "authored_docx_s3_key", None)
+    if authored_key:
+        try:
+            import tempfile
+            from app.services.s3_service import download_file_from_s3
+
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+            tmp.close()
+            from pathlib import Path as _P
+
+            download_file_from_s3(authored_key, _P(tmp.name))
+            with open(tmp.name, "rb") as f:
+                data = f.read()
+            try:
+                os.unlink(tmp.name)
+            except Exception:
+                pass
+            return data
+        except Exception:
+            logger.exception(
+                "Authored DOCX download failed — falling back to "
+                "segment renderer"
+            )
+
+    # 3) Segment-driven rebuild (legacy path).
+    from app.services.export_service import _build_layout_docx_live
+
+    docx_buf = _build_layout_docx_live(
+        segments, project, preview_only=preview_only
+    )
+    if docx_buf is None:
+        raise HTTPException(
+            status_code=500, detail="Couldn't build rebuild DOCX"
+        )
+    try:
+        return docx_buf.getvalue()
+    except AttributeError:
+        return docx_buf
+
+
 @router.get("/{project_id}/preview/source")
 def preview_source(
     project_id: UUID,
@@ -975,11 +1052,13 @@ def preview_rebuild(
     """Build a fresh DOCX rebuild on demand, convert to PDF via
     LibreOffice, and stream inline. Browser native PDF viewer
     renders within seconds — no Office Online round-trip.
+
+    Source of truth for the DOCX (in order of preference):
+      1. edited_html  — user's WYSIWYG edits, converted to DOCX.
+      2. authored_docx_s3_key — Claude-authored DOCX from worker.
+      3. segment-driven _build_layout_docx_live fallback.
     """
-    from app.services.export_service import (
-        _build_layout_docx_live,
-        _convert_docx_to_pdf,
-    )
+    from app.services.export_service import _convert_docx_to_pdf
 
     project = _project_preview_team_check(db, project_id, user)
 
@@ -993,21 +1072,12 @@ def preview_rebuild(
         .order_by(TranslationSegment.segment_index)
         .all()
     )
-    if not segments:
+    if not segments and not getattr(project, "authored_docx_s3_key", None):
         raise HTTPException(status_code=404, detail="No segments yet")
 
-    # preview_only=True skips the embedded original pages AND the
-    # certification block — the Compare view shows the original in
-    # the left pane already and the cert is irrelevant for review.
-    docx_buf = _build_layout_docx_live(segments, project, preview_only=True)
-    if docx_buf is None:
-        raise HTTPException(
-            status_code=500, detail="Couldn't build rebuild DOCX"
-        )
-    try:
-        docx_bytes = docx_buf.getvalue()
-    except AttributeError:
-        docx_bytes = docx_buf
+    docx_bytes = _resolve_rebuild_docx_bytes(
+        project, segments, preview_only=True
+    )
 
     pdf_bytes = _convert_docx_to_pdf(docx_bytes)
     if not pdf_bytes:
@@ -1047,13 +1117,21 @@ def preview_rebuild_html(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user_or_query),
 ):
-    from app.services.export_service import _build_layout_docx_live
-
     project = _project_preview_team_check(db, project_id, user)
 
     # Stash auth context the export pipeline expects.
     project._export_user_email = user.email or ""
     project._export_user_logo_key = getattr(user, "logo_s3_key", None)
+
+    # If the user has already edited the HTML, just return that —
+    # there's no point round-tripping HTML→DOCX→HTML.
+    edited_html = getattr(project, "edited_html", None)
+    if edited_html and edited_html.strip():
+        return _FastResponse(
+            content=edited_html,
+            media_type="text/html; charset=utf-8",
+            headers={"Cache-Control": "private, max-age=10"},
+        )
 
     segments = (
         db.query(TranslationSegment)
@@ -1061,18 +1139,12 @@ def preview_rebuild_html(
         .order_by(TranslationSegment.segment_index)
         .all()
     )
-    if not segments:
+    if not segments and not getattr(project, "authored_docx_s3_key", None):
         raise HTTPException(status_code=404, detail="No segments yet")
 
-    docx_buf = _build_layout_docx_live(segments, project, preview_only=True)
-    if docx_buf is None:
-        raise HTTPException(
-            status_code=500, detail="Couldn't build rebuild DOCX"
-        )
-    try:
-        docx_bytes = docx_buf.getvalue()
-    except AttributeError:
-        docx_bytes = docx_buf
+    docx_bytes = _resolve_rebuild_docx_bytes(
+        project, segments, preview_only=True
+    )
 
     # mammoth gives us clean, semantic HTML (paragraphs, tables,
     # headings) without LibreOffice's verbose CSS. Inline style maps
@@ -1237,6 +1309,50 @@ def suggest_glossary(
 class _ReviseProjectPayload(BaseModel):
     instructions: Optional[str] = None
     model: Optional[str] = None  # override the project's chosen model
+
+
+# ============================================================
+# EDITED HTML — the Compare-view WYSIWYG right pane auto-saves the
+# user's in-page edits here every ~1.5s. Stored on the project and
+# preferred by the preview + export endpoints.
+# ============================================================
+
+class _EditedHtmlPayload(BaseModel):
+    html: str
+
+
+@router.patch("/{project_id}/edited-html")
+def save_edited_html(
+    project_id: UUID,
+    data: _EditedHtmlPayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = get_user_project_or_404(db, project_id, current_user)
+    # Reasonable cap to keep a runaway editor from blowing the row.
+    raw = data.html or ""
+    if len(raw) > 2_000_000:
+        raise HTTPException(
+            status_code=413,
+            detail="Edited HTML too large (>2MB)",
+        )
+    project.edited_html = raw.strip() or None
+    db.commit()
+    return {"ok": True, "size": len(project.edited_html or "")}
+
+
+@router.delete("/{project_id}/edited-html")
+def clear_edited_html(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Drop the WYSIWYG override and fall back to the authored DOCX /
+    segment-driven rebuild on the next preview/export."""
+    project = get_user_project_or_404(db, project_id, current_user)
+    project.edited_html = None
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/{project_id}/revise")

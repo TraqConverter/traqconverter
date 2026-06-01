@@ -570,6 +570,56 @@ def process_translation_job(project_id: str):
         db.commit()
 
         # ====================================================
+        # CLAUDE-AUTHORED REBUILD (premium path)
+        # ----------------------------------------------------
+        # In addition to the segment-driven rebuild above, kick off
+        # a separate "premium" rebuild where we hand the original PDF
+        # straight to Claude Sonnet and ask Claude to author the
+        # entire DOCX (translation + layout) — the same workflow as
+        # uploading the PDF into Claude.ai. This produces a much
+        # better visual match for complex documents (tables, stamps,
+        # multi-column headers). Stored in `authored_docx_s3_key` and
+        # preferred by the preview + export endpoints.
+        #
+        # Failures here are non-fatal — the segment-driven output is
+        # still available as a fallback.
+        # ====================================================
+        if source_kind == "PDF":
+            try:
+                from app.services.claude_authored_rebuild import (
+                    author_rebuild_docx,
+                )
+
+                logger.info(
+                    "Authored rebuild starting (project=%s)", project_id
+                )
+                with open(input_file, "rb") as _pdf_in:
+                    pdf_bytes = _pdf_in.read()
+                authored_bytes = author_rebuild_docx(
+                    pdf_bytes=pdf_bytes,
+                    source_lang=source_lang,
+                    target_lang=target_lang,
+                )
+                authored_path = (
+                    temp_dir / f"authored_{project.id}.docx"
+                )
+                with open(authored_path, "wb") as f:
+                    f.write(authored_bytes)
+                authored_key = upload_file_to_s3(authored_path)
+                project.authored_docx_s3_key = authored_key
+                db.commit()
+                logger.info(
+                    "Authored rebuild OK (project=%s key=%s size=%d)",
+                    project_id, authored_key, len(authored_bytes),
+                )
+            except Exception:
+                logger.exception(
+                    "Authored rebuild failed — falling back to "
+                    "segment-driven output (project=%s)",
+                    project_id,
+                )
+
+        # ====================================================
         # CERTIFICATION
         # ====================================================
         try:
