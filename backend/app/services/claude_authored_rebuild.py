@@ -87,10 +87,16 @@ Layout guidance — IMPORTANT, please follow carefully:
     original. Use bold for the actual bold elements (headings,
     column headers, key labels) — not for everything.
 
-  * For images in the source (coats of arms, signatures, stamps,
-    photos), insert a short italic bracketed placeholder paragraph
-    in the right position, e.g. "[Coat of Arms]", "[Signature]",
-    "[Stamp]", "[Photo]". Don't try to reference image files.
+  * REUSE the real image files from the original PDF for any
+    logos, coats of arms, stamps, signatures, photos, QR codes,
+    or embedded graphics. They are extracted ahead of time and
+    listed below under "EXTRACTED IMAGES" with their relative
+    paths (under ./images/) and source page numbers. Insert each
+    with `doc.add_picture("images/<filename>", width=Cm(N))` at
+    the matching position. Sizing hint: logos ~3-4 cm wide,
+    stamps ~3 cm, signatures ~5 cm, ID photos ~3 cm tall. Only
+    fall back to a bracketed text placeholder (e.g. "[Stamp]") if
+    no listed image clearly matches the position in the source.
 
   * Translate every visible textual element. Preserve identifiers,
     codes, dates, file/registration numbers, and proper names
@@ -105,6 +111,10 @@ original". Produce that. The output should read like a human
 translator typed it up in Word, not like a layout engine reflowed
 it through tables.
 
+EXTRACTED IMAGES
+================
+{image_list}
+
 Begin your code block now.
 """).strip()
 
@@ -118,13 +128,16 @@ _SANDBOX_PREAMBLE = textwrap.dedent('''
     # --- Sandbox preamble (injected by claude_authored_rebuild) ---
     # Strip out network / shell escape modules before user code runs.
     import sys as _sys
+    # Only block modules that actually open network sockets or
+    # spawn shells. urllib.parse, urllib, http, ctypes are NOT
+    # blocked because lxml (a python-docx dep) imports them
+    # internally for XML namespace / URI parsing.
     _BLOCKED = (
-        "socket", "ssl", "ftplib", "telnetlib",
-        "smtplib", "poplib", "imaplib", "http",
-        "http.client", "urllib", "urllib.request",
-        "urllib.parse", "requests", "httpx",
+        "socket", "ssl",
+        "ftplib", "telnetlib", "smtplib", "poplib", "imaplib",
+        "urllib.request", "http.client",
+        "requests", "httpx",
         "subprocess", "multiprocessing", "asyncio.subprocess",
-        "ctypes", "ctypes.util", "win32api", "win32com",
     )
     for _m in _BLOCKED:
         _sys.modules[_m] = None  # raises ImportError on `import`
@@ -169,11 +182,84 @@ def _validate_script(script: str, output_path: str) -> None:
             raise ValueError(f"Script references blocked module: {forbidden}")
 
 
+def _extract_pdf_images(pdf_bytes: bytes, dest_dir: Path) -> list:
+    """Extract embedded raster images from a PDF.
+
+    Saves them under ``dest_dir / "images"`` and returns a list of
+    dicts like {"filename": "p1_img0.png", "page": 1, "width_px":
+    1024, "height_px": 480}. The list is what the author prompt
+    embeds so Claude knows which doc.add_picture() calls to make.
+
+    Failures are non-fatal — we return [] and the prompt falls back
+    to bracketed placeholders for missing images.
+    """
+    try:
+        import fitz  # PyMuPDF
+    except Exception:
+        logger.warning("PyMuPDF (fitz) not installed — skipping image extraction")
+        return []
+
+    images_dir = dest_dir / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    out = []
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        logger.warning("Failed to open PDF for image extraction: %s", e)
+        return []
+
+    try:
+        for page_num, page in enumerate(doc, start=1):
+            for img_idx, img in enumerate(page.get_images(full=True)):
+                xref = img[0]
+                try:
+                    pix = fitz.Pixmap(doc, xref)
+                    if pix.n - pix.alpha >= 4:  # CMYK -> convert to RGB
+                        pix = fitz.Pixmap(fitz.csRGB, pix)
+                    fname = f"p{page_num}_img{img_idx}.png"
+                    fpath = images_dir / fname
+                    pix.save(str(fpath))
+                    out.append({
+                        "filename": fname,
+                        "page": page_num,
+                        "width_px": pix.width,
+                        "height_px": pix.height,
+                    })
+                    pix = None
+                except Exception as e:
+                    logger.warning(
+                        "Skipped image p%d idx%d: %s", page_num, img_idx, e
+                    )
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+
+    logger.info("Extracted %d image(s) from PDF", len(out))
+    return out
+
+
+def _format_image_list(images: list) -> str:
+    """Render the extracted-image list as bullet lines for the prompt."""
+    if not images:
+        return "(no embedded images detected — use bracketed placeholders if needed)"
+    lines = []
+    for im in images:
+        lines.append(
+            f'  - images/{im["filename"]}  (page {im["page"]}, '
+            f'{im["width_px"]}x{im["height_px"]} px)'
+        )
+    return "\n".join(lines)
+
+
 def _call_claude_to_author(
     pdf_bytes: bytes,
     source_lang: str,
     target_lang: str,
     output_path: str,
+    images: list,
     model: str = "claude-sonnet-4-5-20250929",
 ) -> str:
     """Send the PDF + prompt to Claude and return the raw code block.
@@ -202,6 +288,7 @@ def _call_claude_to_author(
         source_lang=source_lang or "the source language",
         target_lang=target_lang,
         output_path=output_path,
+        image_list=_format_image_list(images),
     )
 
     logger.info(
@@ -263,6 +350,18 @@ def _run_script_in_sandbox(
     can find python-docx. stdout/stderr are captured for logging.
     """
     work_dir = Path(tempfile.mkdtemp(prefix="claude_authored_"))
+    # If the caller extracted images into <output_dir>/images, mirror
+    # them into work_dir/images so the script can resolve relative
+    # paths like "images/p1_img0.png" with its cwd set to work_dir.
+    try:
+        out_dir = Path(output_path).parent
+        src_images_dir = out_dir / "images"
+        if src_images_dir.exists() and src_images_dir.is_dir():
+            dst_images_dir = work_dir / "images"
+            shutil.copytree(src_images_dir, dst_images_dir)
+    except Exception as e:
+        logger.warning("Failed to mirror images into work_dir: %s", e)
+
     try:
         script_path = work_dir / "rebuild.py"
         # Write the preamble + user code.
@@ -345,12 +444,17 @@ def author_rebuild_docx(
     out_dir = Path(tempfile.mkdtemp(prefix="claude_authored_out_"))
     output_path = str(out_dir / "rebuild.docx")
 
+    # Extract embedded images so Claude can re-use the real logo /
+    # stamp / signature bitmaps instead of bracketed placeholders.
+    images = _extract_pdf_images(pdf_bytes, out_dir)
+
     try:
         raw = _call_claude_to_author(
             pdf_bytes=pdf_bytes,
             source_lang=source_lang,
             target_lang=target_lang,
             output_path=output_path,
+            images=images,
             model=model or "claude-sonnet-4-5-20250929",
         )
         script = _strip_code_fence(raw)
