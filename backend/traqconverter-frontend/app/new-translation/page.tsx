@@ -692,17 +692,13 @@ export default function NewProjectPage() {
             {showRunOptions && (
               <div className="px-6 py-2">
                 {/* REBUILD ENGINE */}
-                <RunOptionRow
-                  label="Rebuild engine"
-                  helper="Claude-direct sends the PDF straight to Claude Sonnet and asks Claude to author the entire translated DOCX (same workflow as Claude.ai — slow, premium quality). Segment pipeline uses per-segment LLM translation with the model of your choice (fast, lets you pick GPT vs Claude variants)."
-                >
+                <RunOptionRow label="Rebuild engine">
                   <div
                     style={{
                       display: "grid",
                       gridTemplateColumns: "1fr 1fr",
                       gap: 8,
                       width: "100%",
-                      maxWidth: 520,
                     }}
                   >
                     {(
@@ -710,12 +706,12 @@ export default function NewProjectPage() {
                         {
                           id: "claude-authored",
                           title: "Claude-direct",
-                          desc: "Claude authors the whole DOCX from the PDF. Premium quality, slower.",
+                          desc: "Best quality",
                         },
                         {
                           id: "segment-pipeline",
                           title: "Segment pipeline",
-                          desc: "Per-segment LLM translation. Fast. Pick the model below.",
+                          desc: "Fast",
                         },
                       ] as const
                     ).map((opt) => {
@@ -727,7 +723,7 @@ export default function NewProjectPage() {
                           type="button"
                           onClick={() => !disabled && setRebuildEngine(opt.id)}
                           disabled={disabled}
-                          className="text-left p-3 rounded-xl transition"
+                          className="text-left px-3 py-2 rounded-xl transition"
                           style={{
                             background: disabled
                               ? "#f6efe0"
@@ -742,16 +738,15 @@ export default function NewProjectPage() {
                           }}
                         >
                           <div
-                            className="flex items-center gap-2 text-[13px] font-semibold"
-                            style={{ marginBottom: 4 }}
+                            className="flex items-center gap-2 text-[12px] font-semibold whitespace-nowrap"
                           >
                             <span
                               style={{
-                                width: 14,
-                                height: 14,
+                                width: 12,
+                                height: 12,
                                 borderRadius: 999,
                                 border: active
-                                  ? "4px solid #0a7870"
+                                  ? "3.5px solid #0a7870"
                                   : "1px solid #cdb98a",
                                 background: "#ffffff",
                                 display: "inline-block",
@@ -759,22 +754,10 @@ export default function NewProjectPage() {
                               }}
                             />
                             {opt.title}
-                            {opt.id === "claude-authored" && (
-                              <span
-                                className="text-[9px] font-semibold tracking-[0.08em] px-1.5 py-0.5 rounded"
-                                style={{
-                                  background: "#0a7870",
-                                  color: "#ffffff",
-                                  marginLeft: 4,
-                                }}
-                              >
-                                RECOMMENDED
-                              </span>
-                            )}
                           </div>
                           <div
-                            className="text-[11px]"
-                            style={{ color: "#6b6558", lineHeight: 1.4 }}
+                            className="text-[10px] mt-0.5"
+                            style={{ color: "#8a8270", marginLeft: 18 }}
                           >
                             {opt.desc}
                           </div>
