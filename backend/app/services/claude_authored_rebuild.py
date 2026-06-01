@@ -44,64 +44,66 @@ logger = logging.getLogger(__name__)
 #      file system path it may write to.
 # ----------------------------------------------------------------
 _AUTHOR_PROMPT_TEMPLATE = textwrap.dedent("""
-You are translating and rebuilding an official document. Your job:
-read the attached PDF carefully, translate every visible textual
-element from {source_lang} to {target_lang}, and produce a Microsoft
-Word .docx file that visually mirrors the original layout as closely
-as possible.
+Please translate the attached PDF from {source_lang} into
+{target_lang} and produce a Microsoft Word .docx that visually
+matches the original document — exactly how you'd build it if a user
+pasted the file into Claude and asked for a translated Word copy.
 
-OUTPUT FORMAT
-=============
-Return a single, complete, runnable Python 3 script wrapped in a
-```python ``` code block. No prose, no preamble, no postscript — just
-the code block.
+Reply with ONE Python 3 code block (```python … ```). No prose,
+no preamble, no commentary. The script must:
 
-The script MUST:
-  * Use only `python-docx` (already installed) and the Python
-    standard library. No other third-party packages.
-  * Import: `from docx import Document` and `from docx.shared
-    import Pt, Cm, Inches, RGBColor` and
-    `from docx.enum.text import WD_ALIGN_PARAGRAPH` and
-    `from docx.enum.table import WD_ALIGN_VERTICAL` as needed.
-  * Build the DOCX in memory then save it to EXACTLY this path:
-      OUTPUT_PATH = r"{output_path}"
-      doc.save(OUTPUT_PATH)
-  * NOT touch the filesystem anywhere else.
-  * NOT call subprocess, os.system, requests, urllib, socket, or any
-    network module.
-  * NOT print() anything — silent execution.
+  * Use only `python-docx` and the Python stdlib.
+  * Build the document in memory and save to this exact path:
+        OUTPUT_PATH = r"{output_path}"
+        doc.save(OUTPUT_PATH)
+  * Not touch any other file. Not call subprocess, os.system,
+    requests, urllib, socket, or any network module. Not print.
 
-LAYOUT FIDELITY RULES
-=====================
-  * Translate ALL visible text. Do not transliterate or leave any
-    {source_lang} phrasing in the output.
-  * Preserve identifiers, codes, dates, signatures, file/registration
-    numbers, and proper names verbatim.
-  * Recreate tables as Word tables (doc.add_table) with the same
-    number of rows and columns as the original. Set borders on table
-    cells that have visible borders in the source.
-  * Preserve alignment (centered titles, justified body paragraphs,
-    right-aligned numbers).
-  * Preserve relative font emphasis: bold for headings/labels,
-    italic for placeholder hints, larger sizes for titles.
-  * For headers and logos that appear as images in the source, use a
-    bracketed placeholder paragraph or table cell (e.g. "[Coat of
-    Arms]", "[Stamp]", "[Signature]") — never reference image files.
-  * For multi-page documents, use page breaks
-    (`paragraph.add_run().add_break(WD_BREAK.PAGE)`) between pages so
-    section structure is preserved.
-  * Match page orientation to the source PDF. Default to A4 portrait
-    unless the source is landscape.
-  * Set margins to 2.0 cm on all sides unless the source clearly
-    uses different margins.
+Layout guidance — IMPORTANT, please follow carefully:
 
-QUALITY BAR
-===========
-Imagine a certified translator will sign off on this document. Every
-table cell must align with the original. Every footnote, asterisk,
-parenthetical, and decoding key must appear in the translation. If
-the original has a courses table with 7 columns, the output has a
-courses table with 7 columns — not paragraphs.
+  * Mirror the natural flow of the source. Look at how the original
+    PDF actually reads on the page and reproduce that flow.
+
+  * DO NOT wrap content in tables unless the source itself shows a
+    true multi-row data grid (e.g. a courses-and-grades table, a
+    schedule, an invoice line-items block). Headers, titles,
+    certificate numbers, "Page 1 of 2" lines, "For Use Abroad"
+    notices, dates, signatures, stamps, footnotes, and any other
+    text that simply happens to be visually aligned on the page
+    should be regular paragraphs with the appropriate alignment
+    (centered, left, right) or tab stops — NOT tables.
+
+  * The header block (logo + institution name + sub-title) should be
+    plain centered paragraphs, not a 2-column table.
+
+  * A row like "Certificate No. ABC123    Student No. XYZ789" should
+    be a single paragraph using tab stops or two-column alignment,
+    NOT a 2-cell table.
+
+  * The courses-and-grades grid IS a true table — use a real Word
+    table with the same number of columns as the source.
+
+  * Match page orientation, margins, and font weights to the
+    original. Use bold for the actual bold elements (headings,
+    column headers, key labels) — not for everything.
+
+  * For images in the source (coats of arms, signatures, stamps,
+    photos), insert a short italic bracketed placeholder paragraph
+    in the right position, e.g. "[Coat of Arms]", "[Signature]",
+    "[Stamp]", "[Photo]". Don't try to reference image files.
+
+  * Translate every visible textual element. Preserve identifiers,
+    codes, dates, file/registration numbers, and proper names
+    verbatim. Don't transliterate.
+
+  * For multi-page sources use a real page break
+    (`run.add_break(WD_BREAK.PAGE)`) between pages.
+
+Quality bar: imagine you (Claude) were asked directly by a user to
+"translate this PDF and give me a Word file that looks like the
+original". Produce that. The output should read like a human
+translator typed it up in Word, not like a layout engine reflowed
+it through tables.
 
 Begin your code block now.
 """).strip()
