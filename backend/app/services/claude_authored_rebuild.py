@@ -105,6 +105,44 @@ Layout guidance — IMPORTANT, please follow carefully:
   * For multi-page sources use a real page break
     (`run.add_break(WD_BREAK.PAGE)`) between pages.
 
+VISUAL LAYOUT FIDELITY — read this carefully:
+
+The output must mirror the SPATIAL layout of the original PDF, not
+just the text content. In particular:
+
+  * If the source has TWO labels on the SAME physical line (e.g.
+    "N. Certif. 20251529859 /M1297_MC" on the left and
+    "Matricola 7043077" on the right of the same line), the
+    output MUST keep them on the SAME paragraph using tab stops or
+    a right-aligned tab. Do not split them into two paragraphs.
+
+  * Same rule for "Uso Estero" / "Pagina 1 di 2" — single
+    paragraph, left+right alignment.
+
+  * Header layout: logo on the left, institution name stacked
+    next to it. Use a hidden 2-column borderless table or a
+    horizontal paragraph with the logo run + text runs side-by-
+    side. NEVER stack the institution name BELOW the logo unless
+    that's how the source actually looks.
+
+  * Look at the actual pixel positions of text in the PDF.
+    Preserve the visual paragraph structure 1:1 with the source.
+    A paragraph that's centered in the source is centered in the
+    output. A paragraph indented to the right margin is right-
+    aligned in the output.
+
+  * Maintain blank lines / vertical spacing between paragraphs
+    that match the original.
+
+  * Use python-docx tab stops:
+        from docx.enum.text import WD_TAB_ALIGNMENT
+        pf = paragraph.paragraph_format
+        pf.tab_stops.add_tab_stop(Cm(17), WD_TAB_ALIGNMENT.RIGHT)
+        run = paragraph.add_run("Left label")
+        paragraph.add_run("\t")
+        paragraph.add_run("Right label")
+    This is the correct way to put two labels on one line.
+
 HARD RULES — these have caused regressions before, don't violate them:
 
   * NEVER rotate text. NEVER set vertical text direction. NEVER
@@ -453,6 +491,74 @@ def _run_script_in_sandbox(
             pass
 
 
+def _strip_rotation_from_docx(docx_bytes: bytes) -> bytes:
+    """Remove any vertical-text / rotation properties from a DOCX.
+
+    Walks word/document.xml in the zip, deletes every <w:textDirection>
+    element (which is how Word records rotated cells / sections), then
+    rewrites the zip. This is a deterministic safety net against
+    Claude regressing on the "no rotation" prompt rule.
+
+    Failures are non-fatal — we return the original bytes on any error.
+    """
+    try:
+        import io
+        import zipfile
+        from xml.etree import ElementTree as ET
+
+        # Word XML namespaces.
+        W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        ET.register_namespace("w", W_NS)
+        TD_TAG = "{%s}textDirection" % W_NS
+
+        in_buf = io.BytesIO(docx_bytes)
+        out_buf = io.BytesIO()
+        modified = False
+
+        with zipfile.ZipFile(in_buf, "r") as zin:
+            with zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    # Only patch word/document.xml — sectPr / cells live there.
+                    if item.filename == "word/document.xml":
+                        try:
+                            root = ET.fromstring(data)
+                            removed = 0
+                            # ElementTree doesn't support arbitrary
+                            # ancestor lookup, so walk all elements and
+                            # remove every textDirection from its parent.
+                            parent_map = {c: p for p in root.iter() for c in p}
+                            for el in list(root.iter(TD_TAG)):
+                                parent = parent_map.get(el)
+                                if parent is not None:
+                                    parent.remove(el)
+                                    removed += 1
+                            if removed:
+                                data = ET.tostring(
+                                    root,
+                                    xml_declaration=True,
+                                    encoding="UTF-8",
+                                    short_empty_elements=True,
+                                )
+                                logger.info(
+                                    "Stripped %d rotation directives from DOCX",
+                                    removed,
+                                )
+                                modified = True
+                        except Exception as e:
+                            logger.warning(
+                                "Rotation-strip XML parse failed: %s", e
+                            )
+                    zout.writestr(item, data)
+
+        if modified:
+            return out_buf.getvalue()
+        return docx_bytes
+    except Exception:
+        logger.exception("Rotation strip failed — returning original bytes")
+        return docx_bytes
+
+
 def author_rebuild_docx(
     pdf_bytes: bytes,
     source_lang: str,
@@ -493,6 +599,9 @@ def author_rebuild_docx(
             output_path=output_path,
             timeout_seconds=timeout_seconds,
         )
+        # Safety net: strip any vertical-text / rotation that Claude
+        # may have emitted despite the explicit prompt rule.
+        docx_bytes = _strip_rotation_from_docx(docx_bytes)
         logger.info(
             "Authored rebuild OK (%d bytes)", len(docx_bytes)
         )
