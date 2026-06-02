@@ -1133,6 +1133,63 @@ def preview_rebuild_html(
             headers={"Cache-Control": "private, max-age=10"},
         )
 
+    # AUTO-AUTHOR: if this is a PDF project that hasn't yet been
+    # rebuilt with Claude, run the authored rebuild INLINE before
+    # we return. This blocks 60-180s on the first call but
+    # guarantees the right pane always shows Claude's output rather
+    # than the segment-renderer fallback (with its over-tabled
+    # headers, etc.). On subsequent calls authored_docx_s3_key is
+    # set and we skip straight to mammoth conversion.
+    needs_author = (
+        (project.source_kind or "").upper() == "PDF"
+        and not getattr(project, "authored_docx_s3_key", None)
+    )
+    if needs_author:
+        try:
+            import tempfile as _tf
+            from pathlib import Path as _P
+            from app.services.s3_service import (
+                download_file_from_s3,
+                upload_file_to_s3,
+            )
+            from app.services.claude_authored_rebuild import (
+                author_rebuild_docx,
+            )
+
+            tmp_dir = _P(_tf.mkdtemp())
+            try:
+                src_path = tmp_dir / (project.file_name or "source.pdf")
+                download_file_from_s3(project.file_path, src_path)
+                with open(src_path, "rb") as f:
+                    pdf_bytes = f.read()
+                logger.info(
+                    "Auto-firing Claude rebuild (project=%s)",
+                    str(project.id),
+                )
+                docx_bytes = author_rebuild_docx(
+                    pdf_bytes=pdf_bytes,
+                    source_lang=project.source_language or "",
+                    target_lang=project.target_language or "",
+                )
+                out_path = tmp_dir / f"authored_{project.id}.docx"
+                with open(out_path, "wb") as f:
+                    f.write(docx_bytes)
+                key = upload_file_to_s3(out_path)
+                project.authored_docx_s3_key = key
+                project.edited_html = None
+                db.commit()
+                logger.info(
+                    "Auto-author OK (project=%s key=%s)",
+                    str(project.id), key,
+                )
+            finally:
+                import shutil as _sh
+                _sh.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            logger.exception(
+                "Auto-author failed — falling back to segment renderer"
+            )
+
     segments = (
         db.query(TranslationSegment)
         .filter(TranslationSegment.project_id == project.id)
