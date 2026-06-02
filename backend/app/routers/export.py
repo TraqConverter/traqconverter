@@ -38,22 +38,13 @@ def export_docx_route(
         .order_by(TranslationSegment.segment_index)
         .all()
     )
-    # Note: we previously required segments to be flagged "approved"
-    # (green tick) before exporting. With the Claude-direct rebuild
-    # the user works on the rendered document itself, not at segment
-    # level, so the approval gate doesn't make sense anymore. Any
-    # translated segment is exportable; if all segments are blank we
-    # still 400 to avoid emitting empty deliverables.
+    # No gate — Claude-direct flow can export even with empty
+    # segments (the authored DOCX or edited HTML is the source of
+    # truth). generate_docx handles whatever's available.
     valid_segments = [
         s for s in segments
         if s.translated_text and s.translated_text.strip()
     ]
-    if not valid_segments and not getattr(project, "authored_docx_s3_key", None) \
-            and not getattr(project, "edited_html", None):
-        raise HTTPException(
-            status_code=400,
-            detail="This project has no translated content yet.",
-        )
 
     try:
         file_buffer = generate_docx(
@@ -96,18 +87,11 @@ def export_pdf_route(
         .order_by(TranslationSegment.segment_index)
         .all()
     )
-    # Approval gate removed alongside the DOCX route — see comment
-    # above. Same fallback to authored DOCX / edited HTML.
+    # No gate — same as DOCX export above.
     valid_segments = [
         s for s in segments
         if s.translated_text and s.translated_text.strip()
     ]
-    if not valid_segments and not getattr(project, "authored_docx_s3_key", None) \
-            and not getattr(project, "edited_html", None):
-        raise HTTPException(
-            status_code=400,
-            detail="This project has no translated content yet.",
-        )
 
     try:
         file_buffer = generate_pdf(
@@ -160,19 +144,12 @@ def build_rebuild_docx(
         .order_by(TranslationSegment.segment_index)
         .all()
     )
-    # Approval gate dropped — Claude-direct flow doesn't use
-    # per-segment approval. Any segments with translated text are fair
-    # game, and projects with only authored_docx_s3_key are also OK.
+    # No gate — Claude-direct flow handles empty segments via the
+    # authored DOCX path.
     valid_segments = [
         s for s in segments
         if s.translated_text and s.translated_text.strip()
     ]
-    if not valid_segments and not getattr(project, "authored_docx_s3_key", None) \
-            and not getattr(project, "edited_html", None):
-        raise HTTPException(
-            status_code=400,
-            detail="This project has no translated content yet.",
-        )
 
     try:
         file_buffer = generate_docx(

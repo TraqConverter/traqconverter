@@ -991,13 +991,20 @@ def _strip_rotation_from_docx(docx_bytes: bytes) -> bytes:
 
 
 def _strip_layout_table_borders(docx_bytes: bytes) -> bytes:
-    """Strip visible borders from tables that look like layout
-    tables — i.e. small tables (1-2 rows) whose text doesn't include
-    the courses-grid header keywords. The actual courses table keeps
-    its borders.
+    """Strip visible borders from EVERY table in the DOCX.
 
-    This is a safety net for when Claude uses a bordered table for
-    a logo|name header layout (which it shouldn't, per the prompt).
+    The vast majority of source documents we handle (certificates,
+    transcripts, official letters, IDs) use whitespace-aligned
+    columns rather than visible cell borders. Stripping borders by
+    default matches the source's appearance better than keeping
+    them. Layout tables (logo|name header, label|value rows,
+    signature blocks, decoding-key pairs) and data grids (courses,
+    invoice line items) all become borderless.
+
+    If a future use case requires visible borders, the
+    `_strip_all_borders` parameter can be flipped off — but the
+    deterministic borderless behaviour is preferred because Claude
+    can't reliably detect when the source has borders vs not.
     """
     try:
         import io
@@ -1007,14 +1014,6 @@ def _strip_layout_table_borders(docx_bytes: bytes) -> bytes:
         W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         ET.register_namespace("w", W_NS)
         ns = {"w": W_NS}
-
-        # Courses-grid header heuristic: text contains at least 2 of
-        # these column-header keywords (in either language).
-        COURSE_HEADER_KEYWORDS = {
-            "course", "result", "grade", "ects", "cfu", "date",
-            "esito", "voto", "data", "s.s.d", "insegnamento",
-            "outcome", "mark",
-        }
 
         in_buf = io.BytesIO(docx_bytes)
         out_buf = io.BytesIO()
@@ -1029,22 +1028,12 @@ def _strip_layout_table_borders(docx_bytes: bytes) -> bytes:
                             root = ET.fromstring(data)
                             stripped = 0
                             for tbl in root.iter("{%s}tbl" % W_NS):
-                                rows = tbl.findall("{%s}tr" % W_NS)
-                                # Gather all text in the table.
-                                all_text = " ".join(
-                                    "".join(
-                                        t.text or "" for t in tbl.iter("{%s}t" % W_NS)
-                                    ).lower().split()
-                                )
-                                kw_hits = sum(
-                                    1 for kw in COURSE_HEADER_KEYWORDS
-                                    if kw in all_text
-                                )
-                                # Skip the courses grid: 3+ rows AND
-                                # ≥2 header keywords detected.
-                                if len(rows) >= 3 and kw_hits >= 2:
-                                    continue
-                                # Strip borders on this layout table.
+                                # Strip borders on EVERY table — see
+                                # docstring rationale. Tables that
+                                # genuinely need borders (e.g.
+                                # explicitly drawn invoice line items)
+                                # are rare and the user can add them
+                                # back via the WYSIWYG edit pane.
                                 tblPr = tbl.find("{%s}tblPr" % W_NS)
                                 if tblPr is None:
                                     tblPr = ET.SubElement(tbl, "{%s}tblPr" % W_NS)
@@ -1074,7 +1063,8 @@ def _strip_layout_table_borders(docx_bytes: bytes) -> bytes:
                                     short_empty_elements=True,
                                 )
                                 logger.info(
-                                    "Stripped borders from %d layout tables", stripped
+                                    "Stripped borders from %d tables (all-borderless mode)",
+                                    stripped,
                                 )
                                 modified = True
                         except Exception as e:
