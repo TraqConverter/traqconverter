@@ -162,10 +162,29 @@ language in italics" over "drop the original altogether".
 
 ARTWORK / IMAGES
 ================
-Every embedded raster image we could extract from the source PDF is
-listed below under EXTRACTED IMAGES, with its relative path under
-./images/ and source page number. Reuse them:
+Real image files have been pre-extracted from the source PDF and
+are sitting in the ./images/ subdirectory of your script's working
+directory. The full list is below under EXTRACTED IMAGES.
 
+CRITICAL: If the list contains ANY entry — embedded XObject OR
+header / footer crop — you MUST insert that image with
+`doc.add_picture("images/<filename>", width=Cm(N))` at the matching
+position in the rebuilt document. DO NOT use a bracketed text
+placeholder like "[Coat of Arms]" / "[Stamp]" / "[Signature]" if
+there is a real image file available.
+
+  * For an entry with kind=header → it is the cropped top strip of
+    a source page. It contains the logo + masthead. Insert it at
+    the top of your output page using add_picture with a width
+    that fills the body (width=Cm(17) for portrait A4). DO NOT
+    add a "[Coat of Arms]" placeholder alongside it.
+  * For an entry with kind=footer → it is the cropped bottom strip
+    of the LAST source page. It contains the signature block + seal
+    + stamp. Insert it at the bottom of your last translation page,
+    typically width=Cm(8-12).
+  * For an entry with kind=embedded → discrete extracted image
+    (logo, photo, signature, seal). Place it where the source PDF
+    shows it, sized appropriately.
   * Insert with `doc.add_picture("images/<filename>", width=Cm(N))`
     at the matching position.
   * Sizing hints: logos / crests ~3-4 cm wide; round seals or
@@ -179,9 +198,17 @@ listed below under EXTRACTED IMAGES, with its relative path under
     "[Signature]") instead of trying to reference a file that
     isn't there.
 
-Add a small italic bottom note in {target_lang} stating this is a
-translation of the original {source_lang} document and that codes /
-identifiers / numbers are reproduced unchanged.
+Add a small italic bottom note in {target_lang}, set at ~8pt with
+slight indentation, stating that this is a translation of the
+original {source_lang} document, that the crest / seal / signature
+are reproduced from the original scan, and that all codes / sector
+codes / credit values / grades / reference numbers are reproduced
+unchanged. Example wording:
+    "Note: This is an English translation of the original Italian
+     certificate issued by the University of Florence. The crest,
+     seal and signature are reproduced from the original scan.
+     Course codes, sector codes (S.S.D.), credit values (CFU),
+     grades and reference numbers are reproduced unchanged."
 
 VISUAL LAYOUT FIDELITY
 ======================
@@ -456,7 +483,7 @@ def _call_claude_to_author(
     target_lang: str,
     output_path: str,
     images: list,
-    model: str = "claude-sonnet-4-5-20250929",
+    model: str = "claude-opus-4-6",
 ) -> str:
     """Send the PDF + prompt to Claude and return the raw code block.
 
@@ -497,7 +524,7 @@ def _call_claude_to_author(
 
     resp = client.messages.create(
         model=model,
-        max_tokens=16000,
+        max_tokens=32000,
         # Be patient. Claude takes its time on documents like this and
         # that's exactly the tradeoff we picked.
         temperature=0.2,
@@ -818,7 +845,7 @@ def author_rebuild_docx(
             target_lang=target_lang,
             output_path=output_path,
             images=images,
-            model=model or "claude-sonnet-4-5-20250929",
+            model=model or "claude-opus-4-6",
         )
         script = _strip_code_fence(raw)
         _validate_script(script, output_path)
