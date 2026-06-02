@@ -293,15 +293,25 @@ def _validate_script(script: str, output_path: str) -> None:
 
 
 def _extract_pdf_images(pdf_bytes: bytes, dest_dir: Path) -> list:
-    """Extract embedded raster images from a PDF.
+    """Extract images from a PDF, with a fallback for flat scans.
 
-    Saves them under ``dest_dir / "images"`` and returns a list of
-    dicts like {"filename": "p1_img0.png", "page": 1, "width_px":
-    1024, "height_px": 480}. The list is what the author prompt
-    embeds so Claude knows which doc.add_picture() calls to make.
+    Tries two strategies per page:
 
-    Failures are non-fatal — we return [] and the prompt falls back
-    to bracketed placeholders for missing images.
+      1. `page.get_images(full=True)` — finds embedded XObjects.
+         Works on vector PDFs that have logos / stamps as
+         separate image streams.
+      2. When (1) finds nothing on a page, the page is treated as
+         a flat scan: we crop the masthead strip (top 28% of the
+         page) and the signature strip (bottom 25% of the LAST
+         page) as separate PNGs. That gives Claude real logo /
+         seal / signature bitmaps to insert via doc.add_picture
+         instead of falling back to "[Coat of Arms]" placeholders.
+
+    Returns dicts the prompt then formats:
+        {"filename": "...", "page": N,
+         "width_px": W, "height_px": H, "kind": "embedded"|"header"|"footer"}
+
+    Failures are non-fatal — we return whatever we got.
     """
     try:
         import fitz  # PyMuPDF
@@ -320,7 +330,10 @@ def _extract_pdf_images(pdf_bytes: bytes, dest_dir: Path) -> list:
         return []
 
     try:
+        n_pages = len(doc)
         for page_num, page in enumerate(doc, start=1):
+            embedded_count = 0
+            # Strategy 1: embedded XObjects.
             for img_idx, img in enumerate(page.get_images(full=True)):
                 xref = img[0]
                 try:
@@ -335,11 +348,72 @@ def _extract_pdf_images(pdf_bytes: bytes, dest_dir: Path) -> list:
                         "page": page_num,
                         "width_px": pix.width,
                         "height_px": pix.height,
+                        "kind": "embedded",
                     })
+                    embedded_count += 1
                     pix = None
                 except Exception as e:
                     logger.warning(
                         "Skipped image p%d idx%d: %s", page_num, img_idx, e
+                    )
+
+            # Strategy 2: flat-scan fallback. If the page has no
+            # embedded images AND the page is large enough to be a
+            # full doc page (not a thumbnail), crop header / footer.
+            if embedded_count == 0:
+                try:
+                    rect = page.rect
+                    page_w, page_h = rect.width, rect.height
+                    if page_w < 100 or page_h < 100:
+                        continue
+                    # Header crop: top 28% — typically captures
+                    # logo + institution name region.
+                    header_clip = fitz.Rect(
+                        0, 0, page_w, page_h * 0.28
+                    )
+                    pix = page.get_pixmap(
+                        matrix=fitz.Matrix(3, 3),  # 3x for crispness
+                        clip=header_clip,
+                        alpha=False,
+                    )
+                    fname = f"p{page_num}_header.png"
+                    fpath = images_dir / fname
+                    pix.save(str(fpath))
+                    out.append({
+                        "filename": fname,
+                        "page": page_num,
+                        "width_px": pix.width,
+                        "height_px": pix.height,
+                        "kind": "header",
+                    })
+                    pix = None
+
+                    # Footer crop: only on the LAST page (signature
+                    # block + stamp typically live there).
+                    if page_num == n_pages:
+                        footer_clip = fitz.Rect(
+                            0, page_h * 0.55, page_w, page_h * 0.85
+                        )
+                        pix = page.get_pixmap(
+                            matrix=fitz.Matrix(3, 3),
+                            clip=footer_clip,
+                            alpha=False,
+                        )
+                        fname = f"p{page_num}_footer.png"
+                        fpath = images_dir / fname
+                        pix.save(str(fpath))
+                        out.append({
+                            "filename": fname,
+                            "page": page_num,
+                            "width_px": pix.width,
+                            "height_px": pix.height,
+                            "kind": "footer",
+                        })
+                        pix = None
+                except Exception as e:
+                    logger.warning(
+                        "Flat-scan crop fallback failed on page %d: %s",
+                        page_num, e,
                     )
     finally:
         try:
@@ -347,19 +421,31 @@ def _extract_pdf_images(pdf_bytes: bytes, dest_dir: Path) -> list:
         except Exception:
             pass
 
-    logger.info("Extracted %d image(s) from PDF", len(out))
+    logger.info(
+        "Extracted %d image(s) from PDF (%d embedded, %d scan crops)",
+        len(out),
+        sum(1 for x in out if x.get("kind") == "embedded"),
+        sum(1 for x in out if x.get("kind") in ("header", "footer")),
+    )
     return out
 
 
 def _format_image_list(images: list) -> str:
     """Render the extracted-image list as bullet lines for the prompt."""
     if not images:
-        return "(no embedded images detected — use bracketed placeholders if needed)"
+        return "(no images extracted — use bracketed placeholders)"
     lines = []
+    kind_hint = {
+        "header": "likely contains logo + masthead — crop or use as-is",
+        "footer": "likely contains signature + seal + stamp — crop or use as-is",
+        "embedded": "discrete embedded image",
+    }
     for im in images:
+        kind = im.get("kind", "embedded")
+        hint = kind_hint.get(kind, "")
         lines.append(
             f'  - images/{im["filename"]}  (page {im["page"]}, '
-            f'{im["width_px"]}x{im["height_px"]} px)'
+            f'{im["width_px"]}x{im["height_px"]} px, {kind}{": " + hint if hint else ""})'
         )
     return "\n".join(lines)
 
