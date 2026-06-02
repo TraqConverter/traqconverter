@@ -82,13 +82,83 @@ OUTPUT REQUIREMENTS
     page number, certificate number), use Word's section header /
     footer so it auto-repeats on every page.
 
-PROVEN PYTHON-DOCX RECIPE (copy this structure)
-================================================
+DOCUMENT TYPE ADAPTATION
+========================
+First, look at the source PDF and identify its document type. The
+choice of layout structure depends on it. Common types and the
+pattern that fits each:
+
+  * CERTIFICATE / DIPLOMA / TRANSCRIPT / OFFICIAL ATTESTATION
+    Repeating institutional masthead, formal body paragraphs, often
+    a data table (courses/grades, exam results), signature + seal
+    block at the bottom of the last page, decoding keys, italic
+    translator's note. → use the PROVEN RECIPE below verbatim
+    (substitute the actual institution name, IDs, dates, course
+    titles, S.S.D. codes etc.).
+
+  * BUSINESS / OFFICIAL LETTER
+    Letterhead at the top (logo + sender details, sometimes only
+    on page 1), date right-aligned, recipient block left-aligned,
+    salutation, body paragraphs, sign-off ("Sincerely,"), signature
+    image + typed name. NO repeating masthead — just page 1 has
+    the letterhead. Body paragraphs are left-aligned or justified.
+    No data table unless one is explicit in the source.
+
+  * CONTRACT / AGREEMENT
+    No letterhead. Centered title at the top of page 1. Numbered
+    or lettered sections ("1. DEFINITIONS", "2. SCOPE", …). Each
+    section has bold heading + justified body paragraphs.
+    Signature block at the very end with two side-by-side panels:
+    "PARTY A" + name + signature image vs "PARTY B" + name +
+    signature image, both with date lines.
+
+  * INVOICE / RECEIPT / QUOTE
+    Header block: company info (left) and the word "INVOICE" plus
+    invoice number, date, due date (right) — borderless 2-col
+    table. Customer info paragraph. Then a bordered table of line
+    items with columns "Description | Qty | Unit Price | Amount".
+    Totals block right-aligned at the bottom: subtotal, tax,
+    total. Payment terms paragraph. Often a footer note.
+
+  * ID CARD / PASSPORT / DRIVER'S LICENSE
+    Compact fielded layout. Photo on one side, fields on the other:
+    "Name", "Date of birth", "Place of birth", "Issued", "Expires",
+    "Card no.". Use a borderless table with field labels in column
+    0 (bold) and values in column 1. Keep it tight — 1 page max.
+
+  * MEDICAL REPORT / LAB RESULT / MEDICAL RECORD
+    Hospital/lab letterhead, patient info block, ordering physician
+    info, then either a results table (test | value | range | flag)
+    or narrative paragraphs ("Findings:", "Impression:"). Signature
+    of the reporting physician at the bottom.
+
+  * MARKETING / BROCHURE / CONTENT PAGE
+    Free-form layout. Centered or left-aligned title, body
+    paragraphs, possibly callout boxes (use a single-row borderless
+    table with a light shade fill for the callout). No formal
+    masthead pattern.
+
+  * ACADEMIC PAPER / RESEARCH ARTICLE
+    Title (centered, bold). Authors (centered, italic). Abstract
+    (justified, slightly indented). Numbered sections with bold
+    headings. Body justified. Reference list at the end with
+    hanging-indent paragraphs.
+
+For document types not listed: pick the closest match and adapt.
+The HARD RULES (no rotation, borderless layout tables, ALL data
+distributed cell-by-cell in data tables, real images via
+doc.add_picture) apply to ALL document types.
+
+PROVEN PYTHON-DOCX RECIPE (certificate / diploma type)
+=======================================================
 For a formal certificate / diploma / official document that has a
 repeating masthead on every page, use Word's section header so the
 masthead auto-repeats. Here is the EXACT structure that produced
 the gold-standard output on a Florence university certificate — use
-it as a template:
+it as a template for the CERTIFICATE document type. Other types
+should adapt the relevant pieces (drop the section.header masthead
+for letters/contracts, change the data table columns for invoices/
+medical reports, etc.).
 
 ```python
 from docx import Document
@@ -181,9 +251,12 @@ doc.add_paragraph("It is further certified that the interested party submitted t
 
 p = doc.add_paragraph(); r = p.add_run("FIRST YEAR"); r.bold = True
 
-# Courses table — 8 columns, BORDERS VISIBLE on this one.
+# Courses table — 8 columns. CHECK THE SOURCE: if the source
+# uses whitespace alignment (no visible borders between cells),
+# make this table borderless too. Florence-style certificates
+# are borderless — call _no_borders(table) right after add_table.
 table = doc.add_table(rows=1, cols=8)
-table.style = "Table Grid"  # gives visible borders
+_no_borders(table)  # remove this line ONLY if source has visible borders
 header_cells = table.rows[0].cells
 for i, label in enumerate(["Course Code", "Course", "Outcome", "Grade", "CFU", "S.S.D.", "Date", "Teaching Course (*)"]):
     p = header_cells[i].paragraphs[0]
@@ -250,11 +323,23 @@ Read the document end-to-end and reproduce its visual structure:
     NOT a 2-cell table.
   * Centered titles centered, justified body paragraphs justified,
     right-aligned numbers right-aligned. Match the source exactly.
-  * Borderless layout tables (logo|name header, label|value rows)
-    must have their borders explicitly stripped. The ONLY table
-    that should have visible borders is a true multi-row data
-    grid (a courses table, an invoice line-items table, a price
-    list, a schedule). Use this helper for every layout table:
+  * Border style on the data grid table MUST match the source.
+    Look at the source PDF: does the courses-and-grades grid (or
+    invoice line items table, or whatever the main data table is)
+    have visible borders between cells, or does it use whitespace
+    alignment only?
+      - source uses pure whitespace alignment → make the data table
+        BORDERLESS too (call _no_borders(table) just like for
+        layout tables).
+      - source uses light/thin grey lines → use Table Grid then
+        override to 0.5pt grey borders.
+      - source uses heavy black borders → use Table Grid as-is.
+    For the Florence-style university certificate where the courses
+    list is just whitespace-aligned columns with no visible cell
+    boundaries, the output data table MUST be borderless.
+  * Layout tables (logo|name header, label|value rows, signature
+    blocks, decoding key tables) are ALWAYS borderless regardless
+    of the source. Use this helper for them:
 
         from docx.oxml.ns import qn
         from docx.oxml import OxmlElement
@@ -1152,6 +1237,140 @@ def _split_crammed_table_rows(docx_bytes: bytes) -> bytes:
         return docx_bytes
 
 
+def _replace_image_placeholders(docx_bytes: bytes, work_dir: Path) -> bytes:
+    """Replace bracketed text placeholders with actual extracted
+    images.
+
+    Looks for "[Coat of Arms]" / "[Logo]" / "[Stamp]" / "[Signature]"
+    / "[Photo]" / "[Seal]" / "[Crest]" text in the DOCX. For each
+    match, picks the most suitable extracted image (logo-like for
+    [Coat of Arms]/[Logo]/[Crest], footer-crop for [Stamp]/[Signature]
+    /[Seal], any embedded for [Photo]) and inlines it via python-docx.
+
+    `work_dir` is the same out_dir we passed to _extract_pdf_images,
+    so images live at work_dir/images/<filename>.
+    """
+    try:
+        import io
+        import re as _re
+        from io import BytesIO
+        from docx import Document
+        from docx.shared import Cm
+
+        images_dir = Path(work_dir) / "images"
+        if not images_dir.exists():
+            return docx_bytes
+
+        all_imgs = sorted(images_dir.glob("*.png")) + sorted(images_dir.glob("*.jpg")) + sorted(images_dir.glob("*.jpeg"))
+        if not all_imgs:
+            return docx_bytes
+
+        # Categorize available images by filename hints.
+        headers = [p for p in all_imgs if "header" in p.name]
+        footers = [p for p in all_imgs if "footer" in p.name]
+        embedded = [p for p in all_imgs if "img" in p.name and "header" not in p.name and "footer" not in p.name]
+
+        def _pick(placeholder: str):
+            ph = placeholder.lower()
+            if any(k in ph for k in ("coat", "logo", "crest", "arms")):
+                return (headers + embedded + footers)[0] if (headers + embedded + footers) else None
+            if any(k in ph for k in ("stamp", "seal", "signature", "sigillum")):
+                return (footers + embedded + headers)[0] if (footers + embedded + headers) else None
+            if "photo" in ph:
+                return (embedded + headers + footers)[0] if (embedded + headers + footers) else None
+            return None
+
+        # Size hints in cm.
+        def _width(placeholder: str) -> float:
+            ph = placeholder.lower()
+            if any(k in ph for k in ("coat", "logo", "crest", "arms")):
+                return 3.5
+            if "stamp" in ph or "seal" in ph:
+                return 3.0
+            if "signature" in ph:
+                return 5.0
+            if "photo" in ph:
+                return 3.0
+            return 4.0
+
+        PATTERN = _re.compile(
+            r"\[(?:Coat\s*of\s*Arms|Logo|Crest|Arms|Stamp|Seal|Signature|Photo)\]",
+            _re.IGNORECASE,
+        )
+
+        doc = Document(BytesIO(docx_bytes))
+        replaced = 0
+
+        def _process_paragraph(para):
+            """If this paragraph contains a placeholder, replace it
+            with an image inline."""
+            nonlocal replaced
+            full_text = "".join(r.text or "" for r in para.runs)
+            m = PATTERN.search(full_text)
+            if not m:
+                return
+            placeholder = m.group(0)
+            img_path = _pick(placeholder)
+            if not img_path:
+                return
+            # Strip the placeholder from the text.
+            new_text = full_text[:m.start()] + full_text[m.end():]
+            # Clear existing runs.
+            for r in list(para.runs):
+                r._element.getparent().remove(r._element)
+            # If there was surrounding text, re-add it.
+            if new_text.strip():
+                # Split around the placeholder spot (if before/after text)
+                before = full_text[:m.start()]
+                after = full_text[m.end():]
+                if before:
+                    para.add_run(before)
+                run = para.add_run()
+                run.add_picture(str(img_path), width=Cm(_width(placeholder)))
+                if after:
+                    para.add_run(after)
+            else:
+                run = para.add_run()
+                run.add_picture(str(img_path), width=Cm(_width(placeholder)))
+            replaced += 1
+
+        # Walk body paragraphs.
+        for para in doc.paragraphs:
+            _process_paragraph(para)
+        # Walk tables.
+        for tbl in doc.tables:
+            for row in tbl.rows:
+                for cell in row.cells:
+                    for para in cell.paragraphs:
+                        _process_paragraph(para)
+        # Walk header / footer of every section.
+        for section in doc.sections:
+            for para in section.header.paragraphs:
+                _process_paragraph(para)
+            for para in section.footer.paragraphs:
+                _process_paragraph(para)
+            for tbl in section.header.tables:
+                for row in tbl.rows:
+                    for cell in row.cells:
+                        for para in cell.paragraphs:
+                            _process_paragraph(para)
+            for tbl in section.footer.tables:
+                for row in tbl.rows:
+                    for cell in row.cells:
+                        for para in cell.paragraphs:
+                            _process_paragraph(para)
+
+        if replaced:
+            logger.info("Replaced %d image placeholder(s) with real images", replaced)
+            buf = BytesIO()
+            doc.save(buf)
+            return buf.getvalue()
+        return docx_bytes
+    except Exception:
+        logger.exception("Image-placeholder replace failed — returning original")
+        return docx_bytes
+
+
 def author_rebuild_docx(
     pdf_bytes: bytes,
     source_lang: str,
@@ -1197,6 +1416,10 @@ def author_rebuild_docx(
         docx_bytes = _strip_rotation_from_docx(docx_bytes)
         docx_bytes = _strip_layout_table_borders(docx_bytes)
         docx_bytes = _split_crammed_table_rows(docx_bytes)
+        # If Claude left any bracketed image placeholders despite
+        # the prompt instruction, try to substitute the actual
+        # extracted image. Uses out_dir/images/.
+        docx_bytes = _replace_image_placeholders(docx_bytes, out_dir)
         logger.info(
             "Authored rebuild OK (%d bytes)", len(docx_bytes)
         )
