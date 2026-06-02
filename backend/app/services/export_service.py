@@ -566,48 +566,58 @@ def generate_docx(segments, user_email, project=None, user=None):
 
         # PRIORITY 1: User-edited HTML from the WYSIWYG Compare pane.
         # Convert HTML→DOCX via htmldocx so visual edits land in the
-        # exported file.
+        # exported file. Wrap with source pages + cert + stamp.
         edited_html = getattr(project, "edited_html", None)
         if edited_html and edited_html.strip():
             try:
                 from io import BytesIO as _BIO
                 from htmldocx import HtmlToDocx  # type: ignore
                 from docx import Document as _Doc
+                from app.services.export_wrapper import (
+                    build_full_export_docx,
+                )
 
                 parser = HtmlToDocx()
                 _doc = _Doc()
                 parser.add_html_to_document(edited_html, _doc)
                 buf = _BIO()
                 _doc.save(buf)
-                buf.seek(0)
-                return buf
+                wrapped = build_full_export_docx(
+                    buf.getvalue(), project, user
+                )
+                return wrapped
             except Exception:
                 import logging as _lg
                 _lg.getLogger(__name__).exception(
                     "HTML→DOCX export conversion failed — falling back"
                 )
 
-        # PRIORITY 2: Claude-authored DOCX stored in S3.
+        # PRIORITY 2: Claude-authored DOCX stored in S3. Wrap with
+        # source pages + cert + stamp.
         authored_key = getattr(project, "authored_docx_s3_key", None)
         if authored_key:
             try:
                 import tempfile as _tf
-                from io import BytesIO as _BIO
                 from pathlib import Path as _P
                 from app.services.s3_service import download_file_from_s3
+                from app.services.export_wrapper import (
+                    build_full_export_docx,
+                )
 
                 tmp = _tf.NamedTemporaryFile(delete=False, suffix=".docx")
                 tmp.close()
                 download_file_from_s3(authored_key, _P(tmp.name))
                 with open(tmp.name, "rb") as f:
-                    buf = _BIO(f.read())
+                    authored_bytes = f.read()
                 try:
                     import os as _os
                     _os.unlink(tmp.name)
                 except Exception:
                     pass
-                buf.seek(0)
-                return buf
+                wrapped = build_full_export_docx(
+                    authored_bytes, project, user
+                )
+                return wrapped
             except Exception:
                 import logging as _lg
                 _lg.getLogger(__name__).exception(

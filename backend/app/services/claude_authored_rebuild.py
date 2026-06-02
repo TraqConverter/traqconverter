@@ -105,6 +105,35 @@ Layout guidance — IMPORTANT, please follow carefully:
   * For multi-page sources use a real page break
     (`run.add_break(WD_BREAK.PAGE)`) between pages.
 
+HARD RULES — these have caused regressions before, don't violate them:
+
+  * NEVER rotate text. NEVER set vertical text direction. NEVER
+    use textDirection / WD_ROW_HEIGHT.AT_LEAST tricks to fit a
+    wide table into a narrow page. All text in the output, in
+    every paragraph and every table cell, must be normal
+    horizontal left-to-right reading direction.
+
+  * If a wide table (e.g. the courses-and-grades grid) doesn't
+    seem to fit at 10-11pt font on a portrait A4 page, DROP THE
+    FONT SIZE to 8pt or even 7pt for the table body — DO NOT
+    rotate column headers, DO NOT switch the section to landscape,
+    DO NOT split the table sideways. A small horizontal table is
+    always more readable than a rotated one.
+
+  * Use ONE consistent page orientation for the whole document.
+    Pick portrait unless the source PDF is clearly landscape on
+    every page. Do not mix orientations between sections within a
+    single output document.
+
+  * Set table column widths explicitly with Cm() values that add
+    up to ~17 cm total (A4 portrait minus 2cm margins). Don't let
+    python-docx auto-size them — it picks bad widths for wide
+    grids.
+
+  * The header block (logo, institution name, sub-title) goes at
+    the TOP of page 1, full width, centered. Do NOT stuff it into
+    the right margin or rotate it.
+
 Quality bar: imagine you (Claude) were asked directly by a user to
 "translate this PDF and give me a Word file that looks like the
 original". Produce that. The output should read like a human

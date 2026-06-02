@@ -1245,35 +1245,8 @@ export default function EditorPage() {
           ))}
         </div>
 
-        {/* Action buttons */}
-        <button
-          type="button"
-          onClick={() => setShowApproveAllConfirm(true)}
-          disabled={busy === "approve-all"}
-          className="px-3 py-2 rounded-full text-sm font-semibold flex items-center gap-1.5 transition"
-          style={{
-            background: "#cfe6e2",
-            color: "#0a7870",
-            border: "1px solid #b8dcd6",
-          }}
-          title="Mark every translated segment as approved"
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
-          {busy === "approve-all" && approveAllProgress
-            ? `Approving ${approveAllProgress.done}/${approveAllProgress.total}…`
-            : "Approve all translated"}
-        </button>
+        {/* Action buttons — segment-level approve removed; the
+            Claude-direct WYSIWYG flow doesn't need it. */}
         <button
           type="button"
           onClick={() => exportFile("docx")}
@@ -2088,96 +2061,6 @@ export default function EditorPage() {
         </aside>
         )}
       </div>
-
-      {/* APPROVE ALL — confirmation modal */}
-      {showApproveAllConfirm && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center px-4"
-          style={{ background: "rgba(20, 18, 10, 0.45)" }}
-          onClick={() => setShowApproveAllConfirm(false)}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="approve-all-title"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-2xl p-6"
-            style={{
-              background: "#ffffff",
-              border: "1px solid #e7ddc5",
-              boxShadow: "0 10px 30px rgba(30,30,20,0.18)",
-            }}
-          >
-            <div className="flex items-start gap-3 mb-4">
-              <div
-                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-                style={{ background: "#cfe6e2", color: "#0a7870" }}
-              >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <h2
-                  id="approve-all-title"
-                  className="text-[18px] font-semibold tracking-tight"
-                  style={{ color: "#1f2a2e" }}
-                >
-                  Approve all translated segments?
-                </h2>
-                <p
-                  className="text-sm mt-1"
-                  style={{ color: "#6b6558" }}
-                >
-                  This will mark every segment that has a translation as
-                  approved — {(() => {
-                    const n = segments.filter(
-                      (s) =>
-                        !s.approved &&
-                        s.translated_text &&
-                        s.translated_text.trim()
-                    ).length
-                    return `${n} segment${n === 1 ? "" : "s"} pending`
-                  })()}.
-                  You can still unapprove individual segments afterwards.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 mt-2">
-              <button
-                type="button"
-                onClick={() => setShowApproveAllConfirm(false)}
-                className="px-4 py-2 rounded-full text-sm font-semibold"
-                style={{
-                  background: "#ffffff",
-                  color: "#1f2a2e",
-                  border: "1px solid #e7ddc5",
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={approveAllTranslated}
-                className="px-4 py-2 rounded-full text-sm font-semibold"
-                style={{ background: "#0a7870", color: "#fff" }}
-              >
-                Approve all
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* AI GLOSSARY SUGGESTIONS — Claude scans translated segments
           and proposes recurring terms. User accepts each with one
