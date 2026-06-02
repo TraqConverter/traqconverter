@@ -117,22 +117,57 @@ def _install_stamp_in_footer(section, stamp_path: Path, alignment: str = "right"
 
 def _append_body_from(src_doc: Document, dst_doc: Document):
     """Copy paragraphs and tables from `src_doc.body` into `dst_doc.body`,
-    preserving formatting at the XML level."""
-    src_body = src_doc.element.body
-    dst_body = dst_doc.element.body
+    preserving formatting at the XML level.
 
-    # Iterate every child of the source body except the trailing sectPr
-    # (which carries page-size / orientation info — we keep dst's own).
-    for child in src_body.iterchildren():
-        tag = child.tag.split("}")[-1]
-        if tag == "sectPr":
-            continue
+    Trims any trailing empty paragraphs (so the merged body doesn't
+    add a blank page before whatever comes next), and drops the
+    trailing sectPr (page-size info — we keep dst's own).
+    """
+    src_body = src_doc.element.body
+
+    # Materialize the children list, drop trailing sectPr + trailing
+    # blank paragraphs.
+    W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    T_TAG = "{%s}t" % W_NS
+    BR_TAG = "{%s}br" % W_NS
+    PICT_TAG = "{%s}pict" % W_NS
+    DRAWING_TAG = "{%s}drawing" % W_NS
+
+    def _is_empty_para(el):
+        if el.tag.split("}")[-1] != "p":
+            return False
+        # Has any text run?
+        for t in el.iter(T_TAG):
+            if (t.text or "").strip():
+                return False
+        # Has any drawing / picture (image)?
+        for _ in el.iter(DRAWING_TAG):
+            return False
+        for _ in el.iter(PICT_TAG):
+            return False
+        # Has any page break?
+        for br in el.iter(BR_TAG):
+            if br.get("{%s}type" % W_NS) == "page":
+                return False
+        return True
+
+    children = list(src_body.iterchildren())
+    # Drop trailing sectPr.
+    while children and children[-1].tag.split("}")[-1] == "sectPr":
+        children.pop()
+    # Drop trailing empty paragraphs.
+    while children and _is_empty_para(children[-1]):
+        children.pop()
+
+    dst_body = dst_doc.element.body
+    for child in children:
         try:
             dst_body.append(deepcopy(child))
         except Exception:
-            # If a particular element can't be deepcopy'd (rare), skip it
-            # rather than fail the whole export.
-            logger.warning("Skipped a body element during merge (%s)", tag)
+            logger.warning(
+                "Skipped a body element during merge (%s)",
+                child.tag.split("}")[-1],
+            )
 
 
 # ----------------------------------------------------------------
@@ -147,6 +182,9 @@ def _append_certification(dst_doc: Document, project, user, work_dir: Path):
     Otherwise we write a simple hardcoded affidavit."""
     user_email = getattr(user, "email", "") or ""
 
+    # Single page break before the cert — _append_body_from already
+    # trimmed any trailing blanks from the merged translated section,
+    # so this gives us exactly one new page for the cert.
     dst_doc.add_page_break()
 
     # Try the template first.
@@ -287,7 +325,9 @@ def build_full_export_docx(
                         out.add_page_break()
                 if page_imgs:
                     source_added = True
-                    # Hard break before the translated section.
+                    # Single break before the translated section.
+                    # _append_body_from drops trailing blanks from the
+                    # merged content so we don't double up.
                     out.add_page_break()
         except Exception:
             logger.exception(
