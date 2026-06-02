@@ -1028,17 +1028,28 @@ def _strip_layout_table_borders(docx_bytes: bytes) -> bytes:
                             root = ET.fromstring(data)
                             stripped = 0
                             for tbl in root.iter("{%s}tbl" % W_NS):
-                                # Strip borders on EVERY table — see
-                                # docstring rationale. Tables that
-                                # genuinely need borders (e.g.
-                                # explicitly drawn invoice line items)
-                                # are rare and the user can add them
-                                # back via the WYSIWYG edit pane.
+                                # Strip borders from THREE sources:
+                                #   1. <w:tblStyle> reference (e.g.
+                                #      "Table Grid") — this is what
+                                #      Claude usually emits; without
+                                #      removing it, Word reads the
+                                #      style definition from
+                                #      styles.xml and draws borders
+                                #      regardless of our tblBorders.
+                                #   2. <w:tblBorders> directly on the
+                                #      table — overrides style.
+                                #   3. <w:tcBorders> on each cell —
+                                #      cell-level overrides.
                                 tblPr = tbl.find("{%s}tblPr" % W_NS)
                                 if tblPr is None:
                                     tblPr = ET.SubElement(tbl, "{%s}tblPr" % W_NS)
                                     tbl.insert(0, tblPr)
-                                # Remove existing tblBorders
+                                # 1. Remove style reference so the
+                                #    Table Grid style's borders don't
+                                #    show through.
+                                for s in tblPr.findall("{%s}tblStyle" % W_NS):
+                                    tblPr.remove(s)
+                                # 2. Force tblBorders to nil.
                                 for b in tblPr.findall("{%s}tblBorders" % W_NS):
                                     tblPr.remove(b)
                                 borders = ET.SubElement(tblPr, "{%s}tblBorders" % W_NS)
@@ -1048,12 +1059,25 @@ def _strip_layout_table_borders(docx_bytes: bytes) -> bytes:
                                 ):
                                     e = ET.SubElement(borders, "{%s}%s" % (W_NS, edge))
                                     e.set("{%s}val" % W_NS, "nil")
-                                # Also strip per-cell borders just in case.
+                                # 3. Clear per-cell borders AND add
+                                #    explicit nil tcBorders so cells
+                                #    don't inherit borders from any
+                                #    surviving table style.
                                 for tc in tbl.iter("{%s}tc" % W_NS):
                                     tcPr = tc.find("{%s}tcPr" % W_NS)
-                                    if tcPr is not None:
-                                        for b in tcPr.findall("{%s}tcBorders" % W_NS):
-                                            tcPr.remove(b)
+                                    if tcPr is None:
+                                        tcPr = ET.SubElement(tc, "{%s}tcPr" % W_NS)
+                                        tc.insert(0, tcPr)
+                                    for b in tcPr.findall("{%s}tcBorders" % W_NS):
+                                        tcPr.remove(b)
+                                    tcb = ET.SubElement(tcPr, "{%s}tcBorders" % W_NS)
+                                    for edge in (
+                                        "top", "left", "bottom", "right",
+                                    ):
+                                        e = ET.SubElement(
+                                            tcb, "{%s}%s" % (W_NS, edge)
+                                        )
+                                        e.set("{%s}val" % W_NS, "nil")
                                 stripped += 1
                             if stripped:
                                 data = ET.tostring(
