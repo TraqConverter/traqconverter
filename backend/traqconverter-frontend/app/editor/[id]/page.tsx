@@ -2805,13 +2805,26 @@ function CompareEditPanel({
           <button
             type="button"
             onClick={async () => {
-              if (!window.confirm("Discard your edits and re-render from the original?")) return
+              if (
+                !window.confirm(
+                  "Re-run Claude on the source PDF? This discards any edits and takes 1–3 minutes.",
+                )
+              ) return
               try {
+                setLoading(true)
+                setError("")
                 await api.delete(`/projects/${projectId}/edited-html`)
-              } catch {
-                /* ignore */
+                // Force a fresh Claude rebuild — uses the latest
+                // prompt rules (no rotation, no over-tabling, real
+                // logos via doc.add_picture).
+                await api.post(`/projects/${projectId}/rebuild-with-claude`)
+              } catch (e: any) {
+                setError(
+                  e?.response?.data?.detail || "Re-run failed.",
+                )
+              } finally {
+                setReloadKey((k) => k + 1)
               }
-              setReloadKey((k) => k + 1)
             }}
             className="text-[10px] font-semibold tracking-[0.08em] px-2 py-1 rounded-md transition"
             style={{
@@ -2820,9 +2833,9 @@ function CompareEditPanel({
               border: "1px solid #cfe6e2",
               cursor: "pointer",
             }}
-            title="Discard edits and re-render from the original"
+            title="Re-run Claude on the PDF with the latest prompt"
           >
-            ⟳ Refresh
+            ✦ Re-run Claude
           </button>
         </div>
       </div>
