@@ -2951,12 +2951,25 @@ function CompareEditPanel({
           <div
             style={{
               color: "#8a8270",
-              fontStyle: "italic",
               textAlign: "center",
-              padding: "80px 0",
+              padding: "80px 24px",
             }}
           >
-            Rendering document…
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 600,
+                color: "#0a5e58",
+                marginBottom: 8,
+              }}
+            >
+              ✦ Building document with Claude…
+            </div>
+            <div style={{ fontSize: 12, fontStyle: "italic" }}>
+              First load takes 1–3 minutes while Claude reads the PDF
+              and authors the translated DOCX. Subsequent loads are
+              instant.
+            </div>
           </div>
         ) : error ? (
           <div
