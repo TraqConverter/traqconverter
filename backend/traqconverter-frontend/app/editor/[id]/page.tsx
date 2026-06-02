@@ -2901,13 +2901,13 @@ function CompareEditPanel({
               .docx-edit h3 { font-size: 13px; font-weight: 700; margin: 8px 0 4px; }
               .docx-edit table { border-collapse: collapse; margin: 8px 0; width: 100%; }
               .docx-edit td, .docx-edit th { padding: 4px 8px; vertical-align: top; }
-              /* Borders only on real data grids (3+ rows). Layout
-                 tables — 1-row header layouts, 2-row label/value
-                 stacks — stay borderless so they look like the
-                 original document, not a Word grid. */
-              .docx-edit table:has(tr:nth-child(3)) td,
-              .docx-edit table:has(tr:nth-child(3)) th { border: 1px solid #cdb98a; }
-              .docx-edit table:has(tr:nth-child(3)) th { background: #faf5ee; font-weight: 600; }
+              /* NO borders on any table in the preview. Source PDFs
+                 we handle (certificates, transcripts, official
+                 letters) are whitespace-aligned with no visible cell
+                 borders — the backend post-processor strips them
+                 from the underlying DOCX too. */
+              .docx-edit td, .docx-edit th { border: none !important; }
+              .docx-edit th { background: transparent; font-weight: 600; }
               .docx-edit ul, .docx-edit ol { margin: 6px 0 8px 24px; }
               .docx-edit img { max-width: 100%; height: auto; }
               .docx-edit :focus { outline: 2px solid #cdb98a; outline-offset: 2px; border-radius: 3px; }

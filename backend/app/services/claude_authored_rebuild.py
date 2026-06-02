@@ -1212,21 +1212,42 @@ def _split_crammed_table_rows(docx_bytes: bytes) -> bytes:
                                     continue  # too small to bother
                                 for row in rows[1:]:
                                     cells = _cells(row)
-                                    if len(cells) >= n_cols:
-                                        continue  # already proper
-                                    if len(cells) != 1:
-                                        continue  # weird shape, skip
-                                    text = _txt(cells[0]).strip()
-                                    if not text:
+                                    cell_texts = [_txt(c).strip() for c in cells]
+                                    non_empty_indices = [
+                                        i for i, t in enumerate(cell_texts) if t
+                                    ]
+                                    # Case A: row already has data spread
+                                    # across multiple cells → leave alone.
+                                    if len(non_empty_indices) >= max(2, n_cols // 2):
                                         continue
+                                    # Case B: row has no text anywhere → skip.
+                                    if not non_empty_indices:
+                                        continue
+                                    # Case C: row has text only in cell 0
+                                    # (or one cell), and that cell's text
+                                    # reads like a concatenation of N column
+                                    # values. Split it.
+                                    text_cell_idx = non_empty_indices[0]
+                                    text = cell_texts[text_cell_idx]
                                     parts = _smart_split(text, n_cols)
                                     if not parts:
                                         continue
-                                    # Apply split.
-                                    _set_cell_text(cells[0], parts[0])
-                                    for value in parts[1:]:
-                                        new_tc = _add_empty_cell(row)
-                                        _set_cell_text(new_tc, value)
+                                    # Distribute across cells: write parts[0]
+                                    # into the cell that had the text,
+                                    # parts[1:] into the rest (creating new
+                                    # cells if needed).
+                                    _set_cell_text(cells[text_cell_idx], parts[0])
+                                    rest = parts[1:]
+                                    # Fill any subsequent existing empty cells
+                                    # first, then append new ones.
+                                    next_idx = text_cell_idx + 1
+                                    for value in rest:
+                                        if next_idx < len(cells):
+                                            _set_cell_text(cells[next_idx], value)
+                                            next_idx += 1
+                                        else:
+                                            new_tc = _add_empty_cell(row)
+                                            _set_cell_text(new_tc, value)
                                     split_count += 1
                             if split_count:
                                 data = ET.tostring(
