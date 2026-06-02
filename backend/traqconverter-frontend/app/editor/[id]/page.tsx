@@ -2900,8 +2900,14 @@ function CompareEditPanel({
               .docx-edit h2 { font-size: 15px; font-weight: 700; margin: 10px 0 6px; }
               .docx-edit h3 { font-size: 13px; font-weight: 700; margin: 8px 0 4px; }
               .docx-edit table { border-collapse: collapse; margin: 8px 0; width: 100%; }
-              .docx-edit td, .docx-edit th { border: 1px solid #cdb98a; padding: 4px 8px; vertical-align: top; }
-              .docx-edit th { background: #faf5ee; font-weight: 600; }
+              .docx-edit td, .docx-edit th { padding: 4px 8px; vertical-align: top; }
+              /* Borders only on real data grids (3+ rows). Layout
+                 tables — 1-row header layouts, 2-row label/value
+                 stacks — stay borderless so they look like the
+                 original document, not a Word grid. */
+              .docx-edit table:has(tr:nth-child(3)) td,
+              .docx-edit table:has(tr:nth-child(3)) th { border: 1px solid #cdb98a; }
+              .docx-edit table:has(tr:nth-child(3)) th { background: #faf5ee; font-weight: 600; }
               .docx-edit ul, .docx-edit ol { margin: 6px 0 8px 24px; }
               .docx-edit img { max-width: 100%; height: auto; }
               .docx-edit :focus { outline: 2px solid #cdb98a; outline-offset: 2px; border-radius: 3px; }
