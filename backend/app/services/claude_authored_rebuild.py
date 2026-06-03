@@ -174,7 +174,7 @@ def _no_borders(tbl):
         tbl._tbl.insert(0, tblPr)
     borders = OxmlElement('w:tblBorders')
     for edge in ("top","left","bottom","right","insideH","insideV"):
-        e = OxmlElement(f'w:{edge}')
+        e = OxmlElement(f'w:{{edge}}')
         e.set(qn('w:val'), 'nil')
         borders.append(e)
     tblPr.append(borders)
@@ -350,7 +350,7 @@ Read the document end-to-end and reproduce its visual structure:
                 tbl._tbl.insert(0, tblPr)
             borders = OxmlElement('w:tblBorders')
             for edge in ("top","left","bottom","right","insideH","insideV"):
-                e = OxmlElement(f'w:{edge}')
+                e = OxmlElement(f'w:{{edge}}')
                 e.set(qn('w:val'), 'nil')
                 borders.append(e)
             tblPr.append(borders)
