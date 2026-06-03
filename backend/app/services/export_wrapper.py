@@ -165,26 +165,76 @@ def _append_body_from(src_doc: Document, dst_doc: Document):
     # CRITICAL: python-docx Document objects always carry a trailing
     # <w:sectPr> in the body — that element holds page size / margin
     # info for the final section. python-docx's `add_paragraph()`
-    # inserts BEFORE that trailing sectPr (so layout stays
-    # consistent). If we do raw `.append(child)` here we land AFTER
-    # the trailing sectPr, and any subsequent `dst_doc.add_*` calls
-    # (like the cert page) end up positioned BEFORE our appended
-    # body — visually placing the cert in front of the translation,
-    # which is exactly the v22/v23 export bug.
+    # inserts BEFORE that trailing sectPr. Raw `.append(child)` here
+    # lands AFTER the trailing sectPr and pushes the body past it,
+    # then `_append_certification`'s add_paragraph lands BEFORE the
+    # sectPr — visually placing the cert IN FRONT of the body.
     #
-    # Fix: insert each merged child BEFORE the trailing sectPr (if
-    # one exists), so the merged body sits in the correct visual
-    # position and downstream add_* calls land after it.
+    # Also: every <w:drawing> in src carries r:embed="rIdN" pointing
+    # at SRC document part-rels. When we deepcopy, those rIds no
+    # longer resolve in dst — images vanish silently. Walk src
+    # drawings, register each image in dst_part, then remap r:embed.
     final_sectpr = None
     for ch in list(dst_body.iterchildren()):
         if ch.tag.split("}")[-1] == "sectPr":
             final_sectpr = ch
+
+    R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    EMBED_ATTR = "{%s}embed" % R_NS
+    try:
+        from docx.opc.constants import RELATIONSHIP_TYPE as _RT
+    except Exception:
+        _RT = None
+
+    src_part = src_doc.part
+    dst_part = dst_doc.part
+    rid_map = {}
+    images_copied = 0
+    for child in children:
+        for drawing in child.iter(DRAWING_TAG):
+            for el in drawing.iter():
+                rid = el.get(EMBED_ATTR)
+                if not rid or rid in rid_map:
+                    continue
+                try:
+                    related = src_part.related_parts.get(rid)
+                except Exception:
+                    related = None
+                if related is None:
+                    continue
+                try:
+                    if _RT is not None:
+                        new_rid = dst_part.relate_to(related, _RT.IMAGE)
+                    else:
+                        new_rid = dst_part.relate_to(
+                            related,
+                            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+                        )
+                    rid_map[rid] = new_rid
+                    images_copied += 1
+                except Exception:
+                    logger.warning(
+                        "Failed to re-register image rel %s during merge", rid
+                    )
+
+    if images_copied:
+        logger.info(
+            "Carried over %d image(s) from authored DOCX into wrapper",
+            images_copied,
+        )
+
     for child in children:
         try:
+            copied = deepcopy(child)
+            if rid_map:
+                for el in copied.iter():
+                    rid = el.get(EMBED_ATTR)
+                    if rid and rid in rid_map:
+                        el.set(EMBED_ATTR, rid_map[rid])
             if final_sectpr is not None:
-                final_sectpr.addprevious(deepcopy(child))
+                final_sectpr.addprevious(copied)
             else:
-                dst_body.append(deepcopy(child))
+                dst_body.append(copied)
         except Exception:
             logger.warning(
                 "Skipped a body element during merge (%s)",
