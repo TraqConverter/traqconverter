@@ -936,63 +936,83 @@ def _call_claude_to_author(
     seen = set()
     model_chain = [m for m in model_chain if m and not (m in seen or seen.add(m))]
 
+    def _try_call(attempt_model, use_thinking):
+        kwargs = {
+            "model": attempt_model,
+            "max_tokens": 64000 if use_thinking else 16000,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "application/pdf",
+                                "data": pdf_b64,
+                            },
+                        },
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+        }
+        if use_thinking:
+            # Extended thinking is the same mechanism Claude.ai uses
+            # for hard PDFs. Requires temperature=1.0.
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": 20000}
+            kwargs["temperature"] = 1.0
+        else:
+            kwargs["temperature"] = 0.2
+        return client.messages.create(**kwargs)
+
     last_exc = None
     resp = None
     used_model = None
+    used_thinking = None
     for attempt_model in model_chain:
-        try:
-            resp = client.messages.create(
-                model=attempt_model,
-                # Extended thinking is the same mechanism Claude.ai
-                # uses for hard PDFs — gives the model time to plan
-                # table-cell distribution, image placement, etc.
-                # before emitting the python-docx code. budget_tokens
-                # is the thinking budget; max_tokens covers both
-                # thinking + visible output, so it must exceed
-                # budget_tokens + reasonable script length.
-                max_tokens=64000,
-                thinking={"type": "enabled", "budget_tokens": 20000},
-                # Anthropic requires temperature=1.0 when thinking is on.
-                temperature=1.0,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "document",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": "application/pdf",
-                                    "data": pdf_b64,
-                                },
-                            },
-                            {"type": "text", "text": prompt},
-                        ],
-                    }
-                ],
-            )
-            used_model = attempt_model
-            break
-        except Exception as e:
-            msg = str(e).lower()
-            last_exc = e
-            # Retry on model-not-found / overload / server errors.
-            if any(s in msg for s in (
-                "404", "not_found", "model_not_found",
-                "overloaded", "rate_limit", "503", "500", "529",
-            )):
+        for use_thinking in (True, False):
+            try:
+                resp = _try_call(attempt_model, use_thinking)
+                used_model = attempt_model
+                used_thinking = use_thinking
+                break
+            except Exception as e:
+                msg = str(e).lower()
+                last_exc = e
+                # LOG THE FULL ERROR so we can diagnose.
                 logger.warning(
-                    "Claude API call failed on %s (%s); trying next model",
-                    attempt_model, e,
+                    "Claude API call failed (model=%s, thinking=%s): %s",
+                    attempt_model, use_thinking, e,
                 )
-                continue
-            # Anything else (4xx auth, invalid request) — bubble up.
-            raise
+                # Thinking-specific failures → retry without thinking
+                # on the SAME model before moving to the next model.
+                if use_thinking and any(s in msg for s in (
+                    "thinking", "extended_thinking", "budget_tokens",
+                    "temperature", "invalid_request", "400",
+                )):
+                    logger.info("Retrying without extended thinking…")
+                    continue
+                # Model-not-found / overload / 5xx → move to next model.
+                if any(s in msg for s in (
+                    "404", "not_found", "model_not_found",
+                    "overloaded", "rate_limit", "503", "500", "529",
+                )):
+                    break  # next model
+                # Anything else (auth, malformed request) — bubble up.
+                raise
+        if resp is not None:
+            break
 
     if resp is None:
         raise RuntimeError(
             f"All Claude models in fallback chain failed: {last_exc}"
         )
+
+    logger.info(
+        "Claude succeeded with model=%s, thinking=%s",
+        used_model, used_thinking,
+    )
 
     # Walk the content blocks. With thinking enabled there may be
     # "thinking" blocks before the actual "text" output — skip those.
@@ -1002,8 +1022,8 @@ def _call_claude_to_author(
             text_blocks.append(getattr(block, "text", "") or "")
     raw = "\n".join(text_blocks)
     logger.info(
-        "Claude (%s) returned %d chars (usage in=%d out=%d)",
-        used_model, len(raw),
+        "Claude (%s, thinking=%s) returned %d chars (usage in=%d out=%d)",
+        used_model, used_thinking, len(raw),
         getattr(resp.usage, "input_tokens", -1),
         getattr(resp.usage, "output_tokens", -1),
     )
