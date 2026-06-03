@@ -325,10 +325,11 @@ def build_full_export_docx(
                         out.add_page_break()
                 if page_imgs:
                     source_added = True
-                    # Single break before the translated section.
-                    # _append_body_from drops trailing blanks from the
-                    # merged content so we don't double up.
-                    out.add_page_break()
+                    # NO unconditional break here. The last source
+                    # page's image paragraph naturally ends the
+                    # page; Word reflows so the next content starts
+                    # on a fresh page. Adding an explicit page break
+                    # would create an empty page.
         except Exception:
             logger.exception(
                 "Source-page embedding failed — continuing without source pages"

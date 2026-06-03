@@ -449,8 +449,16 @@ there is a real image file available.
     "[Signature]") instead of trying to reference a file that
     isn't there.
 
-Add a small italic bottom note in {target_lang}, set at ~8pt with
-slight indentation, stating that this is a translation of the
+ORDERING RULE: the translator's note goes at the VERY END of the
+document, after all other content (after the signature block, after
+the decoding keys, after every other element). NEVER place a
+"CERTIFIED TRANSLATION" or affidavit-style block at the START of the
+document. The official translator certification appears as a
+separate page appended by the wrapper — your job is ONLY the
+translation body, ending with a brief italic note.
+
+Add this small italic bottom note in {target_lang}, set at ~8pt
+with slight indentation, stating that this is a translation of the
 original {source_lang} document, that the crest / seal / signature
 are reproduced from the original scan, and that all codes / sector
 codes / credit values / grades / reference numbers are reproduced
@@ -659,10 +667,14 @@ def _extract_pdf_images(pdf_bytes: bytes, dest_dir: Path) -> list:
                     page_w, page_h = rect.width, rect.height
                     if page_w < 100 or page_h < 100:
                         continue
-                    # Header crop: top 28% — typically captures
-                    # logo + institution name region.
+                    # Header crop: top 16% — tight to the actual
+                    # logo area. 28% was too generous and included
+                    # the whole institution-name band, producing
+                    # "looks like a screenshot of the page header"
+                    # output. 16% is just the crest + immediate
+                    # vicinity. Adjust per-document if needed.
                     header_clip = fitz.Rect(
-                        0, 0, page_w, page_h * 0.28
+                        0, 0, page_w, page_h * 0.16
                     )
                     pix = page.get_pixmap(
                         matrix=fitz.Matrix(3, 3),  # 3x for crispness
@@ -685,7 +697,7 @@ def _extract_pdf_images(pdf_bytes: bytes, dest_dir: Path) -> list:
                     # block + stamp typically live there).
                     if page_num == n_pages:
                         footer_clip = fitz.Rect(
-                            0, page_h * 0.55, page_w, page_h * 0.85
+                            0, page_h * 0.62, page_w, page_h * 0.80
                         )
                         pix = page.get_pixmap(
                             matrix=fitz.Matrix(3, 3),
