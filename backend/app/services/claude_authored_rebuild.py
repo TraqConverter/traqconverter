@@ -1860,6 +1860,122 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
         return docx_bytes
 
 
+def _strip_broken_image_drawings(docx_bytes: bytes) -> bytes:
+    """Remove any <w:drawing> whose embedded relationship ID
+    doesn't actually exist in word/_rels/document.xml.rels.
+
+    Claude's scripts sometimes call doc.add_picture(path) where
+    `path` resolves but the file is removed before .save() runs, OR
+    they reference an inline image rel that doesn't make it into
+    the saved package. The user sees "The picture can't be
+    displayed" in Word for each orphan drawing. Strip them.
+
+    Failures are non-fatal — returns original bytes on error.
+    """
+    try:
+        import io
+        import re as _re
+        import zipfile
+        from xml.etree import ElementTree as ET
+
+        W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+        ET.register_namespace("w", W_NS)
+        ET.register_namespace("r", R_NS)
+        ET.register_namespace("", REL_NS)
+
+        in_buf = io.BytesIO(docx_bytes)
+        out_buf = io.BytesIO()
+
+        # Pre-read all members.
+        with zipfile.ZipFile(in_buf, "r") as zin:
+            members = {item.filename: zin.read(item.filename) for item in zin.infolist()}
+
+        rels_data = members.get("word/_rels/document.xml.rels", b"")
+        doc_data = members.get("word/document.xml", b"")
+        if not rels_data or not doc_data:
+            return docx_bytes
+
+        # Collect the set of valid rIds (any relationship pointing at
+        # an image — and crucially, an image whose target exists in
+        # the zip).
+        valid_rids = set()
+        try:
+            rels_root = ET.fromstring(rels_data)
+            for r in rels_root:
+                rid = r.get("Id")
+                rtype = r.get("Type") or ""
+                target = r.get("Target") or ""
+                if "image" not in rtype.lower():
+                    continue
+                # Resolve target relative to word/
+                tpath = target
+                if tpath.startswith("/"):
+                    tpath = tpath[1:]
+                if tpath.startswith("../"):
+                    tpath = tpath[3:]
+                else:
+                    tpath = "word/" + tpath
+                if tpath in members:
+                    valid_rids.add(rid)
+        except Exception as e:
+            logger.warning("rels parse failed: %s", e)
+            return docx_bytes
+
+        # Walk document.xml drawings, remove ones whose r:embed isn't
+        # in valid_rids.
+        try:
+            doc_root = ET.fromstring(doc_data)
+        except Exception:
+            return docx_bytes
+
+        body = doc_root.find("{%s}body" % W_NS)
+        if body is None:
+            return docx_bytes
+
+        removed = 0
+        DRAWING_TAG = "{%s}drawing" % W_NS
+        EMBED_ATTR = "{%s}embed" % R_NS
+
+        # Build a parent map.
+        parent_map = {c: p for p in doc_root.iter() for c in p}
+
+        for drawing in list(doc_root.iter(DRAWING_TAG)):
+            # Find r:embed attribute anywhere inside this drawing.
+            embed_rid = None
+            for el in drawing.iter():
+                rid = el.get(EMBED_ATTR)
+                if rid:
+                    embed_rid = rid
+                    break
+            if embed_rid is None or embed_rid in valid_rids:
+                continue
+            # Orphan drawing — remove from its parent.
+            parent = parent_map.get(drawing)
+            if parent is not None:
+                parent.remove(drawing)
+                removed += 1
+
+        if removed:
+            new_doc = ET.tostring(
+                doc_root, xml_declaration=True, encoding="UTF-8",
+                short_empty_elements=True,
+            )
+            members["word/document.xml"] = new_doc
+            with zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as zout:
+                for name, data in members.items():
+                    zout.writestr(name, data)
+            logger.info(
+                "Removed %d broken-image drawing(s) (orphaned rIds)", removed
+            )
+            return out_buf.getvalue()
+        return docx_bytes
+    except Exception:
+        logger.exception("Broken-drawing cleanup failed — returning original")
+        return docx_bytes
+
+
 def author_rebuild_docx(
     pdf_bytes: bytes,
     source_lang: str,
@@ -1924,6 +2040,11 @@ def author_rebuild_docx(
         # the prompt instruction, try to substitute the actual
         # extracted image. Uses out_dir/images/.
         docx_bytes = _replace_image_placeholders(docx_bytes, out_dir)
+        # Final cleanup: remove any <w:drawing> whose embedded rId
+        # doesn't actually exist in the rels file. This is what
+        # produces the "The picture can't be displayed" red-X in
+        # Word — gone now.
+        docx_bytes = _strip_broken_image_drawings(docx_bytes)
         logger.info(
             "Authored rebuild OK (%d bytes)", len(docx_bytes)
         )
