@@ -3160,4 +3160,32 @@ function SideTab({
       }}
     >
       <div className="text-xs font-semibold flex items-center justify-center gap-1">
-        {lab
+        {label}
+        {typeof count === "number" && (
+          <span
+            className="text-[10px] tabular-nums px-1 rounded-full"
+            style={{ color: "#9a9178" }}
+          >
+            · {count}
+          </span>
+        )}
+      </div>
+    </button>
+  )
+}
+
+function StatusRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      className="flex items-center justify-between py-2"
+      style={{ borderBottom: "1px solid #f1e8d1" }}
+    >
+      <div className="text-sm" style={{ color: "#6b6558" }}>
+        {label}
+      </div>
+      <div className="text-sm font-semibold" style={{ color: "#1f2a2e" }}>
+        {value}
+      </div>
+    </div>
+  )
+}
