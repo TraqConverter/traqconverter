@@ -453,23 +453,39 @@ position in the rebuilt document. DO NOT use a bracketed text
 placeholder like "[Coat of Arms]" / "[Stamp]" / "[Signature]" if
 there is a real image file available.
 
-  * For an entry with kind=header → it is the cropped top strip of
-    a source page. It contains the logo + masthead. Insert it at
-    the top of your output page using add_picture with a width
-    that fills the body (width=Cm(17) for portrait A4). DO NOT
-    add a "[Coat of Arms]" placeholder alongside it.
-  * For an entry with kind=footer → it is the cropped bottom strip
-    of the LAST source page. It contains the signature block + seal
-    + stamp. Insert it at the bottom of your last translation page,
-    typically width=Cm(8-12).
+  * For an entry with kind=header → DO NOT paste this wide strip
+    at the top of the output. It's a low-resolution crop of the
+    PDF page that looks blurry when stretched. Instead, REBUILD
+    the masthead in Word: a borderless 2-column table where the
+    left cell (Cm(3)) holds the CREST image inserted with
+    width=Cm(2.5), and the right cell (Cm(14)) holds the
+    institution name typed in 14pt bold (e.g. "UNIVERSITÀ DEGLI
+    STUDI / FIRENZE" on two lines). If only the wide header crop
+    is available and no separate crest, use the crest from the
+    embedded-images list — or fall back to a small italic
+    "[Crest]" placeholder text in the left cell.
+  * For an entry with kind=footer → DO NOT paste this wide strip.
+    Same problem — it's a low-res strip. Instead, rebuild the
+    signature block in Word: officer name typed in normal weight
+    above a signature image (width=Cm(5)) on the left, and the
+    seal/stamp image (width=Cm(3)) on the right, in a borderless
+    2-column table.
   * For an entry with kind=embedded → discrete extracted image
     (logo, photo, signature, seal). Place it where the source PDF
-    shows it, sized appropriately.
+    shows it, sized appropriately per the sizing hints below.
   * Insert with `doc.add_picture("images/<filename>", width=Cm(N))`
     at the matching position.
-  * Sizing hints: logos / crests ~3-4 cm wide; round seals or
-    rubber stamps ~3 cm; handwritten signatures ~5 cm; ID photos
-    or passport photos ~3 cm tall.
+  * STRICT SIZING — never exceed these widths for these element
+    types (stretching small images to wider widths produces the
+    blurry "broken image" effect):
+      - crest / coat of arms      width=Cm(2.5)
+      - institution logo          width=Cm(3)
+      - round seal / rubber stamp width=Cm(3)
+      - handwritten signature     width=Cm(5)
+      - ID / passport photo       width=Cm(3) (set height instead)
+      - watermark / background    skip (don't embed)
+    For any other small image element, DO NOT set width=Cm(17) or
+    width=Cm(15) — use Cm(3-5) max.
   * If the source is a flat scan (one big image per page rather
     than discrete logo/seal/signature image files), the
     EXTRACTED IMAGES list may be empty or only contain whole-page
@@ -559,8 +575,13 @@ left-aligned Word default. Specifically:
     right-align it. If it's indented, indent it.
 
   * Match the FONT FAMILY and SIZE of the source when readable.
-    Body: 10pt or 11pt (whichever matches the source). Headers
-    and titles: 12-14pt bold. Footnotes / fine print: 8pt.
+    FONT FLOOR: body text MUST be 11pt minimum (set explicitly
+    via `run.font.size = Pt(11)`). NEVER drop below 10pt for body
+    text — anything smaller looks unreadable. Headers and titles:
+    12-14pt bold. Table content: 9-10pt acceptable if a wide
+    table won't fit at 11pt, but only for table cell content,
+    not body paragraphs. Footnotes / fine print at the very
+    bottom of the document: 8pt.
 
   * BOLD WEIGHT — match the source's bold usage EXACTLY. Do NOT
     bold paragraphs that are regular weight in the source.
