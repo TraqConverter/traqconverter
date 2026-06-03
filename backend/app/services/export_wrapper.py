@@ -29,6 +29,7 @@ from typing import Optional
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.section import WD_SECTION
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 
@@ -316,20 +317,27 @@ def build_full_export_docx(
             ):
                 page_imgs = _render_source_pages_as_images(source_path, work_dir)
                 for i, img in enumerate(page_imgs):
+                    # Each source page lives on its own NEW_PAGE
+                    # section. This guarantees a single page per
+                    # image with no buffer "empty page" that
+                    # add_page_break() was producing for tall images
+                    # whose paragraph already overflowed.
+                    if i > 0:
+                        out.add_section(WD_SECTION.NEW_PAGE)
                     p = out.add_paragraph()
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                     run = p.add_run()
-                    # 17 cm = A4 portrait width minus 2cm margins on each side.
-                    run.add_picture(str(img), width=Cm(17))
-                    if i < len(page_imgs) - 1:
-                        out.add_page_break()
+                    # 16cm width leaves a hair of slack so the image
+                    # never overflows the page height — eliminates
+                    # the "image bleeds onto next page" empty-page
+                    # bug.
+                    run.add_picture(str(img), width=Cm(16))
                 if page_imgs:
                     source_added = True
-                    # NO unconditional break here. The last source
-                    # page's image paragraph naturally ends the
-                    # page; Word reflows so the next content starts
-                    # on a fresh page. Adding an explicit page break
-                    # would create an empty page.
+                    # Open a fresh section so the translation begins
+                    # cleanly on its own page (preserves Claude's
+                    # section.header masthead on the new section).
+                    out.add_section(WD_SECTION.NEW_PAGE)
         except Exception:
             logger.exception(
                 "Source-page embedding failed — continuing without source pages"

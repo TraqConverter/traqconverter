@@ -452,10 +452,20 @@ there is a real image file available.
 ORDERING RULE: the translator's note goes at the VERY END of the
 document, after all other content (after the signature block, after
 the decoding keys, after every other element). NEVER place a
-"CERTIFIED TRANSLATION" or affidavit-style block at the START of the
-document. The official translator certification appears as a
-separate page appended by the wrapper — your job is ONLY the
-translation body, ending with a brief italic note.
+"CERTIFIED TRANSLATION" or affidavit-style block at the START of
+the document.
+
+FORBIDDEN STRINGS — the following text must NOT appear anywhere in
+your output:
+  - "CERTIFIED TRANSLATION" (as a heading)
+  - "I hereby certify" (or any variant)
+  - "Translator:" followed by an email address
+  - "Signature: ___" / "Date: <UTC date>" boilerplate
+  - Any affidavit, certification, signature-line, or date-stamp
+    block that resembles a translator's certification page.
+The official translator certification page is appended by the
+wrapper AFTER your translation. Your job is ONLY the translation
+body, ending with the brief italic note described below.
 
 Add this small italic bottom note in {target_lang}, set at ~8pt
 with slight indentation, stating that this is a translation of the
@@ -634,13 +644,31 @@ def _extract_pdf_images(pdf_bytes: bytes, dest_dir: Path) -> list:
         n_pages = len(doc)
         for page_num, page in enumerate(doc, start=1):
             embedded_count = 0
-            # Strategy 1: embedded XObjects.
+            # Strategy 1: embedded XObjects. Skip page-sized
+            # images — those are usually scanned-page bitmaps, not
+            # discrete logos, and Claude inserting them produces the
+            # "screenshot of the whole page" output the user keeps
+            # seeing. Threshold: image must be < 60% of the page
+            # area to be considered a discrete asset.
+            page_rect = page.rect
+            page_area = max(1.0, page_rect.width * page_rect.height)
             for img_idx, img in enumerate(page.get_images(full=True)):
                 xref = img[0]
                 try:
                     pix = fitz.Pixmap(doc, xref)
                     if pix.n - pix.alpha >= 4:  # CMYK -> convert to RGB
                         pix = fitz.Pixmap(fitz.csRGB, pix)
+                    # Reject images that are too large (page scans).
+                    img_area_pts = (pix.width * pix.height) / (3 * 3)  # we extract at 3x earlier but get_images is at PDF-native
+                    # Use raw pixmap dims vs page dims (both in pts).
+                    if pix.width >= page_rect.width * 0.85 and pix.height >= page_rect.height * 0.6:
+                        logger.info(
+                            "Skipping page-sized embedded image p%d idx%d (%dx%d vs page %dx%d)",
+                            page_num, img_idx, pix.width, pix.height,
+                            int(page_rect.width), int(page_rect.height),
+                        )
+                        pix = None
+                        continue
                     fname = f"p{page_num}_img{img_idx}.png"
                     fpath = images_dir / fname
                     pix.save(str(fpath))
