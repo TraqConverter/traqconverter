@@ -194,7 +194,7 @@ for p in list(hdr.paragraphs):
     p._element.getparent().remove(p._element)
 
 # 1. Borderless 2-col table: logo | institution name stacked
-t = hdr.add_table(rows=1, cols=2, width=Cm(17))
+t = hdr.add_table(rows=1, cols=2))
 _no_borders(t)
 t.columns[0].width = Cm(4)
 t.columns[1].width = Cm(13)
@@ -279,7 +279,7 @@ for row in rows:
 # === SIGNATURE BLOCK ===
 # Borderless 2-col table: officer name + signature image on left,
 # round seal on right.
-sig = doc.add_table(rows=1, cols=2, width=Cm(17))
+sig = doc.add_table(rows=1, cols=2))
 _no_borders(sig)
 left = sig.rows[0].cells[0]
 left.paragraphs[0].add_run("The Issuing Officer\nBETTI ILARIA").bold = True
@@ -293,6 +293,24 @@ doc.add_paragraph("(*) Decoding of the institution-triad codes appearing in the 
 note = doc.add_paragraph()
 nr = note.add_run("Note: This is an English translation of the original Italian document. The crest, seal and signature are reproduced from the original scan. Course codes, sector codes (S.S.D.), credit values (CFU), grades and reference numbers are reproduced unchanged.")
 nr.italic = True; nr.font.size = Pt(8)
+
+
+
+# IMPORTANT: python-docx's Document.add_table() does NOT accept a
+# "width" keyword argument. To control table / column widths, set
+# them AFTER creating the table:
+#
+#   t = doc.add_table(rows=1, cols=2)
+#   t.autofit = False
+#   t.allow_autofit = False
+#   t.columns[0].width = Cm(4)
+#   t.columns[1].width = Cm(13)
+#   for row in t.rows:
+#       row.cells[0].width = Cm(4)
+#       row.cells[1].width = Cm(13)
+#
+# Use this pattern for EVERY table in the script. Never pass width=
+# to add_table() — it will TypeError.
 
 doc.save(OUTPUT_PATH)
 ```
