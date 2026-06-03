@@ -562,6 +562,21 @@ left-aligned Word default. Specifically:
     Body: 10pt or 11pt (whichever matches the source). Headers
     and titles: 12-14pt bold. Footnotes / fine print: 8pt.
 
+  * BOLD WEIGHT — match the source's bold usage EXACTLY. Do NOT
+    bold paragraphs that are regular weight in the source.
+    Examples that should be regular (NOT bold) unless the source
+    itself is bold:
+      - Body paragraphs ("Dr. X, born on Y, passed the exam ...")
+      - Two-label rows ("Cert. No. X" / "Student ID Y")
+      - Page-position rows ("For Foreign Use" / "Page N of M")
+      - All-caps centered statements ("HAVING EXAMINED THE
+        OFFICIAL RECORDS, ... THAT") — these are regular weight
+        in the source, just typographically all-caps.
+    Bold belongs only on: real section headings ("FIRST YEAR",
+    "PRIMO ANNO"), institutional masthead titles ("UNIVERSITÀ
+    DEGLI STUDI FIRENZE"), and table column headers — and only
+    when the source uses bold for those elements.
+
 HARD RULES (never violate)
 ==========================
   * NEVER rotate text. NEVER set vertical text direction. All

@@ -2905,8 +2905,26 @@ function CompareEditPanel({
                  we handle (certificates, transcripts, official
                  letters) are whitespace-aligned with no visible cell
                  borders — the backend post-processor strips them
-                 from the underlying DOCX too. */
-              .docx-edit td, .docx-edit th { border: none !important; }
+                 from the underlying DOCX too. Nuke borders on every
+                 table-related element regardless of whether they
+                 came from inline styles, mammoth defaults, or a
+                 stray <table border="1"> attribute. */
+              .docx-edit table,
+              .docx-edit thead,
+              .docx-edit tbody,
+              .docx-edit tfoot,
+              .docx-edit tr,
+              .docx-edit td,
+              .docx-edit th,
+              .docx-edit table * {
+                border: 0 !important;
+                border-top: 0 !important;
+                border-right: 0 !important;
+                border-bottom: 0 !important;
+                border-left: 0 !important;
+                box-shadow: none !important;
+                outline: 0 !important;
+              }
               .docx-edit th { background: transparent; font-weight: 600; }
               .docx-edit ul, .docx-edit ol { margin: 6px 0 8px 24px; }
               .docx-edit img { max-width: 100%; height: auto; }
@@ -3142,32 +3160,4 @@ function SideTab({
       }}
     >
       <div className="text-xs font-semibold flex items-center justify-center gap-1">
-        {label}
-        {typeof count === "number" && (
-          <span
-            className="text-[10px] tabular-nums px-1 rounded-full"
-            style={{ color: "#9a9178" }}
-          >
-            · {count}
-          </span>
-        )}
-      </div>
-    </button>
-  )
-}
-
-function StatusRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div
-      className="flex items-center justify-between py-2"
-      style={{ borderBottom: "1px solid #f1e8d1" }}
-    >
-      <div className="text-sm" style={{ color: "#6b6558" }}>
-        {label}
-      </div>
-      <div className="text-sm font-semibold" style={{ color: "#1f2a2e" }}>
-        {value}
-      </div>
-    </div>
-  )
-}
+        {lab
