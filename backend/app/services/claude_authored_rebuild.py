@@ -510,19 +510,57 @@ unchanged. Example wording:
 
 VISUAL LAYOUT FIDELITY
 ======================
-  * If the source has TWO labels on the SAME physical line, the
-    output MUST keep them on the SAME paragraph using a tab stop:
+The output's PAGE LOOK must mirror the source page. Match the
+source's column structure, alignment, and spacing — not a generic
+left-aligned Word default. Specifically:
+
+  * If the source has TWO labels on the SAME physical line (e.g.
+    "Certificate No. XYZ" on the left and "Student ID No. 1234" on
+    the right), the output MUST keep them on the SAME paragraph
+    using a right-aligned tab stop. Example:
 
         from docx.enum.text import WD_TAB_ALIGNMENT
         pf = paragraph.paragraph_format
         pf.tab_stops.add_tab_stop(Cm(17), WD_TAB_ALIGNMENT.RIGHT)
-        paragraph.add_run("Left label: X")
+        paragraph.add_run("Certificate No. XYZ")
         paragraph.add_run("\\t")
-        paragraph.add_run("Right label: Y")
+        paragraph.add_run("Student ID No. 1234")
+
+  * Section dividers ("FIRST YEAR", "SECOND YEAR", "FINAL EXAM",
+    etc.) MUST be centered if they are centered in the source.
+    Use `p.alignment = WD_ALIGN_PARAGRAPH.CENTER`. Do NOT leave
+    them as left-aligned headings.
+
+  * The top-of-page header block (institutional logo + name)
+    should match the source: if the source has logo at top-left
+    and the institution name centered or right of the logo, use
+    a 2-column borderless table where col 0 is the logo (Cm(3))
+    and col 1 is the title text (Cm(14)), vertically centered.
+
+  * Right-alignment matters: page numbers like "Page 1 of 2" or
+    "Pagina 1 di 2", dates at the top right corner, and reference
+    numbers at the top right MUST be right-aligned with
+    `WD_ALIGN_PARAGRAPH.RIGHT` (or a right-aligned tab stop).
+
+  * Match table column widths to the source PROPORTIONS. A narrow
+    "Code" column should be ~2 cm, a wide "Course Name" column
+    ~5 cm, "Grade" ~1.5 cm, etc. Don't make every column equal.
+    Set widths AFTER add_table by writing
+    `t.columns[i].width = Cm(N)` for each i.
+
+  * Body paragraph spacing: use `Pt(2)` for space_after and
+    `paragraph_format.line_spacing = 1.0` on every paragraph.
+    Generic Word defaults insert too much vertical space and
+    cause page-count drift.
 
   * Look at the actual pixel positions of text in the PDF and
-    preserve the visual paragraph structure 1:1.
-  * Maintain blank lines / vertical spacing between paragraphs.
+    preserve the visual paragraph structure 1:1. If a paragraph
+    is centered in the source, center it. If it's right-aligned,
+    right-align it. If it's indented, indent it.
+
+  * Match the FONT FAMILY and SIZE of the source when readable.
+    Body: 10pt or 11pt (whichever matches the source). Headers
+    and titles: 12-14pt bold. Footnotes / fine print: 8pt.
 
 HARD RULES (never violate)
 ==========================

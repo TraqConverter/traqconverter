@@ -161,9 +161,30 @@ def _append_body_from(src_doc: Document, dst_doc: Document):
         children.pop()
 
     dst_body = dst_doc.element.body
+
+    # CRITICAL: python-docx Document objects always carry a trailing
+    # <w:sectPr> in the body — that element holds page size / margin
+    # info for the final section. python-docx's `add_paragraph()`
+    # inserts BEFORE that trailing sectPr (so layout stays
+    # consistent). If we do raw `.append(child)` here we land AFTER
+    # the trailing sectPr, and any subsequent `dst_doc.add_*` calls
+    # (like the cert page) end up positioned BEFORE our appended
+    # body — visually placing the cert in front of the translation,
+    # which is exactly the v22/v23 export bug.
+    #
+    # Fix: insert each merged child BEFORE the trailing sectPr (if
+    # one exists), so the merged body sits in the correct visual
+    # position and downstream add_* calls land after it.
+    final_sectpr = None
+    for ch in list(dst_body.iterchildren()):
+        if ch.tag.split("}")[-1] == "sectPr":
+            final_sectpr = ch
     for child in children:
         try:
-            dst_body.append(deepcopy(child))
+            if final_sectpr is not None:
+                final_sectpr.addprevious(deepcopy(child))
+            else:
+                dst_body.append(deepcopy(child))
         except Exception:
             logger.warning(
                 "Skipped a body element during merge (%s)",
