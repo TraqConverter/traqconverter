@@ -1197,6 +1197,28 @@ def _strip_layout_table_borders(docx_bytes: bytes) -> bytes:
             with zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as zout:
                 for item in zin.infolist():
                     data = zin.read(item.filename)
+                    # Belt-and-braces: patch styles.xml so the
+                    # default "Table Grid" / "TableGrid" style is
+                    # borderless. That way even if document.xml has a
+                    # <w:tblStyle w:val="TableGrid"/> reference we
+                    # missed, the style itself contributes no borders.
+                    if item.filename == "word/styles.xml":
+                        try:
+                            data_str = data.decode("utf-8")
+                            # Find every <w:style w:type="table">
+                            # block and force its tblBorders to nil.
+                            new_data, n_styles = _force_borderless_table_styles(data_str, W_NS)
+                            if n_styles:
+                                data = new_data.encode("utf-8")
+                                logger.info(
+                                    "Forced %d table style(s) borderless in styles.xml",
+                                    n_styles,
+                                )
+                                modified = True
+                        except Exception as e:
+                            logger.warning(
+                                "styles.xml patch failed: %s", e
+                            )
                     if item.filename == "word/document.xml":
                         try:
                             root = ET.fromstring(data)
@@ -1372,6 +1394,28 @@ def _split_crammed_table_rows(docx_bytes: bytes) -> bytes:
             with zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as zout:
                 for item in zin.infolist():
                     data = zin.read(item.filename)
+                    # Belt-and-braces: patch styles.xml so the
+                    # default "Table Grid" / "TableGrid" style is
+                    # borderless. That way even if document.xml has a
+                    # <w:tblStyle w:val="TableGrid"/> reference we
+                    # missed, the style itself contributes no borders.
+                    if item.filename == "word/styles.xml":
+                        try:
+                            data_str = data.decode("utf-8")
+                            # Find every <w:style w:type="table">
+                            # block and force its tblBorders to nil.
+                            new_data, n_styles = _force_borderless_table_styles(data_str, W_NS)
+                            if n_styles:
+                                data = new_data.encode("utf-8")
+                                logger.info(
+                                    "Forced %d table style(s) borderless in styles.xml",
+                                    n_styles,
+                                )
+                                modified = True
+                        except Exception as e:
+                            logger.warning(
+                                "styles.xml patch failed: %s", e
+                            )
                     if item.filename == "word/document.xml":
                         try:
                             root = ET.fromstring(data)
