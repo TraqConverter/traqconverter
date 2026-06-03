@@ -334,10 +334,12 @@ def build_full_export_docx(
                     run.add_picture(str(img), width=Cm(16))
                 if page_imgs:
                     source_added = True
-                    # Open a fresh section so the translation begins
-                    # cleanly on its own page (preserves Claude's
-                    # section.header masthead on the new section).
-                    out.add_section(WD_SECTION.NEW_PAGE)
+                    # No extra section break here. The last source
+                    # page's section already ends; the body merge's
+                    # first element naturally starts on a fresh page
+                    # within the source's section. Adding another
+                    # NEW_PAGE section here was producing the empty
+                    # buffer page the user kept seeing.
         except Exception:
             logger.exception(
                 "Source-page embedding failed — continuing without source pages"

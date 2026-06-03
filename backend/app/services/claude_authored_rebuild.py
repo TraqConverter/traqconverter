@@ -1702,6 +1702,135 @@ def _replace_image_placeholders(docx_bytes: bytes, work_dir: Path) -> bytes:
         return docx_bytes
 
 
+def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
+    """Remove certification-style paragraphs that Claude may have
+    written INSIDE the translation body.
+
+    Claude sometimes generates a "CERTIFIED TRANSLATION" affidavit
+    at the start of its output despite the prompt rule, mimicking
+    the hardcoded cert format. The wrapper appends the real cert
+    AFTER the body, so any cert-style text inside Claude's body is a
+    duplicate that needs to be stripped.
+
+    Matches paragraphs whose text contains any of:
+      - "CERTIFIED TRANSLATION" (case-insensitive, as a heading)
+      - "I hereby certify"
+      - "Translator: <email>"
+      - "Signature: ___"
+      - "Date: YYYY-MM-DD HH:MM UTC"
+
+    Strips the matched paragraph PLUS any contiguous block of
+    paragraphs around it that look like the affidavit boilerplate.
+
+    Failures are non-fatal — returns the original bytes on any error.
+    """
+    try:
+        import io as _io
+        import re as _re
+        import zipfile as _zip
+        from xml.etree import ElementTree as ET
+
+        W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        ET.register_namespace("w", W_NS)
+        P_TAG = "{%s}p" % W_NS
+        T_TAG = "{%s}t" % W_NS
+
+        FORBIDDEN_PATTERNS = [
+            _re.compile(r"\bCERTIFIED\s+TRANSLATION\b", _re.I),
+            _re.compile(r"\bI\s+hereby\s+certify\b", _re.I),
+            _re.compile(r"^\s*Translator\s*:\s*\S+@\S+", _re.I),
+            _re.compile(r"^\s*Signature\s*:\s*_+", _re.I),
+            _re.compile(r"^\s*Date\s*:\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+UTC", _re.I),
+            _re.compile(r"this\s+translation\s+is\s+accurate\s+and\s+complete", _re.I),
+        ]
+
+        in_buf = _io.BytesIO(docx_bytes)
+        out_buf = _io.BytesIO()
+        modified = False
+
+        with _zip.ZipFile(in_buf, "r") as zin:
+            with _zip.ZipFile(out_buf, "w", _zip.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    if item.filename == "word/document.xml":
+                        try:
+                            root = ET.fromstring(data)
+                            body = root.find("{%s}body" % W_NS)
+                            if body is not None:
+                                removed = 0
+                                # Walk paragraphs. If one matches,
+                                # delete it AND continue deleting
+                                # adjacent matching paragraphs in
+                                # both directions.
+                                to_remove = set()
+                                children = list(body)
+                                for idx, el in enumerate(children):
+                                    if el.tag != P_TAG:
+                                        continue
+                                    text = "".join(
+                                        t.text or "" for t in el.iter(T_TAG)
+                                    ).strip()
+                                    if not text:
+                                        continue
+                                    if any(p.search(text) for p in FORBIDDEN_PATTERNS):
+                                        to_remove.add(idx)
+                                        # Sweep backward.
+                                        j = idx - 1
+                                        while j >= 0 and children[j].tag == P_TAG:
+                                            t = "".join(
+                                                tt.text or "" for tt in children[j].iter(T_TAG)
+                                            ).strip()
+                                            if not t:
+                                                to_remove.add(j)
+                                                j -= 1
+                                                continue
+                                            if any(p.search(t) for p in FORBIDDEN_PATTERNS):
+                                                to_remove.add(j)
+                                                j -= 1
+                                            else:
+                                                break
+                                        # Sweep forward.
+                                        k = idx + 1
+                                        while k < len(children) and children[k].tag == P_TAG:
+                                            t = "".join(
+                                                tt.text or "" for tt in children[k].iter(T_TAG)
+                                            ).strip()
+                                            if not t:
+                                                to_remove.add(k)
+                                                k += 1
+                                                continue
+                                            if any(p.search(t) for p in FORBIDDEN_PATTERNS):
+                                                to_remove.add(k)
+                                                k += 1
+                                            else:
+                                                break
+                                for idx in sorted(to_remove, reverse=True):
+                                    body.remove(children[idx])
+                                    removed += 1
+                                if removed:
+                                    data = ET.tostring(
+                                        root,
+                                        xml_declaration=True,
+                                        encoding="UTF-8",
+                                        short_empty_elements=True,
+                                    )
+                                    logger.info(
+                                        "Stripped %d inline cert paragraph(s) from authored body",
+                                        removed,
+                                    )
+                                    modified = True
+                        except Exception as e:
+                            logger.warning(
+                                "Inline-cert strip failed: %s", e
+                            )
+                    zout.writestr(item, data)
+
+        return out_buf.getvalue() if modified else docx_bytes
+    except Exception:
+        logger.exception("Inline-cert strip failed — returning original")
+        return docx_bytes
+
+
 def author_rebuild_docx(
     pdf_bytes: bytes,
     source_lang: str,
@@ -1758,6 +1887,10 @@ def author_rebuild_docx(
         docx_bytes = _strip_rotation_from_docx(docx_bytes)
         docx_bytes = _strip_layout_table_borders(docx_bytes)
         docx_bytes = _split_crammed_table_rows(docx_bytes)
+        # Strip any "CERTIFIED TRANSLATION" affidavit block Claude
+        # left inside the body — the wrapper appends the real cert
+        # AFTER the body, so an inline cert is always a duplicate.
+        docx_bytes = _strip_inline_cert_blocks(docx_bytes)
         # If Claude left any bracketed image placeholders despite
         # the prompt instruction, try to substitute the actual
         # extracted image. Uses out_dir/images/.
