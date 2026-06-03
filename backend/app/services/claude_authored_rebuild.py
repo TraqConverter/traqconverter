@@ -1773,6 +1773,19 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
             _re.compile(r"this\s+translation\s+is\s+accurate\s+and\s+complete", _re.I),
         ]
 
+        TBL_TAG = "{%s}tbl" % W_NS
+        TR_TAG = "{%s}tr" % W_NS
+        TC_TAG = "{%s}tc" % W_NS
+
+        def _para_text(el):
+            return "".join(t.text or "" for t in el.iter(T_TAG)).strip()
+
+        def _matches_forbidden(text):
+            return any(p.search(text) for p in FORBIDDEN_PATTERNS)
+
+        def _build_parent_map(root):
+            return {child: parent for parent in root.iter() for child in parent}
+
         in_buf = _io.BytesIO(docx_bytes)
         out_buf = _io.BytesIO()
         modified = False
@@ -1784,70 +1797,135 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
                     if item.filename == "word/document.xml":
                         try:
                             root = ET.fromstring(data)
-                            body = root.find("{%s}body" % W_NS)
-                            if body is not None:
-                                removed = 0
-                                # Walk paragraphs. If one matches,
-                                # delete it AND continue deleting
-                                # adjacent matching paragraphs in
-                                # both directions.
-                                to_remove = set()
-                                children = list(body)
-                                for idx, el in enumerate(children):
-                                    if el.tag != P_TAG:
+                            removed = 0
+
+                            # Recursive sweep: collect every w:p
+                            # whose extracted text matches a
+                            # forbidden pattern, anywhere in the
+                            # document (top-level body, inside
+                            # tables, inside nested tables — all
+                            # of it).
+                            parent_map = _build_parent_map(root)
+                            paras_to_remove = []
+                            for p in root.iter(P_TAG):
+                                txt = _para_text(p)
+                                if not txt:
+                                    continue
+                                if _matches_forbidden(txt):
+                                    paras_to_remove.append(p)
+
+                            # Also sweep neighbours of each matched
+                            # paragraph in its parent's child list
+                            # — picks up the "Signature: ___" and
+                            # blank padding paragraphs around a
+                            # matched "CERTIFIED TRANSLATION"
+                            # heading even if the neighbour itself
+                            # only matches a softer rule.
+                            extra = set()
+                            for p in paras_to_remove:
+                                parent = parent_map.get(p)
+                                if parent is None:
+                                    continue
+                                sibs = list(parent)
+                                try:
+                                    idx = sibs.index(p)
+                                except ValueError:
+                                    continue
+                                # Backward sweep.
+                                j = idx - 1
+                                while j >= 0 and sibs[j].tag == P_TAG:
+                                    t = _para_text(sibs[j])
+                                    if not t:
+                                        extra.add(sibs[j])
+                                        j -= 1
                                         continue
-                                    text = "".join(
-                                        t.text or "" for t in el.iter(T_TAG)
-                                    ).strip()
-                                    if not text:
+                                    if _matches_forbidden(t):
+                                        extra.add(sibs[j])
+                                        j -= 1
+                                    else:
+                                        break
+                                # Forward sweep.
+                                k = idx + 1
+                                while k < len(sibs) and sibs[k].tag == P_TAG:
+                                    t = _para_text(sibs[k])
+                                    if not t:
+                                        extra.add(sibs[k])
+                                        k += 1
                                         continue
-                                    if any(p.search(text) for p in FORBIDDEN_PATTERNS):
-                                        to_remove.add(idx)
-                                        # Sweep backward.
-                                        j = idx - 1
-                                        while j >= 0 and children[j].tag == P_TAG:
-                                            t = "".join(
-                                                tt.text or "" for tt in children[j].iter(T_TAG)
-                                            ).strip()
-                                            if not t:
-                                                to_remove.add(j)
-                                                j -= 1
-                                                continue
-                                            if any(p.search(t) for p in FORBIDDEN_PATTERNS):
-                                                to_remove.add(j)
-                                                j -= 1
-                                            else:
-                                                break
-                                        # Sweep forward.
-                                        k = idx + 1
-                                        while k < len(children) and children[k].tag == P_TAG:
-                                            t = "".join(
-                                                tt.text or "" for tt in children[k].iter(T_TAG)
-                                            ).strip()
-                                            if not t:
-                                                to_remove.add(k)
-                                                k += 1
-                                                continue
-                                            if any(p.search(t) for p in FORBIDDEN_PATTERNS):
-                                                to_remove.add(k)
-                                                k += 1
-                                            else:
-                                                break
-                                for idx in sorted(to_remove, reverse=True):
-                                    body.remove(children[idx])
+                                    if _matches_forbidden(t):
+                                        extra.add(sibs[k])
+                                        k += 1
+                                    else:
+                                        break
+
+                            all_to_remove = set(paras_to_remove) | extra
+                            for p in all_to_remove:
+                                parent = parent_map.get(p)
+                                if parent is None:
+                                    continue
+                                try:
+                                    parent.remove(p)
                                     removed += 1
-                                if removed:
-                                    data = ET.tostring(
-                                        root,
-                                        xml_declaration=True,
-                                        encoding="UTF-8",
-                                        short_empty_elements=True,
-                                    )
-                                    logger.info(
-                                        "Stripped %d inline cert paragraph(s) from authored body",
-                                        removed,
-                                    )
-                                    modified = True
+                                except ValueError:
+                                    pass
+
+                            # After paragraph removal, sweep up
+                            # empty containers: a w:tc with no
+                            # remaining w:p — give it one blank
+                            # para (Word requires every cell to
+                            # contain at least one paragraph).
+                            # A w:tr with all empty/cert-only
+                            # cells, and a w:tbl with no rows,
+                            # get removed entirely.
+                            # Rebuild parent map because removals
+                            # may have shifted things.
+                            parent_map = _build_parent_map(root)
+                            # Drop empty rows.
+                            for tr in list(root.iter(TR_TAG)):
+                                has_meaningful = False
+                                for tc in tr.iter(TC_TAG):
+                                    for p in tc.iter(P_TAG):
+                                        if _para_text(p):
+                                            has_meaningful = True
+                                            break
+                                    if has_meaningful:
+                                        break
+                                if not has_meaningful:
+                                    parent = parent_map.get(tr)
+                                    if parent is not None:
+                                        try:
+                                            parent.remove(tr)
+                                        except ValueError:
+                                            pass
+                            # Drop empty tables.
+                            parent_map = _build_parent_map(root)
+                            for tbl in list(root.iter(TBL_TAG)):
+                                rows = list(tbl.iter(TR_TAG))
+                                if not rows:
+                                    parent = parent_map.get(tbl)
+                                    if parent is not None:
+                                        try:
+                                            parent.remove(tbl)
+                                        except ValueError:
+                                            pass
+                            # Ensure every remaining cell has at
+                            # least one w:p (Word requirement).
+                            for tc in root.iter(TC_TAG):
+                                if tc.find(P_TAG) is None:
+                                    tc.append(ET.Element(P_TAG))
+
+                            if removed:
+                                data = ET.tostring(
+                                    root,
+                                    xml_declaration=True,
+                                    encoding="UTF-8",
+                                    short_empty_elements=True,
+                                )
+                                logger.info(
+                                    "Stripped %d inline cert paragraph(s) from authored body (recursive)",
+                                    removed,
+                                )
+                                modified = True
                         except Exception as e:
                             logger.warning(
                                 "Inline-cert strip failed: %s", e
