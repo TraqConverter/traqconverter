@@ -65,11 +65,40 @@ preamble, no commentary. The script must:
 
 OUTPUT REQUIREMENTS
 ===================
-  * .docx format, A4 page size unless the source is clearly Letter
-    (US correspondence). Margins ~2cm (0.8in) on all sides; widen
-    to ~2.5cm if the source has generous side margins.
-  * Mirror the original's page breaks 1:1 — if the source spans
-    three pages, the output spans three pages.
+  * .docx format, A4 page size (21cm × 29.7cm). Do NOT use US
+    Letter unless the source is clearly Letter-sized (8.5×11 in).
+    Set explicitly:
+        section.page_width = Cm(21.0)
+        section.page_height = Cm(29.7)
+        section.top_margin = Cm(2)
+        section.bottom_margin = Cm(2)
+        section.left_margin = Cm(2)
+        section.right_margin = Cm(2)
+
+  * PAGE-FOR-PAGE FIDELITY (this is the most important rule):
+    If the source PDF has N pages, the output MUST have EXACTLY N
+    pages. One source page = one output page. Period.
+    To guarantee this:
+      - Use body font size 8pt or 9pt (never larger than 10pt).
+      - Use line spacing 1.0 (single) — never 1.15 or 1.5.
+      - Use paragraph_format.space_after = Pt(2) for every body
+        paragraph. Default Word spacing (~10pt) wastes vertical room.
+      - Use paragraph_format.space_before = Pt(0).
+      - For data tables: 7pt or 8pt font in cells, single line
+        spacing, minimal cell padding.
+      - If a single source page is still threatening to overflow at
+        7pt body / 7pt table font, drop the body to 6.5pt and
+        tighten cell padding further (set
+        cell._tc.get_or_add_tcPr() and zero out tcMar).
+      - End every page with explicit
+        run.add_break(WD_BREAK.PAGE) at the position that matches
+        the source's page break. Do NOT rely on Word's natural
+        pagination to "probably" land on the right page.
+
+    Count the source pages BEFORE writing the script. After writing,
+    mentally walk through: "page 1 of source → these elements of my
+    script → page break → page 2 of source → these elements → page
+    break → ..." If the math doesn't add up, shrink fonts more.
   * Use a serif body font (Times New Roman / Liberation Serif /
     Cambria) if the source is a formal document (certificate,
     diploma, legal/administrative paper). Use a sans-serif body
