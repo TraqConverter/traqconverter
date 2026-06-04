@@ -2816,8 +2816,17 @@ function CompareEditPanel({
                 background: transparent;
                 color: #111;
                 font-family: 'Times New Roman', Times, serif;
+                overflow-x: hidden;
               }
-              body { overflow-x: hidden; }
+              /* Shrink-to-fit. Apply zoom to the BODY so it
+                 cascades to every descendant regardless of
+                 docx-preview's actual DOM structure. JS sets
+                 --docx-zoom based on the pane width vs. the
+                 page width. Fallback 0.65 — aggressive enough
+                 to fit even very narrow panes until JS runs. */
+              body {
+                zoom: var(--docx-zoom, 0.65);
+              }
               .docx-wrapper {
                 padding: 0 !important;
                 background: transparent !important;
@@ -2825,12 +2834,6 @@ function CompareEditPanel({
               section.docx, .docx {
                 margin: 0 auto 16px !important;
                 box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
-              }
-              /* Shrink-to-fit. JS sets --docx-zoom based on the
-                 pane width vs. the page width. Fallback to a
-                 conservative 0.78 if JS hasn't run yet. */
-              .docx-wrapper {
-                zoom: var(--docx-zoom, 0.78);
               }
               table, thead, tbody, tfoot, tr, td, th {
                 border-color: transparent !important;
