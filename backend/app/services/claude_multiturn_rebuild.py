@@ -270,6 +270,52 @@ def _inspect_docx(docx_bytes: bytes) -> dict:
             "Drawings reference images but no media files exist in the "
             "zip. Use existing files in ./images/ via doc.add_picture()."
         )
+
+    # Detect "tabular data rendered as a flat paragraph list" — a
+    # common regression where Claude bypasses doc.add_table() and
+    # emits each course code / name / grade / date as a separate
+    # paragraph. Signature: 5+ consecutive short paragraphs where
+    # most look like table cell values (course code, "Passed",
+    # grade fractions, sector codes, dates).
+    cell_like_count = 0
+    consecutive_cell_runs = []
+    current_run = 0
+    cell_patterns = [
+        re.compile(r"^\d{6,10}$"),                    # course code
+        re.compile(r"^Passed$|^Failed$|^Approved$", re.I),
+        re.compile(r"^\d{2}/\d{2}$"),                 # grade fraction
+        re.compile(r"^\d+$"),                         # credits
+        re.compile(r"^[A-Z]{2,4}/\d{1,3}$"),          # sector code
+        re.compile(r"^\d{2}/\d{2}/\d{4}$"),           # date
+        re.compile(r"^PDS\d-\d{4}$"),                 # didactic plan
+    ]
+    for p in body_paragraphs:
+        is_cell = (
+            len(p) < 60
+            and any(pat.match(p) for pat in cell_patterns)
+        )
+        if is_cell:
+            cell_like_count += 1
+            current_run += 1
+        else:
+            if current_run >= 5:
+                consecutive_cell_runs.append(current_run)
+            current_run = 0
+    if current_run >= 5:
+        consecutive_cell_runs.append(current_run)
+
+    if consecutive_cell_runs and len(tables) == 0:
+        warnings.append(
+            f"Your output renders tabular data as a flat paragraph "
+            f"list ({sum(consecutive_cell_runs)} cell-like paragraphs in "
+            f"{len(consecutive_cell_runs)} run(s)) instead of using "
+            f"doc.add_table(). EVERY data table from EXTRACTED TABLES "
+            f"MUST be a real Word table created with "
+            f"doc.add_table(rows=N, cols=M) — read the HARD RULE in "
+            f"the prompt and use that recipe. Re-emit the script with "
+            f"a proper table."
+        )
+
     if warnings:
         report["warnings"] = warnings
 
@@ -479,57 +525,4 @@ def author_rebuild_docx_multiturn(
             if success and docx_bytes:
                 inspection = _inspect_docx(docx_bytes)
                 # Save the latest good DOCX bytes so we can return
-                # them even if a later turn fails.
-                last_good_docx = docx_bytes
-                last_good_inspection = inspection
-                report_text = (
-                    "Code ran successfully.\n\n"
-                    + json.dumps(inspection, ensure_ascii=False, indent=2)
-                )
-            else:
-                report_text = (
-                    "Code FAILED. Traceback:\n\n" + (traceback_text or "(no message)")
-                )
-
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tool_id,
-                "content": report_text,
-            })
-
-        messages.append({"role": "user", "content": tool_results})
-
-    # Clean up extracted images dir (we keep last_good_docx in memory).
-    try:
-        shutil.rmtree(out_dir, ignore_errors=True)
-    except Exception:
-        pass
-
-    if not last_good_docx:
-        raise RuntimeError(
-            "Multi-turn rebuild ended with no successful DOCX produced"
-        )
-
-    logger.info(
-        "Multi-turn rebuild complete: %d bytes, %d paragraphs, "
-        "%d tables, %d images, page_estimate=%d",
-        len(last_good_docx),
-        last_good_inspection.get("paragraph_count", -1),
-        last_good_inspection.get("table_count", -1),
-        last_good_inspection.get("image_count", -1),
-        last_good_inspection.get("page_count_estimate", -1),
-    )
-
-    # Apply the same post-processor chain as the single-shot path so
-    # any residual cert blocks, table borders, rotation, broken
-    # images, etc. get cleaned up deterministically.
-    docx_bytes = last_good_docx
-    try:
-        docx_bytes = _strip_rotation_from_docx(docx_bytes)
-        docx_bytes = _strip_layout_table_borders(docx_bytes)
-        docx_bytes = _strip_inline_cert_blocks(docx_bytes)
-        docx_bytes = _strip_broken_image_drawings(docx_bytes)
-    except Exception:
-        logger.exception("Post-processor chain raised; returning raw bytes")
-
-    return docx_bytes
+                # them ev
