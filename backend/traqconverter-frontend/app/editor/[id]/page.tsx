@@ -2690,7 +2690,6 @@ function CompareEditPanel({
   projectId: string
   compareOpen: boolean
 }) {
-  const [html, setHtml] = useState<string>("")
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string>("")
   // Bump to force a re-fetch (e.g. after the user clicks "Reload").
@@ -2701,6 +2700,10 @@ function CompareEditPanel({
   const [saveState, setSaveState] = useState<
     "idle" | "dirty" | "saving" | "saved"
   >("idle")
+  // docx-preview renders into this container ref (much higher
+  // fidelity than mammoth — preserves tab stops, alignment, column
+  // widths, page layout, fonts).
+  const docContainerRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!compareOpen || !projectId) return
@@ -2711,17 +2714,42 @@ function CompareEditPanel({
       (typeof window !== "undefined" &&
         (localStorage.getItem("token") || sessionStorage.getItem("token"))) ||
       ""
-    const url = `${process.env.NEXT_PUBLIC_API_URL || ""}/projects/${projectId}/preview/rebuild-html?access_token=${encodeURIComponent(token)}`
+    const url = `${process.env.NEXT_PUBLIC_API_URL || ""}/projects/${projectId}/preview/rebuild-docx?access_token=${encodeURIComponent(token)}`
     fetch(url)
       .then(async (r) => {
         if (!r.ok) {
           const text = await r.text().catch(() => "")
           throw new Error(text || `HTTP ${r.status}`)
         }
-        return r.text()
+        return r.arrayBuffer()
       })
-      .then((text) => {
-        if (!cancelled) setHtml(text)
+      .then(async (buffer) => {
+        if (cancelled) return
+        // Dynamic import so docx-preview only ships when the
+        // editor route is open.
+        const { renderAsync } = await import("docx-preview")
+        const container = docContainerRef.current
+        if (!container) return
+        // Clear any previous render so we don't stack pages.
+        container.innerHTML = ""
+        await renderAsync(buffer, container, undefined, {
+          // Disable the wrapper class which inserts a grey
+          // background — we want our cream/white sheet to show.
+          inWrapper: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
+          breakPages: true,
+          ignoreLastRenderedPageBreak: true,
+          experimental: true,
+          trimXmlDeclaration: true,
+          useBase64URL: true,
+          // Show all the high-fidelity bits mammoth dropped.
+          renderHeaders: true,
+          renderFooters: true,
+          renderFootnotes: true,
+          renderEndnotes: true,
+        })
       })
       .catch((e: any) => {
         if (!cancelled) {
@@ -2881,61 +2909,50 @@ function CompareEditPanel({
         ) : (
           <div
             style={{
-              background: "#ffffff",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.10)",
               margin: "0 auto",
-              maxWidth: 794, // ~A4 width @ 96dpi
-              minHeight: 1000,
-              padding: "57px 64px",
+              maxWidth: 820,
               color: "#111",
-              lineHeight: 1.5,
-              fontSize: 13,
             }}
           >
             <style>{`
-              /* Word-like styling for the mammoth HTML output. */
-              .docx-edit { font-family: "Liberation Serif", "Times New Roman", Georgia, serif; }
-              .docx-edit p { margin: 0 0 8px 0; }
-              .docx-edit h1 { font-size: 18px; font-weight: 700; margin: 12px 0 8px; }
-              .docx-edit h2 { font-size: 15px; font-weight: 700; margin: 10px 0 6px; }
-              .docx-edit h3 { font-size: 13px; font-weight: 700; margin: 8px 0 4px; }
-              .docx-edit table { border-collapse: collapse; margin: 8px 0; width: 100%; }
-              .docx-edit td, .docx-edit th { padding: 4px 8px; vertical-align: top; }
-              /* NO borders on any table in the preview. Source PDFs
-                 we handle (certificates, transcripts, official
-                 letters) are whitespace-aligned with no visible cell
-                 borders — the backend post-processor strips them
-                 from the underlying DOCX too. Nuke borders on every
-                 table-related element regardless of whether they
-                 came from inline styles, mammoth defaults, or a
-                 stray <table border="1"> attribute. */
-              .docx-edit table,
-              .docx-edit thead,
-              .docx-edit tbody,
-              .docx-edit tfoot,
-              .docx-edit tr,
-              .docx-edit td,
-              .docx-edit th,
-              .docx-edit table * {
-                border: 0 !important;
-                border-top: 0 !important;
-                border-right: 0 !important;
-                border-bottom: 0 !important;
-                border-left: 0 !important;
-                box-shadow: none !important;
-                outline: 0 !important;
+              /* docx-preview's own page rendering (white sheet,
+                 drop shadow, A4 dimensions, fonts, alignment,
+                 tab stops) — much higher fidelity than mammoth.
+                 We just override a couple of cosmetic bits so it
+                 fits our cream/teal aesthetic. */
+              .docx-preview-host .docx-wrapper {
+                padding: 0;
+                background: transparent;
               }
-              .docx-edit th { background: transparent; font-weight: 600; }
-              .docx-edit ul, .docx-edit ol { margin: 6px 0 8px 24px; }
-              .docx-edit img { max-width: 100%; height: auto; }
-              .docx-edit :focus { outline: 2px solid #cdb98a; outline-offset: 2px; border-radius: 3px; }
+              .docx-preview-host .docx {
+                margin: 0 auto 16px;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
+              }
+              /* Keep tables borderless in the preview (the DOCX
+                 itself is already borderless from the backend
+                 post-processor, but be defensive against any
+                 fallback rendering). */
+              .docx-preview-host table,
+              .docx-preview-host thead,
+              .docx-preview-host tbody,
+              .docx-preview-host tfoot,
+              .docx-preview-host tr,
+              .docx-preview-host td,
+              .docx-preview-host th {
+                border-color: transparent !important;
+              }
+              .docx-preview-host :focus {
+                outline: 2px solid #cdb98a;
+                outline-offset: 2px;
+                border-radius: 3px;
+              }
             `}</style>
             <div
-              className="docx-edit"
+              ref={docContainerRef}
+              className="docx-preview-host"
               contentEditable
               suppressContentEditableWarning
               spellCheck
-              dangerouslySetInnerHTML={{ __html: html }}
               onInput={(e) => {
                 const target = e.currentTarget as HTMLDivElement
                 scheduleSave(target.innerHTML)
@@ -3178,14 +3195,4 @@ function StatusRow({ label, value }: { label: string; value: string }) {
   return (
     <div
       className="flex items-center justify-between py-2"
-      style={{ borderBottom: "1px solid #f1e8d1" }}
-    >
-      <div className="text-sm" style={{ color: "#6b6558" }}>
-        {label}
-      </div>
-      <div className="text-sm font-semibold" style={{ color: "#1f2a2e" }}>
-        {value}
-      </div>
-    </div>
-  )
-}
+      style={{ borderBottom: 
