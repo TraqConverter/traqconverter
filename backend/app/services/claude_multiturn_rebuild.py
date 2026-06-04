@@ -80,6 +80,15 @@ REQUIREMENTS
     page is appended by our wrapper AFTER your translation. Your
     job is the translation body only. Stop when the source's
     last paragraph is translated.
+  * REQUIRED FIRST OUTPUT: the very first paragraph of your
+    translation body MUST be the institution's name in
+    {target_lang}, centered, BOLD, 14pt (e.g.
+    "UNIVERSITY OF FLORENCE" or "MINISTRY OF THE INTERIOR").
+    The second paragraph MUST be the sub-department in normal
+    weight, centered (e.g. "Student Registrar's Office").
+    DO NOT skip this. Even if the source PDF has the masthead
+    as a graphic, type it out as text — Claude.ai chat always
+    does this when given a PDF, and we want the same output.
   * NO INLINE IMAGES ANYWHERE IN THE TRANSLATION BODY.
     Do NOT call doc.add_picture() at all. Do NOT insert a
     crest, logo, signature, seal, stamp, photo, QR code,
@@ -316,6 +325,30 @@ def _inspect_docx(docx_bytes: bytes) -> dict:
             current_run = 0
     if current_run >= 5:
         consecutive_cell_runs.append(current_run)
+
+    # Detect missing masthead. If the first non-empty body
+    # paragraph isn't a short centered name-like string
+    # (mostly uppercase letters + spaces, <= 60 chars), warn.
+    if body_paragraphs:
+        first = body_paragraphs[0].strip()
+        looks_like_masthead = (
+            len(first) <= 60
+            and len(first) >= 4
+            and re.match(r"^[A-Z][\w\s\u00C0-\u017F\-\.,'']+$", first) is not None
+            and sum(c.isupper() for c in first if c.isalpha())
+                >= sum(c.islower() for c in first if c.isalpha())
+        )
+        if not looks_like_masthead:
+            warnings.append(
+                f"Your output is missing the institutional masthead. "
+                f"The first body paragraph is "
+                f"{first[:60]!r} but should be the institution "
+                f"name (e.g. 'UNIVERSITY OF FLORENCE') typed in "
+                f"14pt bold, centered. Add a centered bold "
+                f"masthead paragraph as the FIRST element of "
+                f"your output, then the sub-department on the "
+                f"next line."
+            )
 
     if consecutive_cell_runs and len(tables) == 0:
         warnings.append(
