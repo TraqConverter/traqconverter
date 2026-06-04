@@ -392,6 +392,11 @@ def build_full_export_docx(
             ):
                 page_imgs = _render_source_pages_as_images(source_path, work_dir)
                 if page_imgs:
+                    # A4 explicit so source images at Cm(19) fit
+                    # within the printable area (default Letter
+                    # is 1cm too short vertically).
+                    section.page_width = Cm(21)
+                    section.page_height = Cm(29.7)
                     section.top_margin = Cm(1)
                     section.bottom_margin = Cm(1)
                     section.left_margin = Cm(1)
@@ -399,6 +404,8 @@ def build_full_export_docx(
                 for i, img in enumerate(page_imgs):
                     if i > 0:
                         new_sect = out.add_section(WD_SECTION.NEW_PAGE)
+                        new_sect.page_width = Cm(21)
+                        new_sect.page_height = Cm(29.7)
                         new_sect.top_margin = Cm(1)
                         new_sect.bottom_margin = Cm(1)
                         new_sect.left_margin = Cm(1)
@@ -418,6 +425,8 @@ def build_full_export_docx(
                     # margins, starts on a fresh NEW_PAGE so
                     # it's visually separated from the source.
                     body_sect = out.add_section(WD_SECTION.NEW_PAGE)
+                    body_sect.page_width = Cm(21)
+                    body_sect.page_height = Cm(29.7)
                     body_sect.top_margin = Cm(2)
                     body_sect.bottom_margin = Cm(2.2)
                     body_sect.left_margin = Cm(2)
