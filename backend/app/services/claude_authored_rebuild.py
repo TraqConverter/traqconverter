@@ -622,6 +622,47 @@ populating cells[i].text = row[i] for each i.
 If this section is empty, no data tables were detected and you can
 build any table directly from the PDF.
 
+HARD RULE — TABLES MUST USE doc.add_table()
+============================================
+For EVERY entry in EXTRACTED TABLES below, you MUST emit a real
+Word table via `doc.add_table(rows=N, cols=M)` and populate
+cells[i][j].text = row[i][j]. DO NOT render tabular data as a
+flat list of paragraphs ("30610002\\nADMINISTRATIVE LAW\\nPassed\\n
+29/30\\n6\\nIUS/10\\n..."). That breaks the visual structure and
+the output looks nothing like the source.
+
+The minimum recipe for ANY data table:
+
+    t = doc.add_table(rows=1, cols=len(headers))
+    t.autofit = False
+    t.allow_autofit = False
+    # Headers
+    hdr_cells = t.rows[0].cells
+    for j, h in enumerate(headers):
+        p = hdr_cells[j].paragraphs[0]
+        run = p.add_run(h)
+        run.bold = True
+        run.font.size = Pt(9)
+    # Data rows
+    for row in rows:
+        row_cells = t.add_row().cells
+        for j, val in enumerate(row):
+            p = row_cells[j].paragraphs[0]
+            run = p.add_run(str(val))
+            run.font.size = Pt(9)
+    # Borderless layout — strip every border, every edge.
+    for cell in t._cells:
+        tcPr = cell._tc.get_or_add_tcPr()
+        tcBorders = OxmlElement('w:tcBorders')
+        for edge_name in ('top','left','bottom','right','insideH','insideV'):
+            b = OxmlElement('w:' + edge_name)
+            b.set(qn('w:val'), 'nil')
+            tcBorders.append(b)
+        tcPr.append(tcBorders)
+    # Column widths sized to the source's proportions:
+    # narrow code column, wide name column, medium for grade/date.
+    # Adjust based on the actual table — sum should be ~17cm A4.
+
 {table_list}
 
 EXTRACTED IMAGES
