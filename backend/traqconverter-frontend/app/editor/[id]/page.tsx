@@ -2704,6 +2704,10 @@ function CompareEditPanel({
   // fidelity than mammoth — preserves tab stops, alignment, column
   // widths, page layout, fonts).
   const docContainerRef = useRef<HTMLDivElement | null>(null)
+  // scheduleSave is declared later in this component. The iframe input
+  // handler — which fires earlier — needs to call the latest version,
+  // so we route through this ref. Updated each render.
+  const scheduleSaveRef = useRef<((html: string) => void) | null>(null)
   // Stash the fetched DOCX bytes so the render effect can pick
   // them up AFTER the container DOM node has mounted (the
   // container is conditionally rendered when loading=false, so
@@ -2881,7 +2885,7 @@ function CompareEditPanel({
         // autosave handler. We pass the full body innerHTML so
         // /edited-html stores the latest state.
         idoc.body.addEventListener("input", () => {
-          scheduleSave(idoc.body.innerHTML)
+          scheduleSaveRef.current && scheduleSaveRef.current(idoc.body.innerHTML)
         })
         // Clean up the observer on next render or unmount.
         ;(iframe as any).__docxObserver = obs
@@ -2909,7 +2913,7 @@ function CompareEditPanel({
         }
       }
     }
-  }, [docxBuffer, loading, scheduleSave])
+  }, [docxBuffer, loading])
 
   // Debounced auto-save: every time the user edits, wait 1.5s of
   // inactivity then PATCH /projects/{id}/edited-html with the current
@@ -2938,6 +2942,8 @@ function CompareEditPanel({
       }
     }, 1500) as unknown as number
   }
+  // Keep ref synced with the latest scheduleSave closure.
+  scheduleSaveRef.current = scheduleSave
 
   return (
     <div
