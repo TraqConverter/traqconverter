@@ -325,22 +325,64 @@ def author_rebuild_docx_multiturn(
     output_path = str(out_dir / "rebuild.docx")
 
     # Pre-extract assets.
+    # 1) Vision-based image-region cropper — high-DPI render +
+    #    Claude Vision identifies crests/signatures/seals and
+    #    returns bounding boxes. This is the claude.ai-parity
+    #    approach. Try it first; if it returns 0 regions or
+    #    fails, fall back to the legacy XObject-extraction +
+    #    header/footer-strip method.
+    images = []
+    _vision_image_list_text = None
     try:
-        images = _extract_pdf_images(pdf_bytes, out_dir)
+        from app.services.claude_vision_image_extractor import (
+            extract_image_regions_via_vision,
+            format_vision_image_list,
+        )
+        vision_manifest = extract_image_regions_via_vision(
+            pdf_bytes, out_dir
+        )
+        if vision_manifest:
+            images = [
+                {
+                    "kind": m["kind"],
+                    "filename": m["filename"],
+                    "page": m["page"],
+                    "width_px": m["width_px"],
+                    "height_px": m["height_px"],
+                    "suggested_width_cm": m["suggested_width_cm"],
+                    "description": m.get("description", ""),
+                    "_vision_source": True,
+                }
+                for m in vision_manifest
+            ]
+            _vision_image_list_text = format_vision_image_list(
+                vision_manifest
+            )
     except Exception:
-        logger.exception("Image pre-extraction failed — continuing")
-        images = []
+        logger.exception("Vision image extraction failed — falling back")
+
+    if not images:
+        try:
+            images = _extract_pdf_images(pdf_bytes, out_dir)
+        except Exception:
+            logger.exception("Image pre-extraction failed — continuing")
+            images = []
     try:
         tables = _extract_tables_via_vision(pdf_bytes)
     except Exception:
         logger.exception("Table pre-extraction failed — continuing")
         tables = []
 
+    image_list_text = (
+        _vision_image_list_text
+        if _vision_image_list_text
+        else _format_image_list(images)
+    )
     initial_prompt = _INITIAL_PROMPT.format(
         source_lang=source_lang or "the source language",
         target_lang=target_lang,
         output_path=output_path,
-        image_list=_format_image_list(images),
+        image_list=image_list_text,
         table_list=_format_table_list(tables),
     )
 
