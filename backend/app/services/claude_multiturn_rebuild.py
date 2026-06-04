@@ -80,11 +80,24 @@ REQUIREMENTS
     page is appended by our wrapper AFTER your translation. Your
     job is the translation body only. Stop when the source's
     last paragraph is translated.
-  * NO inline crest / logo image at the top of the translation.
-    The wrapper embeds the full source PDF pages BEFORE your
-    body, so the original masthead is preserved. In YOUR body
-    use a text-only masthead: institution name typed in 12-14pt
-    bold ({target_lang}). No image at the top.
+  * NO INLINE IMAGES ANYWHERE IN THE TRANSLATION BODY.
+    Do NOT call doc.add_picture() at all. Do NOT insert a
+    crest, logo, signature, seal, stamp, photo, QR code,
+    or any other image — even if filenames are listed
+    below. The wrapper embeds the FULL source PDF pages
+    BEFORE your body, so the original crest / signature /
+    seal / stamp are all preserved in their proper
+    high-fidelity form on the source pages. Your translation
+    is TEXT-ONLY.
+      - Masthead: institution name typed in 12-14pt bold.
+      - Signature block: officer name typed in normal
+        weight, no signature image, no seal image.
+      - Stamps / seals / QR codes: omit entirely from your
+        body.
+    This is the user's explicit instruction. Adding inline
+    images produces blurry tiny rectangles that look
+    broken — the source pages already show the originals
+    at full quality.
 
 EXTRACTED IMAGES (in ./images/)
 ===============================
@@ -511,18 +524,4 @@ def author_rebuild_docx_multiturn(
                 )
             break
 
-        # Run each tool call, append a tool_result for each.
-        tool_results = []
-        for tu in tool_use_blocks:
-            tool_input = getattr(tu, "input", None) or {}
-            tool_id = getattr(tu, "id", None)
-            code = tool_input.get("code") or ""
-
-            success, traceback_text, docx_bytes = _run_in_sandbox(
-                code, output_path, timeout_seconds=timeout_per_run_seconds
-            )
-
-            if success and docx_bytes:
-                inspection = _inspect_docx(docx_bytes)
-                # Save the latest good DOCX bytes so we can return
-                # them ev
+        # Run each
