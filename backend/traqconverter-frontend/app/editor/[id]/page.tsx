@@ -2826,6 +2826,12 @@ function CompareEditPanel({
                 margin: 0 auto 16px !important;
                 box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
               }
+              /* Shrink-to-fit. JS sets --docx-zoom based on the
+                 pane width vs. the page width. Fallback to a
+                 conservative 0.78 if JS hasn't run yet. */
+              .docx-wrapper {
+                zoom: var(--docx-zoom, 0.78);
+              }
               table, thead, tbody, tfoot, tr, td, th {
                 border-color: transparent !important;
               }
@@ -2860,6 +2866,30 @@ function CompareEditPanel({
             el.contentEditable = "true"
             el.spellcheck = true
           })
+        // Compute the zoom that fits the rendered page width
+        // into the iframe (and so the right pane). The .docx
+        // section renders at its true A4 width (~794px at 96
+        // DPI); we shrink it so it always fits the pane.
+        const applyZoom = () => {
+          if (cancelled || !iframe.contentDocument) return
+          const docEl = iframe.contentDocument.documentElement
+          const page = iframe.contentDocument.querySelector<HTMLElement>(
+            "section.docx, .docx",
+          )
+          const paneWidth = iframe.clientWidth
+          let pageWidth = 794
+          if (page) {
+            // Use the page's intrinsic width if available.
+            const rect = page.getBoundingClientRect()
+            if (rect.width > 100) pageWidth = rect.width
+          }
+          // Leave ~24px of breathing room on the sides.
+          const z = Math.min(1, (paneWidth - 24) / pageWidth)
+          if (Number.isFinite(z) && z > 0) {
+            docEl.style.setProperty("--docx-zoom", String(z))
+          }
+        }
+        applyZoom()
         // Resize iframe to fit content height. Re-check on each
         // mutation so it grows with edits.
         const resize = () => {
@@ -2875,6 +2905,14 @@ function CompareEditPanel({
           iframe.style.height = `${h + 24}px`
         }
         resize()
+        // Re-apply zoom on container resize so it stays fitted
+        // if the user resizes the window.
+        const onWinResize = () => {
+          applyZoom()
+          resize()
+        }
+        window.addEventListener("resize", onWinResize)
+        ;(iframe as any).__docxResizeHandler = onWinResize
         const obs = new MutationObserver(() => resize())
         obs.observe(idoc.body, {
           childList: true,
@@ -2909,6 +2947,14 @@ function CompareEditPanel({
         if (iframe?.__docxObserver) {
           try {
             iframe.__docxObserver.disconnect()
+          } catch {}
+        }
+        if (iframe?.__docxResizeHandler) {
+          try {
+            window.removeEventListener(
+              "resize",
+              iframe.__docxResizeHandler,
+            )
           } catch {}
         }
       }
