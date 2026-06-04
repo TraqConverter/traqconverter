@@ -371,7 +371,11 @@ def build_full_export_docx(
                 "Team-stamp resolution failed — continuing without footer stamp"
             )
 
-        # 3) Embed source PDF pages as images.
+        # 3) Embed source PDF pages as images with full-bleed
+        #    layout. Tight 1cm margins so the original fills its
+        #    page. After the last source page, open a new section
+        #    with normal 2cm margins so the translation body
+        #    starts on a fresh page.
         source_added = False
         try:
             from app.services.s3_service import download_file_from_s3
@@ -387,30 +391,37 @@ def build_full_export_docx(
                 and str(source_path).lower().endswith(".pdf")
             ):
                 page_imgs = _render_source_pages_as_images(source_path, work_dir)
+                if page_imgs:
+                    section.top_margin = Cm(1)
+                    section.bottom_margin = Cm(1)
+                    section.left_margin = Cm(1)
+                    section.right_margin = Cm(1)
                 for i, img in enumerate(page_imgs):
-                    # Each source page lives on its own NEW_PAGE
-                    # section. This guarantees a single page per
-                    # image with no buffer "empty page" that
-                    # add_page_break() was producing for tall images
-                    # whose paragraph already overflowed.
                     if i > 0:
-                        out.add_section(WD_SECTION.NEW_PAGE)
+                        new_sect = out.add_section(WD_SECTION.NEW_PAGE)
+                        new_sect.top_margin = Cm(1)
+                        new_sect.bottom_margin = Cm(1)
+                        new_sect.left_margin = Cm(1)
+                        new_sect.right_margin = Cm(1)
                     p = out.add_paragraph()
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    p.paragraph_format.space_before = Pt(0)
+                    p.paragraph_format.space_after = Pt(0)
                     run = p.add_run()
-                    # 16cm width leaves a hair of slack so the image
-                    # never overflows the page height — eliminates
-                    # the "image bleeds onto next page" empty-page
-                    # bug.
-                    run.add_picture(str(img), width=Cm(16))
+                    # 19cm with 1cm margins on A4 (21cm wide) =
+                    # full-bleed source page, leaves a hair of
+                    # safety so the image never overflows.
+                    run.add_picture(str(img), width=Cm(19))
                 if page_imgs:
                     source_added = True
-                    # No extra section break here. The last source
-                    # page's section already ends; the body merge's
-                    # first element naturally starts on a fresh page
-                    # within the source's section. Adding another
-                    # NEW_PAGE section here was producing the empty
-                    # buffer page the user kept seeing.
+                    # Translation body section: normal 2cm
+                    # margins, starts on a fresh NEW_PAGE so
+                    # it's visually separated from the source.
+                    body_sect = out.add_section(WD_SECTION.NEW_PAGE)
+                    body_sect.top_margin = Cm(2)
+                    body_sect.bottom_margin = Cm(2.2)
+                    body_sect.left_margin = Cm(2)
+                    body_sect.right_margin = Cm(2)
         except Exception:
             logger.exception(
                 "Source-page embedding failed — continuing without source pages"

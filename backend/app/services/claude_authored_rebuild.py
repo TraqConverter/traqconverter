@@ -440,18 +440,31 @@ Preserve verbatim (do NOT translate or alter):
 When in doubt, prefer "leave the original + add gloss in target
 language in italics" over "drop the original altogether".
 
-ARTWORK / IMAGES
-================
-Real image files have been pre-extracted from the source PDF and
-are sitting in the ./images/ subdirectory of your script's working
-directory. The full list is below under EXTRACTED IMAGES.
+ARTWORK / IMAGES — DO NOT EMBED ANY
+====================================
+The user has explicitly instructed: NO inline images anywhere
+in the translation body. Do NOT call doc.add_picture() at all,
+regardless of whether image files exist in ./images/. Do NOT
+insert any bracketed image placeholder like "[Coat of Arms]"
+or "[Signature]" either.
 
-CRITICAL: If the list contains ANY entry — embedded XObject OR
-header / footer crop — you MUST insert that image with
-`doc.add_picture("images/<filename>", width=Cm(N))` at the matching
-position in the rebuilt document. DO NOT use a bracketed text
-placeholder like "[Coat of Arms]" / "[Stamp]" / "[Signature]" if
-there is a real image file available.
+Why: the export wrapper embeds the FULL source PDF pages
+BEFORE your translation body, so the original crest, signature,
+seal, stamp, photo, QR code, and every other graphic element
+is already preserved in the export at full visual fidelity.
+Re-rendering them inline produces blurry tiny rectangles
+that look broken.
+
+Your translation is TEXT-ONLY:
+  - Masthead: institution name typed centered, 12-14pt bold.
+  - Signature block: officer name typed in normal weight.
+    No signature image, no seal, no stamp.
+  - Decoding tables, body paragraphs, course grids: text +
+    real Word tables only. No image elements.
+
+Ignore the EXTRACTED IMAGES list further below — it remains
+in the prompt for back-compat but you must NOT use any of
+those files in your output.
 
   * For an entry with kind=header → DO NOT insert any image here.
     The wrapper already embeds the full source PDF pages BEFORE
