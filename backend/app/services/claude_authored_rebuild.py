@@ -319,9 +319,9 @@ right.paragraphs[0].add_run().add_picture("images/p2_seal.png", width=Cm(3))
 # === DECODING SECTION + TRANSLATOR'S NOTE ===
 doc.add_paragraph("(*) Decoding of the institution-triad codes appearing in the document:")
 # ... etc, then a small 3-row x 2-col borderless table for S.S.D. codes
-note = doc.add_paragraph()
-nr = note.add_run("Note: This is an English translation of the original Italian document. The crest, seal and signature are reproduced from the original scan. Course codes, sector codes (S.S.D.), credit values (CFU), grades and reference numbers are reproduced unchanged.")
-nr.italic = True; nr.font.size = Pt(8)
+# NO translator's note paragraph. Stop after the last translated
+# content. The wrapper appends the official certification page
+# after your output.
 
 
 
@@ -453,17 +453,15 @@ position in the rebuilt document. DO NOT use a bracketed text
 placeholder like "[Coat of Arms]" / "[Stamp]" / "[Signature]" if
 there is a real image file available.
 
-  * For an entry with kind=header → DO NOT paste this wide strip
-    at the top of the output. It's a low-resolution crop of the
-    PDF page that looks blurry when stretched. Instead, REBUILD
-    the masthead in Word: a borderless 2-column table where the
-    left cell (Cm(3)) holds the CREST image inserted with
-    width=Cm(2.5), and the right cell (Cm(14)) holds the
-    institution name typed in 14pt bold (e.g. "UNIVERSITÀ DEGLI
-    STUDI / FIRENZE" on two lines). If only the wide header crop
-    is available and no separate crest, use the crest from the
-    embedded-images list — or fall back to a small italic
-    "[Crest]" placeholder text in the left cell.
+  * For an entry with kind=header → DO NOT insert any image here.
+    The wrapper already embeds the full source PDF pages BEFORE
+    your translation, so the original masthead (crest + ministry
+    name) is preserved in the export. In YOUR translation body
+    use a TEXT-ONLY masthead: a centered bold heading with the
+    institution name typed out in {target_lang} at 12-14pt (e.g.
+    "MINISTRY OF THE INTERIOR" or "UNIVERSITY OF FLORENCE"). NO
+    crest image, NO logo image, NO low-res cropped strip. Just
+    typed bold text.
   * For an entry with kind=footer → DO NOT paste this wide strip.
     Same problem — it's a low-res strip. Instead, rebuild the
     signature block in Word: officer name typed in normal weight
@@ -494,11 +492,10 @@ there is a real image file available.
     "[Signature]") instead of trying to reference a file that
     isn't there.
 
-ORDERING RULE: the translator's note goes at the VERY END of the
-document, after all other content (after the signature block, after
-the decoding keys, after every other element). NEVER place a
-"CERTIFIED TRANSLATION" or affidavit-style block at the START of
-the document.
+ORDERING RULE: NEVER place a "CERTIFIED TRANSLATION" or affidavit-
+style block at the START of the document. Your output ends with
+the last piece of translated content — NO postscript, NO
+translator's note, NO "this is a translation of..." sentence.
 
 FORBIDDEN STRINGS — the following text must NOT appear anywhere in
 your output:
@@ -508,21 +505,13 @@ your output:
   - "Signature: ___" / "Date: <UTC date>" boilerplate
   - Any affidavit, certification, signature-line, or date-stamp
     block that resembles a translator's certification page.
+  - "Note: This is an English translation of the original..." or
+    any equivalent translator's-note sentence at the bottom.
+  - "This document is an English translation of the original ..."
 The official translator certification page is appended by the
 wrapper AFTER your translation. Your job is ONLY the translation
-body, ending with the brief italic note described below.
-
-Add this small italic bottom note in {target_lang}, set at ~8pt
-with slight indentation, stating that this is a translation of the
-original {source_lang} document, that the crest / seal / signature
-are reproduced from the original scan, and that all codes / sector
-codes / credit values / grades / reference numbers are reproduced
-unchanged. Example wording:
-    "Note: This is an English translation of the original Italian
-     certificate issued by the University of Florence. The crest,
-     seal and signature are reproduced from the original scan.
-     Course codes, sector codes (S.S.D.), credit values (CFU),
-     grades and reference numbers are reproduced unchanged."
+body. Stop when the source's last paragraph is translated. Do
+NOT add a closing remark.
 
 VISUAL LAYOUT FIDELITY
 ======================
@@ -1845,6 +1834,11 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
             _re.compile(r"^\s*Signature\s*:\s*_+", _re.I),
             _re.compile(r"^\s*Date\s*:\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+UTC", _re.I),
             _re.compile(r"this\s+translation\s+is\s+accurate\s+and\s+complete", _re.I),
+            # User-rejected translator's-note variants. Strip these
+            # if Claude emits them despite the FORBIDDEN STRINGS rule.
+            _re.compile(r"\bNote\s*:\s*This\s+(is|document)\s+(an|a)?\s*\w*\s*translation\b", _re.I),
+            _re.compile(r"\bThis\s+document\s+is\s+(an|a)\s+\w+\s+translation\s+of\s+the\s+original\b", _re.I),
+            _re.compile(r"\bcrest,?\s+seal\s+and\s+signature\s+are\s+reproduced\s+from\s+the\s+original\b", _re.I),
         ]
 
         TBL_TAG = "{%s}tbl" % W_NS

@@ -74,10 +74,17 @@ REQUIREMENTS
     its sizing budget.
   * FORBIDDEN: a CERTIFIED TRANSLATION / "I hereby certify" /
     "Translator: <email>" / "Signature: ___" block anywhere in
-    your output. The certification page is appended by our
-    wrapper AFTER your translation — your job is the translation
-    body only, ending with a short italic note in {target_lang}
-    explaining this is a translation of the original document.
+    your output. ALSO FORBIDDEN: any "Note: This is a translation
+    of the original..." / "This document is a translation of..."
+    sentence at the bottom — DO NOT add one. The certification
+    page is appended by our wrapper AFTER your translation. Your
+    job is the translation body only. Stop when the source's
+    last paragraph is translated.
+  * NO inline crest / logo image at the top of the translation.
+    The wrapper embeds the full source PDF pages BEFORE your
+    body, so the original masthead is preserved. In YOUR body
+    use a text-only masthead: institution name typed in 12-14pt
+    bold ({target_lang}). No image at the top.
 
 EXTRACTED IMAGES (in ./images/)
 ===============================
@@ -164,6 +171,9 @@ _FORBIDDEN_PATTERNS = [
     re.compile(r"^\s*Translator\s*:\s*\S+@\S+", re.I | re.M),
     re.compile(r"^\s*Signature\s*:\s*_+", re.I | re.M),
     re.compile(r"this\s+translation\s+is\s+accurate\s+and\s+complete", re.I),
+    # Translator's note variants — user explicitly wants these gone.
+    re.compile(r"\bNote\s*:\s*This\s+(is|document)\s+(an|a)?\s*\w*\s*translation\b", re.I),
+    re.compile(r"\bThis\s+document\s+is\s+(an|a)\s+\w+\s+translation\s+of\s+the\s+original\b", re.I),
 ]
 
 
