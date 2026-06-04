@@ -22,36 +22,42 @@ logger = logging.getLogger(__name__)
 # quality / cost. Add new entries here when supporting a new model —
 # nothing else in the pipeline needs to change.
 MODEL_OPTIONS: dict[str, dict] = {
-    # Fastest + cheapest GPT — good default for everyday docs.
-    "gpt-4.1-mini": {
-        "provider": "openai",
-        "model": "gpt-4.1-mini",
-        "label": "GPT-4.1 Mini (fast, balanced)",
+    # Anthropic — top tier. Best quality available, slowest.
+    "claude-opus-4-6": {
+        "provider": "anthropic",
+        "model": "claude-opus-4-6",
+        "label": "Claude Opus 4.6 (highest quality)",
     },
-    # Higher-quality GPT for tricky / legal / medical docs.
-    "gpt-4.1": {
-        "provider": "openai",
-        "model": "gpt-4.1",
-        "label": "GPT-4.1 (highest quality, slower)",
-    },
-    # Claude Sonnet — Anthropic's quality tier, same model as our
-    # Vision OCR so terminology stays consistent across stages.
+    # Anthropic — balanced. Premium quality at faster speed.
     "claude-sonnet-4-6": {
         "provider": "anthropic",
         "model": "claude-sonnet-4-6",
         "label": "Claude Sonnet 4.6 (premium quality)",
     },
-    # Claude Haiku — Anthropic's speed tier.
+    # Anthropic — fastest / cheapest Claude.
     "claude-haiku-4-5": {
         "provider": "anthropic",
         "model": "claude-haiku-4-5-20251001",
         "label": "Claude Haiku 4.5 (fast, low cost)",
     },
-    # Legacy alias used by older projects ("balanced" was the default
-    # field value before per-model selection landed).
-    "balanced": {
+    # OpenAI — quality tier.
+    "gpt-4.1": {
+        "provider": "openai",
+        "model": "gpt-4.1",
+        "label": "GPT-4.1 (OpenAI, high quality)",
+    },
+    # OpenAI — fast tier, good default for everyday docs.
+    "gpt-4.1-mini": {
         "provider": "openai",
         "model": "gpt-4.1-mini",
+        "label": "GPT-4.1 Mini (OpenAI, fast)",
+    },
+    # Legacy alias used by older projects ("balanced" was the default
+    # field value before per-model selection landed). Now points at
+    # Sonnet 4.6 — the best general-purpose choice for translation.
+    "balanced": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-6",
         "label": "Balanced (default)",
     },
 }
