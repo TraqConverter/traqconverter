@@ -2704,12 +2704,19 @@ function CompareEditPanel({
   // fidelity than mammoth — preserves tab stops, alignment, column
   // widths, page layout, fonts).
   const docContainerRef = useRef<HTMLDivElement | null>(null)
+  // Stash the fetched DOCX bytes so the render effect can pick
+  // them up AFTER the container DOM node has mounted (the
+  // container is conditionally rendered when loading=false, so
+  // doing it inline with the fetch loses the render — the
+  // container ref is still null at fetch-resolve time).
+  const [docxBuffer, setDocxBuffer] = useState<ArrayBuffer | null>(null)
 
   useEffect(() => {
     if (!compareOpen || !projectId) return
     let cancelled = false
     setLoading(true)
     setError("")
+    setDocxBuffer(null)
     const token =
       (typeof window !== "undefined" &&
         (localStorage.getItem("token") || sessionStorage.getItem("token"))) ||
@@ -2723,33 +2730,11 @@ function CompareEditPanel({
         }
         return r.arrayBuffer()
       })
-      .then(async (buffer) => {
+      .then((buffer) => {
         if (cancelled) return
-        // Dynamic import so docx-preview only ships when the
-        // editor route is open.
-        const { renderAsync } = await import("docx-preview")
-        const container = docContainerRef.current
-        if (!container) return
-        // Clear any previous render so we don't stack pages.
-        container.innerHTML = ""
-        await renderAsync(buffer, container, undefined, {
-          // Disable the wrapper class which inserts a grey
-          // background — we want our cream/white sheet to show.
-          inWrapper: true,
-          ignoreWidth: false,
-          ignoreHeight: false,
-          ignoreFonts: false,
-          breakPages: true,
-          ignoreLastRenderedPageBreak: true,
-          experimental: true,
-          trimXmlDeclaration: true,
-          useBase64URL: true,
-          // Show all the high-fidelity bits mammoth dropped.
-          renderHeaders: true,
-          renderFooters: true,
-          renderFootnotes: true,
-          renderEndnotes: true,
-        })
+        // Store the bytes — the render effect below picks them up
+        // once the container has actually mounted.
+        setDocxBuffer(buffer)
       })
       .catch((e: any) => {
         if (!cancelled) {
@@ -2767,6 +2752,52 @@ function CompareEditPanel({
       cancelled = true
     }
   }, [projectId, compareOpen, reloadKey])
+
+  // Render the DOCX into the container once BOTH the buffer is
+  // available AND the container DOM node has been mounted. This
+  // runs after loading flips to false so docContainerRef.current
+  // is no longer null. Re-runs on buffer change (e.g. after a
+  // Reload click).
+  useEffect(() => {
+    if (!docxBuffer || loading) return
+    let cancelled = false
+    const container = docContainerRef.current
+    if (!container) return
+    ;(async () => {
+      try {
+        const { renderAsync } = await import("docx-preview")
+        if (cancelled) return
+        // Clear any previous render so we don't stack pages.
+        container.innerHTML = ""
+        await renderAsync(docxBuffer, container, undefined, {
+          inWrapper: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
+          breakPages: true,
+          ignoreLastRenderedPageBreak: true,
+          experimental: true,
+          trimXmlDeclaration: true,
+          useBase64URL: true,
+          renderHeaders: true,
+          renderFooters: true,
+          renderFootnotes: true,
+          renderEndnotes: true,
+        })
+      } catch (e: any) {
+        if (!cancelled) {
+          setError(
+            typeof e?.message === "string"
+              ? `Couldn't render document: ${e.message}`
+              : "Couldn't render document preview.",
+          )
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [docxBuffer, loading])
 
   // Debounced auto-save: every time the user edits, wait 1.5s of
   // inactivity then PATCH /projects/{id}/edited-html with the current
