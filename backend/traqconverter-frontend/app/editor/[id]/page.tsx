@@ -2940,8 +2940,7 @@ function CompareEditPanel({
         ) : (
           <div
             style={{
-              margin: "0 auto",
-              maxWidth: 820,
+              width: "100%",
               color: "#111",
             }}
           >
@@ -2951,13 +2950,31 @@ function CompareEditPanel({
                  tab stops) — much higher fidelity than mammoth.
                  We just override a couple of cosmetic bits so it
                  fits our cream/teal aesthetic. */
+              .docx-preview-host {
+                /* The .docx page is rendered at its true A4 size
+                   (~794px wide at 96 DPI). The right pane is
+                   often narrower, so shrink the page to fit
+                   without clipping the page-margin content. */
+                --docx-scale: 0.78;
+                overflow-x: hidden;
+              }
               .docx-preview-host .docx-wrapper {
                 padding: 0;
                 background: transparent;
               }
+              .docx-preview-host .docx-wrapper > section.docx,
+              .docx-preview-host > section.docx,
               .docx-preview-host .docx {
-                margin: 0 auto 16px;
+                transform: scale(var(--docx-scale));
+                transform-origin: top center;
+                /* Negate the space scaling leaves at the bottom
+                   so successive pages don't get a giant gap. */
+                margin: 0 auto -22% !important;
                 box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
+              }
+              /* First page sits flush at the top. */
+              .docx-preview-host .docx:first-child {
+                margin-top: 0 !important;
               }
               /* Keep tables borderless in the preview (the DOCX
                  itself is already borderless from the backend
