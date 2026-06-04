@@ -2767,61 +2767,124 @@ function CompareEditPanel({
       try {
         const { renderAsync } = await import("docx-preview")
         if (cancelled) return
-        // Render into a DETACHED off-DOM div first so docx-preview's
-        // injected <style> tags never enter a contentEditable
-        // region. (Browsers treat <style> textContent as visible
-        // text inside contentEditable parents — that's the raw-CSS
-        // dump bug the user saw.) Then we surgically move the
-        // styles to document.head and the rendered page sections
-        // into the live editable container.
-        const stagingDiv = document.createElement("div")
-        stagingDiv.style.position = "absolute"
-        stagingDiv.style.left = "-99999px"
-        stagingDiv.style.top = "0"
-        stagingDiv.style.visibility = "hidden"
-        document.body.appendChild(stagingDiv)
-        try {
-          await renderAsync(docxBuffer, stagingDiv, undefined, {
-            inWrapper: true,
-            ignoreWidth: false,
-            ignoreHeight: false,
-            ignoreFonts: false,
-            breakPages: true,
-            ignoreLastRenderedPageBreak: true,
-            experimental: true,
-            trimXmlDeclaration: true,
-            useBase64URL: true,
-            renderHeaders: true,
-            renderFooters: true,
-            renderFootnotes: true,
-            renderEndnotes: true,
-          })
-          if (cancelled) return
-          // Move every <style> tag docx-preview injected into
-          // document.head so the CSS applies globally but is
-          // out of the editable region's tree.
-          stagingDiv.querySelectorAll("style").forEach((s) => {
-            document.head.appendChild(s)
-          })
-          // Now move the rendered .docx page sections into the
-          // live container and make each one contentEditable.
-          container.innerHTML = ""
-          const wrapper =
-            stagingDiv.querySelector(".docx-wrapper") || stagingDiv
-          while (wrapper.firstChild) {
-            container.appendChild(wrapper.firstChild)
+        // IFRAME RENDER. The previous staging-div approach kept
+        // leaking docx-preview's <style> CSS into the editable
+        // pane as raw text — contentEditable interacts oddly with
+        // injected <style> blocks across React renders. The
+        // iframe is a fully isolated document, so the rendered
+        // DOCX (and its CSS) lives in a tree the parent's
+        // contentEditable behavior cannot touch.
+        container.innerHTML = ""
+        const iframe = document.createElement("iframe")
+        iframe.style.width = "100%"
+        iframe.style.border = "0"
+        iframe.style.background = "transparent"
+        iframe.style.display = "block"
+        iframe.setAttribute("title", "Document preview")
+        container.appendChild(iframe)
+        // Wait for iframe document to be ready.
+        await new Promise<void>((resolve) => {
+          const onLoad = () => resolve()
+          iframe.addEventListener("load", onLoad, { once: true })
+          // about:blank docs load synchronously in most browsers
+          // — kick the load event manually if it's already
+          // ready.
+          if (iframe.contentDocument?.readyState === "complete") {
+            resolve()
           }
-          container
-            .querySelectorAll<HTMLElement>("section.docx, .docx")
-            .forEach((el) => {
-              el.contentEditable = "true"
-              el.spellcheck = true
-            })
-        } finally {
-          try {
-            document.body.removeChild(stagingDiv)
-          } catch {}
+        })
+        if (cancelled) return
+        const idoc = iframe.contentDocument
+        if (!idoc) {
+          throw new Error("Iframe document inaccessible")
         }
+        // Inject the host page styling so the iframe inherits
+        // the cream/teal aesthetic + scaling. The transform
+        // scale here mirrors the parent's CSS variable.
+        idoc.open()
+        idoc.write(
+          `<!doctype html><html><head>
+            <meta charset="utf-8">
+            <style>
+              html, body {
+                margin: 0;
+                padding: 0;
+                background: transparent;
+                color: #111;
+                font-family: 'Times New Roman', Times, serif;
+              }
+              body { overflow-x: hidden; }
+              .docx-wrapper {
+                padding: 0 !important;
+                background: transparent !important;
+              }
+              section.docx, .docx {
+                margin: 0 auto 16px !important;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
+              }
+              table, thead, tbody, tfoot, tr, td, th {
+                border-color: transparent !important;
+              }
+              :focus { outline: 2px solid #cdb98a; outline-offset: 2px; }
+            </style>
+          </head><body></body></html>`,
+        )
+        idoc.close()
+        // Render docx-preview into the iframe body.
+        await renderAsync(docxBuffer, idoc.body, undefined, {
+          inWrapper: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
+          breakPages: true,
+          ignoreLastRenderedPageBreak: true,
+          experimental: true,
+          trimXmlDeclaration: true,
+          useBase64URL: true,
+          renderHeaders: true,
+          renderFooters: true,
+          renderFootnotes: true,
+          renderEndnotes: true,
+        })
+        if (cancelled) return
+        // Mark every rendered page section editable inside the
+        // iframe. ContentEditable applies only within the iframe
+        // document — no leakage to the parent.
+        idoc
+          .querySelectorAll<HTMLElement>("section.docx, .docx")
+          .forEach((el) => {
+            el.contentEditable = "true"
+            el.spellcheck = true
+          })
+        // Resize iframe to fit content height. Re-check on each
+        // mutation so it grows with edits.
+        const resize = () => {
+          if (cancelled || !iframe.contentDocument) return
+          const body = iframe.contentDocument.body
+          const html = iframe.contentDocument.documentElement
+          const h = Math.max(
+            body.scrollHeight,
+            body.offsetHeight,
+            html.scrollHeight,
+            html.offsetHeight,
+          )
+          iframe.style.height = `${h + 24}px`
+        }
+        resize()
+        const obs = new MutationObserver(() => resize())
+        obs.observe(idoc.body, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+        })
+        // Wire input events from the iframe back to the parent
+        // autosave handler. We pass the full body innerHTML so
+        // /edited-html stores the latest state.
+        idoc.body.addEventListener("input", () => {
+          scheduleSave(idoc.body.innerHTML)
+        })
+        // Clean up the observer on next render or unmount.
+        ;(iframe as any).__docxObserver = obs
       } catch (e: any) {
         if (!cancelled) {
           setError(
@@ -2834,8 +2897,19 @@ function CompareEditPanel({
     })()
     return () => {
       cancelled = true
+      // Tear down the mutation observer if the iframe still
+      // exists.
+      const c = docContainerRef.current
+      if (c) {
+        const iframe = c.querySelector("iframe") as any
+        if (iframe?.__docxObserver) {
+          try {
+            iframe.__docxObserver.disconnect()
+          } catch {}
+        }
+      }
     }
-  }, [docxBuffer, loading])
+  }, [docxBuffer, loading, scheduleSave])
 
   // Debounced auto-save: every time the user edits, wait 1.5s of
   // inactivity then PATCH /projects/{id}/edited-html with the current
