@@ -2144,6 +2144,35 @@ def author_rebuild_docx(
     Raises RuntimeError or ValueError if any step fails — the caller
     should fall back to the segment-driven pipeline.
     """
+    # Multi-turn mode: when REBUILD_MULTITURN is enabled (default
+    # on), delegate to the tool-use loop in
+    # claude_multiturn_rebuild — that's the "match claude.ai chat"
+    # path where Claude sees its own output and iterates until it
+    # matches the source. Falls back to single-shot on any failure.
+    use_multiturn = (
+        os.getenv("REBUILD_MULTITURN", "1").strip().lower()
+        not in ("", "0", "false", "no", "off")
+    )
+    if use_multiturn:
+        try:
+            from app.services.claude_multiturn_rebuild import (
+                author_rebuild_docx_multiturn,
+            )
+            logger.info(
+                "Using multi-turn rebuild loop (model=%s)",
+                model or "claude-opus-4-6",
+            )
+            return author_rebuild_docx_multiturn(
+                pdf_bytes,
+                source_lang,
+                target_lang,
+                model=model or "claude-opus-4-6",
+            )
+        except Exception:
+            logger.exception(
+                "Multi-turn rebuild failed — falling back to single-shot"
+            )
+
     # Use a stable, sandbox-readable path.
     out_dir = Path(tempfile.mkdtemp(prefix="claude_authored_out_"))
     output_path = str(out_dir / "rebuild.docx")
