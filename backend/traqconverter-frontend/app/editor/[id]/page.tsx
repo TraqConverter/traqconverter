@@ -2784,6 +2784,31 @@ function CompareEditPanel({
           renderFootnotes: true,
           renderEndnotes: true,
         })
+        if (cancelled) return
+        // docx-preview injects a <style> block into the host
+        // div. With contentEditable=true on the host, browsers
+        // render that style block's CSS text as visible content
+        // (the user saw the raw CSS dumped into the pane). Move
+        // any injected <style> elements into document.head so
+        // they apply globally but don't show as text — and then
+        // make each rendered .docx page contentEditable
+        // individually, instead of the host.
+        try {
+          const styles = container.querySelectorAll("style")
+          styles.forEach((styleEl) => {
+            document.head.appendChild(styleEl)
+          })
+        } catch {}
+        try {
+          const pages = container.querySelectorAll(
+            ".docx-wrapper > section.docx, .docx-wrapper .docx, section.docx",
+          )
+          pages.forEach((p) => {
+            const el = p as HTMLElement
+            el.contentEditable = "true"
+            el.spellcheck = true
+          })
+        } catch {}
       } catch (e: any) {
         if (!cancelled) {
           setError(
@@ -2998,10 +3023,12 @@ function CompareEditPanel({
             <div
               ref={docContainerRef}
               className="docx-preview-host"
-              contentEditable
               suppressContentEditableWarning
-              spellCheck
               onInput={(e) => {
+                // contentEditable is set on the rendered .docx
+                // pages, not the host — but onInput bubbles up
+                // so we still see every keystroke here for
+                // autosave.
                 const target = e.currentTarget as HTMLDivElement
                 scheduleSave(target.innerHTML)
               }}
@@ -3202,8 +3229,7 @@ function Stat({
     </div>
   )
 }
-
-function SideTab({
+function SideTab({
   label,
   count,
   active,
