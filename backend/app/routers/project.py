@@ -1232,6 +1232,63 @@ def preview_rebuild_html(
 
 
 # ============================================================
+# REBUILD AS RAW DOCX — streams the rebuilt DOCX bytes directly so
+# the frontend can render with docx-preview (much higher fidelity
+# than mammoth HTML — preserves tab stops, alignment, column widths,
+# fonts, page layout). Used by the Compare view's right pane.
+# ============================================================
+
+@router.get("/{project_id}/preview/rebuild-docx")
+def preview_rebuild_docx(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user_or_query),
+):
+    """Stream the rebuilt translation DOCX bytes as-is so the
+    frontend can render them client-side with docx-preview. This
+    is the high-fidelity preview path — mammoth's HTML conversion
+    drops Word formatting that docx-preview preserves.
+
+    Source of truth (in order):
+      1. edited_html → converted back to DOCX so docx-preview sees
+         a consistent format. (We can't render HTML through
+         docx-preview directly.)
+      2. authored_docx_s3_key → Claude-authored DOCX.
+      3. segment-driven _build_layout_docx_live fallback.
+    """
+    project = _project_preview_team_check(db, project_id, user)
+
+    project._export_user_email = user.email or ""
+    project._export_user_logo_key = getattr(user, "logo_s3_key", None)
+
+    segments = (
+        db.query(TranslationSegment)
+        .filter(TranslationSegment.project_id == project.id)
+        .order_by(TranslationSegment.segment_index)
+        .all()
+    )
+    if not segments and not getattr(project, "authored_docx_s3_key", None):
+        raise HTTPException(status_code=404, detail="No segments yet")
+
+    docx_bytes = _resolve_rebuild_docx_bytes(
+        project, segments, preview_only=True
+    )
+
+    return _FastResponse(
+        content=docx_bytes,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument"
+            ".wordprocessingml.document"
+        ),
+        headers={
+            "Cache-Control": "private, max-age=30",
+            # docx-preview fetches this client-side via fetch();
+            # CORS is governed by app.config.cors_origins.
+        },
+    )
+
+
+# ============================================================
 # SUGGEST GLOSSARY — AI scans all translated segments and proposes
 # glossary entries (recurring proper nouns, technical terms,
 # branded phrases). Returned as proposals — the user reviews and
@@ -1655,64 +1712,4 @@ def delete_project(
     from app.models.segment_comment import SegmentComment
 
     # Audit HIGH-3: scope by team, not creator.
-    project = get_user_project_or_404(db, project_id, current_user)
-    pid = str(project.id)
-
-    try:
-        # 1) Comments — keyed by segment id.
-        segment_ids = [
-            row[0]
-            for row in db.query(TranslationSegment.id)
-            .filter(TranslationSegment.project_id == project.id)
-            .all()
-        ]
-        if segment_ids:
-            db.query(SegmentComment).filter(
-                SegmentComment.segment_id.in_(segment_ids)
-            ).delete(synchronize_session=False)
-
-        # 2) Segments themselves.
-        db.query(TranslationSegment).filter(
-            TranslationSegment.project_id == project.id
-        ).delete(synchronize_session=False)
-
-        # 3) Translation memory entries scoped to this project. The
-        #    table is raw SQL; we wrap in SAVEPOINT so a missing
-        #    project_id column on older schemas doesn't roll back
-        #    the segment + comment deletes above.
-        try:
-            with db.begin_nested():
-                db.execute(
-                    text(
-                        "DELETE FROM translation_memory WHERE project_id = :pid"
-                    ),
-                    {"pid": pid},
-                )
-        except Exception as e:
-            logger.info("Optional TM cleanup skipped: %s", e)
-
-        # 4) Job queue rows. The schema migration set ON DELETE
-        #    CASCADE here, but we're explicit to be safe.
-        try:
-            with db.begin_nested():
-                db.execute(
-                    text(
-                        "DELETE FROM translation_jobs WHERE project_id = :pid"
-                    ),
-                    {"pid": pid},
-                )
-        except Exception as e:
-            logger.info("Optional translation_jobs cleanup skipped: %s", e)
-
-        # 5) Finally the project row itself.
-        db.delete(project)
-        db.commit()
-    except Exception as e:
-        logger.exception("Project delete failed: %s", e)
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Couldn't delete project — {type(e).__name__}",
-        )
-
-    return {"message": "Project deleted successfully"}
+    proje
