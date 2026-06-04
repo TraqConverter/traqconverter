@@ -2767,48 +2767,61 @@ function CompareEditPanel({
       try {
         const { renderAsync } = await import("docx-preview")
         if (cancelled) return
-        // Clear any previous render so we don't stack pages.
-        container.innerHTML = ""
-        await renderAsync(docxBuffer, container, undefined, {
-          inWrapper: true,
-          ignoreWidth: false,
-          ignoreHeight: false,
-          ignoreFonts: false,
-          breakPages: true,
-          ignoreLastRenderedPageBreak: true,
-          experimental: true,
-          trimXmlDeclaration: true,
-          useBase64URL: true,
-          renderHeaders: true,
-          renderFooters: true,
-          renderFootnotes: true,
-          renderEndnotes: true,
-        })
-        if (cancelled) return
-        // docx-preview injects a <style> block into the host
-        // div. With contentEditable=true on the host, browsers
-        // render that style block's CSS text as visible content
-        // (the user saw the raw CSS dumped into the pane). Move
-        // any injected <style> elements into document.head so
-        // they apply globally but don't show as text — and then
-        // make each rendered .docx page contentEditable
-        // individually, instead of the host.
+        // Render into a DETACHED off-DOM div first so docx-preview's
+        // injected <style> tags never enter a contentEditable
+        // region. (Browsers treat <style> textContent as visible
+        // text inside contentEditable parents — that's the raw-CSS
+        // dump bug the user saw.) Then we surgically move the
+        // styles to document.head and the rendered page sections
+        // into the live editable container.
+        const stagingDiv = document.createElement("div")
+        stagingDiv.style.position = "absolute"
+        stagingDiv.style.left = "-99999px"
+        stagingDiv.style.top = "0"
+        stagingDiv.style.visibility = "hidden"
+        document.body.appendChild(stagingDiv)
         try {
-          const styles = container.querySelectorAll("style")
-          styles.forEach((styleEl) => {
-            document.head.appendChild(styleEl)
+          await renderAsync(docxBuffer, stagingDiv, undefined, {
+            inWrapper: true,
+            ignoreWidth: false,
+            ignoreHeight: false,
+            ignoreFonts: false,
+            breakPages: true,
+            ignoreLastRenderedPageBreak: true,
+            experimental: true,
+            trimXmlDeclaration: true,
+            useBase64URL: true,
+            renderHeaders: true,
+            renderFooters: true,
+            renderFootnotes: true,
+            renderEndnotes: true,
           })
-        } catch {}
-        try {
-          const pages = container.querySelectorAll(
-            ".docx-wrapper > section.docx, .docx-wrapper .docx, section.docx",
-          )
-          pages.forEach((p) => {
-            const el = p as HTMLElement
-            el.contentEditable = "true"
-            el.spellcheck = true
+          if (cancelled) return
+          // Move every <style> tag docx-preview injected into
+          // document.head so the CSS applies globally but is
+          // out of the editable region's tree.
+          stagingDiv.querySelectorAll("style").forEach((s) => {
+            document.head.appendChild(s)
           })
-        } catch {}
+          // Now move the rendered .docx page sections into the
+          // live container and make each one contentEditable.
+          container.innerHTML = ""
+          const wrapper =
+            stagingDiv.querySelector(".docx-wrapper") || stagingDiv
+          while (wrapper.firstChild) {
+            container.appendChild(wrapper.firstChild)
+          }
+          container
+            .querySelectorAll<HTMLElement>("section.docx, .docx")
+            .forEach((el) => {
+              el.contentEditable = "true"
+              el.spellcheck = true
+            })
+        } finally {
+          try {
+            document.body.removeChild(stagingDiv)
+          } catch {}
+        }
       } catch (e: any) {
         if (!cancelled) {
           setError(
