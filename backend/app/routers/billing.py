@@ -9,7 +9,26 @@ from app.dependencies.feature_guard import effective_plan
 from app.models.credit import CreditWallet, CreditTransaction
 from app.models.user import User
 from app.models.team import Team
+from app.models.team_member import TeamMember
 from app.core.plan_features import PLAN_FEATURES
+
+
+def _resolve_user_team(db: Session, user: User) -> Team:
+    """Audit P1 #5: owner-or-member team lookup. Without this,
+    invited team members couldn't see the wallet/transactions and
+    the sidebar wallet card was empty.
+    """
+    team = db.query(Team).filter(Team.owner_id == user.id).first()
+    if team:
+        return team
+    membership = (
+        db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
+    )
+    if membership:
+        t = db.query(Team).filter(Team.id == membership.team_id).first()
+        if t:
+            return t
+    raise HTTPException(status_code=404, detail="Team not found")
 
 router = APIRouter(
     prefix="/billing",
@@ -27,15 +46,8 @@ def get_wallet(
     current_user: User = Depends(get_current_user)
 ):
 
-    # Find user's team
-    team = (
-        db.query(Team)
-        .filter(Team.owner_id == current_user.id)
-        .first()
-    )
-
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
+    # Owner-or-member team lookup (Audit P1 #5).
+    team = _resolve_user_team(db, current_user)
 
     # Find wallet for the team
     wallet = (
@@ -85,15 +97,8 @@ def get_transactions(
     current_user: User = Depends(get_current_user)
 ):
 
-    # Find user's team
-    team = (
-        db.query(Team)
-        .filter(Team.owner_id == current_user.id)
-        .first()
-    )
-
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
+    # Owner-or-member team lookup (Audit P1 #5).
+    team = _resolve_user_team(db, current_user)
 
     transactions = (
         db.query(CreditTransaction)

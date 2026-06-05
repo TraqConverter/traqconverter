@@ -7,7 +7,28 @@ from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
 from app.models.user import User
 from app.models.team import Team
+from app.models.team_member import TeamMember
 from app.models.translation_memory import TranslationMemory
+
+
+def _resolve_user_team(db: Session, user: User) -> Team:
+    """Owner-or-member team lookup (Audit P1 #5). TM is
+    team-scoped (task #121) but every endpoint here used
+    `Team.owner_id == user.id` so invited members got 404.
+    """
+    team = db.query(Team).filter(Team.owner_id == user.id).first()
+    if team:
+        return team
+    membership = (
+        db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
+    )
+    if membership:
+        team = (
+            db.query(Team).filter(Team.id == membership.team_id).first()
+        )
+        if team:
+            return team
+    raise HTTPException(status_code=404, detail="Team not found")
 
 
 # Both endpoints are Pro-only. Returning 403 lets the frontend render its
@@ -32,11 +53,7 @@ def list_tm_entries(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    team = (
-        db.query(Team).filter(Team.owner_id == current_user.id).first()
-    )
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
+    team = _resolve_user_team(db, current_user)
 
     query = db.query(TranslationMemory).filter(TranslationMemory.team_id == team.id)
 
@@ -74,11 +91,7 @@ def tm_summary(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    team = (
-        db.query(Team).filter(Team.owner_id == current_user.id).first()
-    )
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
+    team = _resolve_user_team(db, current_user)
 
     total_units = (
         db.query(func.count(TranslationMemory.id))

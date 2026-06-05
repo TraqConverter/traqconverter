@@ -279,8 +279,16 @@ def _append_certification(dst_doc: Document, project, user, work_dir: Path):
                     .filter(Certification.id == template_id)
                     .first()
                 )
-                if cert and getattr(cert, "s3_key", None):
-                    url = generate_presigned_download_url(cert.s3_key)
+                # Audit P0 #2: model column is `file_path`, not
+                # `s3_key`. The old check was always false so the
+                # user's chosen cert template never ran.
+                # Audit P1 #3: only DOCX cert templates can be
+                # substituted with python-docx — skip silently if
+                # someone uploaded a PDF / image / other format.
+                cert_key = getattr(cert, "file_path", None) if cert else None
+                cert_name = (getattr(cert, "file_name", "") or "").lower() if cert else ""
+                if cert and cert_key and cert_name.endswith(".docx"):
+                    url = generate_presigned_download_url(cert_key)
                     r = _req.get(url, timeout=15)
                     if r.ok:
                         team = None
