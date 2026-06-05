@@ -222,7 +222,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
     return <>{children}</>
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // Audit P1 #8: bump server-side token_version so this JWT
+    // (and any clones on other devices) is invalidated. Then
+    // clear local storage and redirect. Don't block logout on
+    // a network error — clear locally regardless.
+    try {
+      await api.post("/auth/logout")
+    } catch {
+      /* ignore — logout must still complete locally */
+    }
     clearToken()
     router.replace("/login")
   }
