@@ -2064,55 +2064,56 @@ def _strip_html_and_bracket_artifacts(docx_bytes: bytes) -> bytes:
     """Strip literal HTML tags and bracketed image placeholders that
     Claude sometimes emits as text inside the body.
 
-    User report: Austrian Citizenship Certificate output contained
+    User reports a recurring class of bug where Claude's authored
+    DOCX contains text like
         '<p style="text-align: center;">AUSTRIAN EMBASSY<br>LONDON</p>'
-    rendered as visible text. Claude misinterpreted the revision
-    instruction "center the masthead" in HTML terms instead of
-    using python-docx alignment. Also present: '[Coat of Arms]',
-    '[Stamp: REPUBLIC OF AUSTRIA EMBASSY LONDON 2]',
-    '[Signature: Renate SEIB]' — the user's TEXT-ONLY rule says
-    these should not appear, but Claude keeps falling back to them.
+    rendered as visible text, plus '[Coat of Arms]', '[Stamp: ...]',
+    '[Signature: ...]'. The bracketed markers violate the TEXT-ONLY
+    rule in the prompt; the HTML tags happen when Claude
+    misinterprets "center the masthead" in HTML terms instead of
+    using python-docx alignment.
 
     Strategy:
-      * Walk every <w:t> in the body.
-      * For HTML tags: strip the tags themselves, keep the inner
-        text — turns '<p style="..">X<br>Y</p>' into 'X Y'.
-      * For bracketed image markers ([Coat of Arms], [Stamp: ...],
-        [Signature: ...], [Photo], [Seal], [Logo], [QR Code],
-        [Barcode]): drop the entire bracketed expression.
-      * If the paragraph ends up empty (all text stripped), drop
-        the paragraph too — Word renders empty paragraphs as a
-        wasted blank line.
+      * Walk every paragraph (including those inside tables).
+      * Concatenate text from ALL <w:t> elements across runs into
+        one string — Claude often splits a single tag across
+        runs (p.add_run("<p>") + p.add_run("text") + p.add_run("</p>")),
+        so per-<w:t> scanning misses them.
+      * Strip HTML tags via regex (keeping inner text).
+      * Drop bracketed image markers entirely.
+      * Write cleaned text back into the FIRST run; blank the rest.
+      * If the paragraph ends up empty, drop the whole paragraph
+        in pass 2.
 
     Best-effort; failures return the original bytes unchanged.
     """
     try:
         import io as _io
-        import re as _re
+        import re as _re2
         import zipfile as _zip
         from xml.etree import ElementTree as ET
 
         W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        XML_NS = "http://www.w3.org/XML/1998/namespace"
         ET.register_namespace("w", W_NS)
         P_TAG = "{%s}p" % W_NS
+        R_TAG = "{%s}r" % W_NS
         T_TAG = "{%s}t" % W_NS
 
-        # Tag-stripper: matches any opening/closing HTML-ish tag plus
-        # any tag attributes (style="..." class="...").
-        TAG_RE = _re.compile(r"<\s*/?\s*[a-zA-Z][a-zA-Z0-9]*\b[^>]*>")
-        # Bracketed image-marker patterns the prompt forbids.
-        BRACKET_RE = _re.compile(
+        TAG_RE = _re2.compile(r"<\s*/?\s*[a-zA-Z][a-zA-Z0-9]*\b[^>]*>")
+        BRACKET_RE = _re2.compile(
             r"\[\s*(?:Coat of Arms|Stamp(?:\s*:\s*[^\]]+)?|Signature"
             r"(?:\s*:\s*[^\]]+)?|Photo|Seal|Logo|QR\s*Code|Barcode|"
             r"Crest)\s*\]",
-            _re.I,
+            _re2.I,
         )
+        SUSPECT = ("<", ">", "[")
 
         in_buf = _io.BytesIO(docx_bytes)
         out_buf = _io.BytesIO()
         modified = False
-        tags_stripped = 0
-        brackets_stripped = 0
+        paras_cleaned = 0
+        chars_removed = 0
         empty_paras_removed = 0
 
         with _zip.ZipFile(in_buf, "r") as zin:
@@ -2124,50 +2125,73 @@ def _strip_html_and_bracket_artifacts(docx_bytes: bytes) -> bytes:
                             root = ET.fromstring(data)
                             body = root.find("{%s}body" % W_NS)
                             if body is not None:
-                                # Pass 1 — strip tags / brackets
-                                # inside every <w:t>.
-                                for t in root.iter(T_TAG):
-                                    txt = t.text or ""
-                                    if not txt:
+                                # Pass 1 \u2014 paragraph-level strip.
+                                for p in root.iter(P_TAG):
+                                    runs = list(p.findall(R_TAG))
+                                    if not runs:
                                         continue
-                                    new_txt = txt
-                                    if "<" in new_txt and ">" in new_txt:
-                                        n_before = len(new_txt)
-                                        new_txt = TAG_RE.sub(" ", new_txt)
-                                        tags_stripped += (
-                                            n_before - len(new_txt)
+                                    full = "".join(
+                                        (t.text or "")
+                                        for r in runs
+                                        for t in r.findall(T_TAG)
+                                    )
+                                    if not full or not any(c in full for c in SUSPECT):
+                                        continue
+                                    cleaned = full
+                                    if "<" in cleaned and ">" in cleaned:
+                                        cleaned = TAG_RE.sub(" ", cleaned)
+                                    if "[" in cleaned:
+                                        cleaned = BRACKET_RE.sub("", cleaned)
+                                    # Drop unterminated openers/dangling closers.
+                                    if "<" in cleaned or ">" in cleaned:
+                                        cleaned = _re2.sub(
+                                            r"<\s*/?\s*[a-zA-Z][^<>]*$",
+                                            "",
+                                            cleaned,
                                         )
-                                    if "[" in new_txt:
-                                        n_before = len(new_txt)
-                                        new_txt = BRACKET_RE.sub("", new_txt)
-                                        brackets_stripped += (
-                                            n_before - len(new_txt)
+                                        cleaned = _re2.sub(
+                                            r"^[^<>]*?>",
+                                            "",
+                                            cleaned,
                                         )
-                                    # Collapse leftover whitespace.
-                                    new_txt = _re.sub(
-                                        r"[ \t]{2,}", " ", new_txt
+                                    cleaned = _re2.sub(
+                                        r"[ \t]{2,}", " ", cleaned
                                     ).strip()
-                                    if new_txt != txt:
-                                        t.text = new_txt
-                                        modified = True
-                                # Pass 2 — drop paragraphs that
-                                # became empty (no <w:t> with non-
-                                # whitespace text and no images / page
-                                # breaks).
+                                    if cleaned == full:
+                                        continue
+                                    chars_removed += len(full) - len(cleaned)
+                                    paras_cleaned += 1
+                                    modified = True
+                                    if not cleaned:
+                                        for r in runs:
+                                            for t in r.findall(T_TAG):
+                                                t.text = ""
+                                        continue
+                                    first_run = runs[0]
+                                    first_t = first_run.find(T_TAG)
+                                    if first_t is None:
+                                        first_t = ET.SubElement(
+                                            first_run, T_TAG
+                                        )
+                                    first_t.text = cleaned
+                                    first_t.set(
+                                        "{%s}space" % XML_NS, "preserve"
+                                    )
+                                    for r in runs[1:]:
+                                        for t in r.findall(T_TAG):
+                                            t.text = ""
+
+                                # Pass 2 \u2014 drop now-empty paragraphs.
                                 parent_map = {
-                                    c: p for p in body.iter() for c in p
+                                    c: p2 for p2 in body.iter() for c in p2
                                 }
                                 for p in list(body.iter(P_TAG)):
-                                    has_text = False
-                                    for t in p.iter(T_TAG):
-                                        if (t.text or "").strip():
-                                            has_text = True
-                                            break
+                                    has_text = any(
+                                        (t.text or "").strip()
+                                        for t in p.iter(T_TAG)
+                                    )
                                     has_drawing = any(
-                                        True
-                                        for _ in p.iter(
-                                            "{%s}drawing" % W_NS
-                                        )
+                                        True for _ in p.iter("{%s}drawing" % W_NS)
                                     )
                                     has_pb = any(
                                         b.get("{%s}type" % W_NS) == "page"
@@ -2177,12 +2201,7 @@ def _strip_html_and_bracket_artifacts(docx_bytes: bytes) -> bytes:
                                         p.find("{%s}pPr/{%s}sectPr"
                                                % (W_NS, W_NS)) is not None
                                     )
-                                    if (
-                                        not has_text
-                                        and not has_drawing
-                                        and not has_pb
-                                        and not has_sectpr
-                                    ):
+                                    if not (has_text or has_drawing or has_pb or has_sectpr):
                                         parent = parent_map.get(p)
                                         if parent is not None:
                                             try:
@@ -2201,17 +2220,17 @@ def _strip_html_and_bracket_artifacts(docx_bytes: bytes) -> bytes:
                         except Exception:
                             logger.exception(
                                 "strip_html_and_bracket_artifacts: "
-                                "failed to parse document.xml — "
+                                "failed to parse document.xml \u2014 "
                                 "leaving untouched"
                             )
                     zout.writestr(item, data)
 
         if modified:
             logger.info(
-                "strip_html_and_bracket_artifacts: stripped %d tag "
-                "chars, %d bracket chars, removed %d empty paras",
-                tags_stripped,
-                brackets_stripped,
+                "strip_html_and_bracket_artifacts: cleaned %d paras "
+                "(removed %d chars), dropped %d empty paras",
+                paras_cleaned,
+                chars_removed,
                 empty_paras_removed,
             )
             return out_buf.getvalue()
