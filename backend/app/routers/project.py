@@ -1750,9 +1750,15 @@ def delete_project(
             TranslationSegment.project_id == project.id
         ).delete(synchronize_session=False)
 
-        # 3) Translation memory entries scoped to this project (the
-        #    table is raw SQL so we use text() to avoid coupling to
-        #    a possibly absent model).
+        # 3) Translation memory entries scoped to this project.
+        #    Wrapped in a SAVEPOINT so a failure here (e.g. the
+        #    table lacks project_id on older schemas) doesn't
+        #    blow away the comments+segments deletes from steps
+        #    1-2 like a bare db.rollback() would. Previously
+        #    that mass-rollback left segments still referencing
+        #    the project, and step 5 raised IntegrityError —
+        #    user reported "Couldn't delete project — IntegrityError".
+        sp = db.begin_nested()
         try:
             db.execute(
                 text(
@@ -1760,13 +1766,14 @@ def delete_project(
                 ),
                 {"pid": pid},
             )
+            sp.commit()
         except Exception:
-            db.rollback()
-            project = get_user_project_or_404(db, project_id, current_user)
+            sp.rollback()
+            # TM table may not have project_id on older schemas
+            # — keep going. Outer transaction is intact.
 
-        # 4) Job queue rows. The schema migration set ON DELETE
-        #    CASCADE here, but we're explicit to be safe on older
-        #    deployments.
+        # 4) Job queue rows. Same savepoint pattern.
+        sp = db.begin_nested()
         try:
             db.execute(
                 text(
@@ -1774,9 +1781,9 @@ def delete_project(
                 ),
                 {"pid": pid},
             )
+            sp.commit()
         except Exception:
-            db.rollback()
-            project = get_user_project_or_404(db, project_id, current_user)
+            sp.rollback()
 
         # 5) Finally the project row itself.
         db.delete(project)
