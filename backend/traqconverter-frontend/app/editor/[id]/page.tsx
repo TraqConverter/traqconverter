@@ -131,6 +131,7 @@ export default function EditorPage() {
   const [error, setError] = useState<string | null>(null)
   const [activeIdx, setActiveIdx] = useState(0)
   const [tab, setTab] = useState<Tab>("comments")
+  const [compareReloadKey, setCompareReloadKey] = useState(0)
 
   // Comments per segment (cache so flipping segments doesn't refetch instantly)
   const [comments, setComments] = useState<Record<string, Comment[]>>({})
@@ -257,13 +258,23 @@ export default function EditorPage() {
         instructions: revisionModal.instructions.trim() || null,
         model: revisionModal.model || null,
       })
-      // Refresh segments + the rebuild so Compare reflects the new
-      // text immediately.
+      // Refresh segments + rebuild + bump compareReloadKey so
+      // the iframe re-fetches the freshly-authored DOCX bytes.
       await fetchProject()
       await loadCompare()
+      setCompareReloadKey((k) => k + 1)
       const revised = res.data?.revised ?? 0
       const total = res.data?.total_segments ?? 0
-      alert(`Revision complete — ${revised} / ${total} segments improved.`)
+      const rebuildStatus = res.data?.rebuild_status
+      const tail =
+        rebuildStatus === "rebuilt"
+          ? "\nDocument rebuilt with your feedback — preview updated."
+          : rebuildStatus && rebuildStatus.startsWith("rebuild_failed")
+            ? "\nNote: segment text updated, but the visual rebuild failed — try ✦ Re-run Claude."
+            : ""
+      alert(
+        `Revision complete — ${revised} / ${total} segments improved.${tail}`,
+      )
     } catch (err: any) {
       setError(
         err?.response?.data?.detail || "Revision request failed.",
@@ -1529,7 +1540,11 @@ export default function EditorPage() {
                 (when EDIT toggle is off). The editor is the primary
                 working surface; the PDF view is for visual review. */}
             {compareEdit ? (
-              <CompareEditPanel projectId={String(id)} compareOpen={compareMode} />
+              <CompareEditPanel
+                projectId={String(id)}
+                compareOpen={compareMode}
+                externalReloadKey={compareReloadKey}
+              />
             ) : (
             <ComparePane
               label="TRANSLATION"
@@ -2686,9 +2701,11 @@ function gdocsViewerUrl(srcUrl: string) {
 function CompareEditPanel({
   projectId,
   compareOpen,
+  externalReloadKey,
 }: {
   projectId: string
   compareOpen: boolean
+  externalReloadKey?: number
 }) {
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string>("")
@@ -2755,7 +2772,7 @@ function CompareEditPanel({
     return () => {
       cancelled = true
     }
-  }, [projectId, compareOpen, reloadKey])
+  }, [projectId, compareOpen, reloadKey, externalReloadKey])
 
   // Render the DOCX into the container once BOTH the buffer is
   // available AND the container DOM node has been mounted. This
