@@ -2060,6 +2060,170 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
         return docx_bytes
 
 
+def _strip_html_and_bracket_artifacts(docx_bytes: bytes) -> bytes:
+    """Strip literal HTML tags and bracketed image placeholders that
+    Claude sometimes emits as text inside the body.
+
+    User report: Austrian Citizenship Certificate output contained
+        '<p style="text-align: center;">AUSTRIAN EMBASSY<br>LONDON</p>'
+    rendered as visible text. Claude misinterpreted the revision
+    instruction "center the masthead" in HTML terms instead of
+    using python-docx alignment. Also present: '[Coat of Arms]',
+    '[Stamp: REPUBLIC OF AUSTRIA EMBASSY LONDON 2]',
+    '[Signature: Renate SEIB]' — the user's TEXT-ONLY rule says
+    these should not appear, but Claude keeps falling back to them.
+
+    Strategy:
+      * Walk every <w:t> in the body.
+      * For HTML tags: strip the tags themselves, keep the inner
+        text — turns '<p style="..">X<br>Y</p>' into 'X Y'.
+      * For bracketed image markers ([Coat of Arms], [Stamp: ...],
+        [Signature: ...], [Photo], [Seal], [Logo], [QR Code],
+        [Barcode]): drop the entire bracketed expression.
+      * If the paragraph ends up empty (all text stripped), drop
+        the paragraph too — Word renders empty paragraphs as a
+        wasted blank line.
+
+    Best-effort; failures return the original bytes unchanged.
+    """
+    try:
+        import io as _io
+        import re as _re
+        import zipfile as _zip
+        from xml.etree import ElementTree as ET
+
+        W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        ET.register_namespace("w", W_NS)
+        P_TAG = "{%s}p" % W_NS
+        T_TAG = "{%s}t" % W_NS
+
+        # Tag-stripper: matches any opening/closing HTML-ish tag plus
+        # any tag attributes (style="..." class="...").
+        TAG_RE = _re.compile(r"<\s*/?\s*[a-zA-Z][a-zA-Z0-9]*\b[^>]*>")
+        # Bracketed image-marker patterns the prompt forbids.
+        BRACKET_RE = _re.compile(
+            r"\[\s*(?:Coat of Arms|Stamp(?:\s*:\s*[^\]]+)?|Signature"
+            r"(?:\s*:\s*[^\]]+)?|Photo|Seal|Logo|QR\s*Code|Barcode|"
+            r"Crest)\s*\]",
+            _re.I,
+        )
+
+        in_buf = _io.BytesIO(docx_bytes)
+        out_buf = _io.BytesIO()
+        modified = False
+        tags_stripped = 0
+        brackets_stripped = 0
+        empty_paras_removed = 0
+
+        with _zip.ZipFile(in_buf, "r") as zin:
+            with _zip.ZipFile(out_buf, "w", _zip.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    if item.filename == "word/document.xml":
+                        try:
+                            root = ET.fromstring(data)
+                            body = root.find("{%s}body" % W_NS)
+                            if body is not None:
+                                # Pass 1 — strip tags / brackets
+                                # inside every <w:t>.
+                                for t in root.iter(T_TAG):
+                                    txt = t.text or ""
+                                    if not txt:
+                                        continue
+                                    new_txt = txt
+                                    if "<" in new_txt and ">" in new_txt:
+                                        n_before = len(new_txt)
+                                        new_txt = TAG_RE.sub(" ", new_txt)
+                                        tags_stripped += (
+                                            n_before - len(new_txt)
+                                        )
+                                    if "[" in new_txt:
+                                        n_before = len(new_txt)
+                                        new_txt = BRACKET_RE.sub("", new_txt)
+                                        brackets_stripped += (
+                                            n_before - len(new_txt)
+                                        )
+                                    # Collapse leftover whitespace.
+                                    new_txt = _re.sub(
+                                        r"[ \t]{2,}", " ", new_txt
+                                    ).strip()
+                                    if new_txt != txt:
+                                        t.text = new_txt
+                                        modified = True
+                                # Pass 2 — drop paragraphs that
+                                # became empty (no <w:t> with non-
+                                # whitespace text and no images / page
+                                # breaks).
+                                parent_map = {
+                                    c: p for p in body.iter() for c in p
+                                }
+                                for p in list(body.iter(P_TAG)):
+                                    has_text = False
+                                    for t in p.iter(T_TAG):
+                                        if (t.text or "").strip():
+                                            has_text = True
+                                            break
+                                    has_drawing = any(
+                                        True
+                                        for _ in p.iter(
+                                            "{%s}drawing" % W_NS
+                                        )
+                                    )
+                                    has_pb = any(
+                                        b.get("{%s}type" % W_NS) == "page"
+                                        for b in p.iter("{%s}br" % W_NS)
+                                    )
+                                    has_sectpr = (
+                                        p.find("{%s}pPr/{%s}sectPr"
+                                               % (W_NS, W_NS)) is not None
+                                    )
+                                    if (
+                                        not has_text
+                                        and not has_drawing
+                                        and not has_pb
+                                        and not has_sectpr
+                                    ):
+                                        parent = parent_map.get(p)
+                                        if parent is not None:
+                                            try:
+                                                parent.remove(p)
+                                                empty_paras_removed += 1
+                                            except Exception:
+                                                pass
+
+                                if modified:
+                                    data = ET.tostring(
+                                        root,
+                                        xml_declaration=True,
+                                        encoding="UTF-8",
+                                        standalone=True,
+                                    )
+                        except Exception:
+                            logger.exception(
+                                "strip_html_and_bracket_artifacts: "
+                                "failed to parse document.xml — "
+                                "leaving untouched"
+                            )
+                    zout.writestr(item, data)
+
+        if modified:
+            logger.info(
+                "strip_html_and_bracket_artifacts: stripped %d tag "
+                "chars, %d bracket chars, removed %d empty paras",
+                tags_stripped,
+                brackets_stripped,
+                empty_paras_removed,
+            )
+            return out_buf.getvalue()
+        return docx_bytes
+    except Exception:
+        logger.exception(
+            "strip_html_and_bracket_artifacts crashed; "
+            "returning bytes unchanged"
+        )
+        return docx_bytes
+
+
 def _strip_broken_image_drawings(docx_bytes: bytes) -> bytes:
     """Remove any <w:drawing> whose embedded relationship ID
     doesn't actually exist in word/_rels/document.xml.rels.
@@ -2265,6 +2429,11 @@ def author_rebuild_docx(
         # left inside the body — the wrapper appends the real cert
         # AFTER the body, so an inline cert is always a duplicate.
         docx_bytes = _strip_inline_cert_blocks(docx_bytes)
+        # Strip literal HTML tags and bracketed image placeholders
+        # (e.g. '<p style="text-align: center;">FOO</p>' or
+        # '[Coat of Arms]') Claude sometimes leaves in body text
+        # despite the prompt forbidding both.
+        docx_bytes = _strip_html_and_bracket_artifacts(docx_bytes)
         # If Claude left any bracketed image placeholders despite
         # the prompt instruction, try to substitute the actual
         # extracted image. Uses out_dir/images/.

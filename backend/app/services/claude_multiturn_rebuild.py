@@ -80,6 +80,23 @@ REQUIREMENTS
     page is appended by our wrapper AFTER your translation. Your
     job is the translation body only. Stop when the source's
     last paragraph is translated.
+  * NEVER WRITE HTML TAGS. You are authoring a python-docx
+    script, NOT generating HTML. Do NOT write the literal strings
+    "<p>", "<br>", "<div>", "<span>", style="...", "<b>" or any
+    other HTML markup inside doc.add_paragraph(), p.add_run(),
+    or any other text call. If the user asks for "centered" text,
+    you set paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER (and
+    `from docx.enum.text import WD_ALIGN_PARAGRAPH` at the top).
+    For bold, use run.bold = True. Word renders HTML as visible
+    text — the user sees the literal "<p style=...>" string in
+    their document. This is a hard rule with no exceptions.
+  * NEVER WRITE BRACKETED IMAGE PLACEHOLDERS as visible body
+    text. Do NOT write "[Coat of Arms]", "[Stamp: ...]",
+    "[Signature: ...]", "[Photo]", "[Seal]", "[Logo]", "[QR
+    Code]", "[Crest]" or anything similar inside add_paragraph()
+    / add_run(). Per the TEXT-ONLY rule above, omit these
+    elements entirely — the source pages embedded by the wrapper
+    already show the originals at full quality.
   * REQUIRED FIRST OUTPUT: the very first paragraph of your
     translation body MUST be the institution's name in
     {target_lang}, centered, BOLD, 14pt (e.g.
@@ -415,6 +432,7 @@ def author_rebuild_docx_multiturn(
             _strip_rotation_from_docx,
             _strip_layout_table_borders,
             _strip_inline_cert_blocks,
+            _strip_html_and_bracket_artifacts,
             _replace_image_placeholders,
             _strip_broken_image_drawings,
         )
@@ -581,5 +599,76 @@ def author_rebuild_docx_multiturn(
                     "\n".join(text_blocks)[:200],
                 )
             break
+        # Run each tool call, append a tool_result for each.
+        tool_results = []
+        for tu in tool_use_blocks:
+            tool_input = getattr(tu, "input", None) or {}
+            tool_id = getattr(tu, "id", None)
+            code = tool_input.get("code") or ""
 
-        # Run each
+            success, traceback_text, docx_bytes = _run_in_sandbox(
+                code, output_path, timeout_seconds=timeout_per_run_seconds
+            )
+
+            if success and docx_bytes:
+                inspection = _inspect_docx(docx_bytes)
+                # Save the latest good DOCX bytes so we can return
+                # them even if a later turn fails.
+                last_good_docx = docx_bytes
+                last_good_inspection = inspection
+                report_text = (
+                    "Code ran successfully.\n\n"
+                    + json.dumps(inspection, ensure_ascii=False, indent=2)
+                )
+            else:
+                report_text = (
+                    "Code FAILED. Traceback:\n\n" + (traceback_text or "(no message)")
+                )
+
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tool_id,
+                "content": report_text,
+            })
+
+        messages.append({"role": "user", "content": tool_results})
+
+    # Clean up extracted images dir (we keep last_good_docx in memory).
+    try:
+        shutil.rmtree(out_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+    if not last_good_docx:
+        raise RuntimeError(
+            "Multi-turn rebuild ended with no successful DOCX produced"
+        )
+
+    logger.info(
+        "Multi-turn rebuild complete: %d bytes, %d paragraphs, "
+        "%d tables, %d images, page_estimate=%d",
+        len(last_good_docx),
+        last_good_inspection.get("paragraph_count", -1),
+        last_good_inspection.get("table_count", -1),
+        last_good_inspection.get("image_count", -1),
+        last_good_inspection.get("page_count_estimate", -1),
+    )
+
+    # Apply the same post-processor chain as the single-shot path so
+    # any residual cert blocks, table borders, rotation, broken
+    # images, etc. get cleaned up deterministically.
+    docx_bytes = last_good_docx
+    try:
+        docx_bytes = _strip_rotation_from_docx(docx_bytes)
+        docx_bytes = _strip_layout_table_borders(docx_bytes)
+        docx_bytes = _strip_inline_cert_blocks(docx_bytes)
+        # Strip literal HTML tags and bracketed image placeholders
+        # that Claude sometimes emits as visible body text (e.g.
+        # "<p style=\"text-align: center;\">FOO</p>" or
+        # "[Coat of Arms]"). Both should never appear in the output.
+        docx_bytes = _strip_html_and_bracket_artifacts(docx_bytes)
+        docx_bytes = _strip_broken_image_drawings(docx_bytes)
+    except Exception:
+        logger.exception("Post-processor chain raised; returning raw bytes")
+
+    return docx_bytes
