@@ -321,6 +321,27 @@ def list_projects(
         for u in db.query(User).filter(User.id.in_(related_ids)).all():
             users_by_id[str(u.id)] = u
 
+    # Source-language word count per project. Cheap Python tally
+    # over the segment rows we already need to load for progress
+    # anyway — single SELECT keyed by project_id, then sum in
+    # Python.
+    word_counts: dict[str, int] = {}
+    if projects:
+        project_ids = [p.id for p in projects]
+        rows = (
+            db.query(
+                TranslationSegment.project_id,
+                TranslationSegment.source_text,
+            )
+            .filter(TranslationSegment.project_id.in_(project_ids))
+            .all()
+        )
+        for pid, src in rows:
+            key = str(pid)
+            word_counts[key] = word_counts.get(key, 0) + len(
+                (src or "").split()
+            )
+
     result = []
     for p in projects:
         progress = 0
@@ -344,6 +365,7 @@ def list_projects(
             "source_lang": p.source_language,
             "target_lang": p.target_language,
             "page_count": p.page_count,
+            "words": word_counts.get(str(p.id), 0),
             "credits_used": p.credits_used,
             "created_at": p.created_at,
             "assignee_id": str(p.assignee_id) if p.assignee_id else None,

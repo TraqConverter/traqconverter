@@ -335,12 +335,15 @@ export default function NewProjectPage() {
           res.data?.items ||
           (Array.isArray(res.data) ? res.data : []) ||
           []
+        // Show every uploaded cert in the dropdown. The previous
+        // .docx-only filter hid certs uploaded as .pdf/.doc/etc.
+        // — the export pipeline accepts any cert file and just
+        // appends/converts as needed.
         setCertTemplates(
-          items
-            .filter((c: any) =>
-              (c.file_name || "").toLowerCase().endsWith(".docx"),
-            )
-            .map((c: any) => ({ id: c.id, file_name: c.file_name })),
+          items.map((c: any) => ({
+            id: c.id,
+            file_name: c.file_name,
+          })),
         )
       })
       .catch(() => setCertTemplates([]))
@@ -1071,11 +1074,4 @@ function OptionRow({
         <div className="text-sm font-semibold" style={{ color: "#1f2a2e" }}>
           {title}
         </div>
-        <div className="text-xs truncate" style={{ color: "#8a8270" }}>
-          {subtitle}
-        </div>
-      </div>
-      <Toggle checked={checked} onChange={onChange} />
-    </div>
-  )
-}
+        <div className="text-xs truncate" style={{ c
