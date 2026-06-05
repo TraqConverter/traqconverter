@@ -1074,4 +1074,11 @@ function OptionRow({
         <div className="text-sm font-semibold" style={{ color: "#1f2a2e" }}>
           {title}
         </div>
-        <div className="text-xs truncate" style={{ c
+        <div className="text-xs truncate" style={{ color: "#8a8270" }}>
+          {subtitle}
+        </div>
+      </div>
+      <Toggle checked={checked} onChange={onChange} />
+    </div>
+  )
+}
