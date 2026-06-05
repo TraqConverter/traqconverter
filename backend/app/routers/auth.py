@@ -118,6 +118,26 @@ def change_password(
 
 
 # ============================================================
+# LOGOUT — server-side revocation (Audit P1 #8)
+# ------------------------------------------------------------
+# Frontend just clears localStorage, which leaves the JWT valid
+# for the full expiry window. Bump token_version so every
+# previously-issued token (this one + any clones on other
+# devices) is rejected by the JWT validator on the next request.
+# ============================================================
+@router.post("/logout")
+def logout(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    current_user.token_version = (
+        int(getattr(current_user, "token_version", 0) or 0) + 1
+    )
+    db.commit()
+    return {"status": "logged_out"}
+
+
+# ============================================================
 # DELETE ACCOUNT
 # ============================================================
 class DeleteAccount(BaseModel):
