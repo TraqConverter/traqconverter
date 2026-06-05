@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: traqconverter-api
+    runtime: python
+    plan: starter
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+      apt-get update && apt-get install -y tesseract-ocr || true
+    preDeployCommand: python -m alembic upgrade head
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
+      - fromGroup: traqconverter-secrets
+
+  - type: worker
+    name: traqconverter-worker
+    runtime: python
+    plan: starter
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+      apt-get update && apt-get install -y tesseract-ocr || true
+    startCommand: python -m app.workers.sqs_worker
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
+      - fromGroup: traqconverter-secrets
+
+envVarGroups:
+  - name: traqconverter-secrets
+    envVars:
+      - key: app_name
+        value: TraqConverter
+      - key: environment
+        value: production
+      # The rest (DATABASE_URL, OPENAI_API_KEY, stripe_*, SUPABASE_S3_*,
+      # ANTHROPIC_API_KEY, …) are set in the Render dashboard so they
+      # never appear in source control.
