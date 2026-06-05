@@ -380,8 +380,16 @@ def author_rebuild_docx_multiturn(
     model: Optional[str] = None,
     max_turns: int = 6,
     timeout_per_run_seconds: int = 180,
+    extra_instructions: Optional[str] = None,
 ) -> bytes:
     """End-to-end multi-turn Claude-authored rebuild.
+
+    `extra_instructions`: when set, appended to the initial prompt as
+    USER FEEDBACK so Claude addresses the user's concerns on this
+    rebuild. Used by the Request Revision flow — what the user types
+    in the modal lands here verbatim so the new DOCX reflects their
+    feedback (e.g. "make sure no lines are skipped", "the courses
+    table needs visible borders").
 
     Returns the bytes of the best DOCX produced across the loop.
     Raises RuntimeError if no successful run was ever produced.
@@ -477,6 +485,23 @@ def author_rebuild_docx_multiturn(
         image_list=image_list_text,
         table_list=_format_table_list(tables),
     )
+    # Append user-provided revision feedback so this rebuild
+    # actually addresses what the user typed in the Request
+    # Revision modal. Without this, the multi-turn loop runs the
+    # same prompt as before and produces effectively the same
+    # output — which is why the client said "nothing changes".
+    if extra_instructions and extra_instructions.strip():
+        initial_prompt += (
+            "\n\n"
+            "USER FEEDBACK FROM PREVIOUS RUN (address these specifically)\n"
+            "============================================================\n"
+            "The user reviewed the previous version of this document and\n"
+            "asked for the following changes. Address every point. If the\n"
+            "feedback contradicts a general rule above, the user's wishes\n"
+            "win for this rebuild:\n\n"
+            + extra_instructions.strip()
+            + "\n"
+        )
 
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("ascii")
 

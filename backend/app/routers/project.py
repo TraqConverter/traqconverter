@@ -1558,10 +1558,81 @@ def revise_project(
             revised_count += 1
 
     db.commit()
+
+    # CRITICAL: the export reads from project.authored_docx_s3_key
+    # (Claude's authored DOCX), NOT from segments. If we only
+    # update segment rows, the user clicks Export DOCX and gets
+    # the SAME file as before — which is why the client reported
+    # "nothing changes when I Request Revision".
+    #
+    # Re-run the multi-turn rebuild with the user's instructions
+    # appended to the prompt so the new authored DOCX reflects
+    # what they asked for. Replace the cached
+    # authored_docx_s3_key. Clear edited_html so the next preview
+    # / export uses this fresh DOCX. Best-effort: if the rebuild
+    # fails (timeout, API error), keep the segment updates and
+    # surface the error to the client.
+    rebuild_status = "skipped_no_instructions"
+    if instructions and (project.source_kind or "").upper() == "PDF":
+        try:
+            import tempfile as _tf
+            from pathlib import Path as _P
+            from app.services.s3_service import (
+                download_file_from_s3,
+                upload_file_to_s3,
+            )
+            from app.services.claude_multiturn_rebuild import (
+                author_rebuild_docx_multiturn,
+            )
+
+            tmp_dir = _P(_tf.mkdtemp())
+            try:
+                src_path = tmp_dir / (project.file_name or "source.pdf")
+                download_file_from_s3(project.file_path, src_path)
+                with open(src_path, "rb") as f:
+                    pdf_bytes = f.read()
+
+                logger.info(
+                    "Revise: re-running multi-turn rebuild with "
+                    "user instructions (project=%s, %d chars of "
+                    "instructions)",
+                    str(project.id), len(instructions),
+                )
+                docx_bytes = author_rebuild_docx_multiturn(
+                    pdf_bytes,
+                    project.source_language or "",
+                    project.target_language or "",
+                    model=model_key or "claude-opus-4-6",
+                    extra_instructions=instructions,
+                )
+
+                out_path = tmp_dir / f"authored_{project.id}.docx"
+                with open(out_path, "wb") as f:
+                    f.write(docx_bytes)
+                key = upload_file_to_s3(out_path)
+                project.authored_docx_s3_key = key
+                project.edited_html = None
+                db.commit()
+                rebuild_status = "rebuilt"
+                logger.info(
+                    "Revise: rebuild OK (project=%s key=%s)",
+                    str(project.id), key,
+                )
+            finally:
+                import shutil as _sh
+                _sh.rmtree(tmp_dir, ignore_errors=True)
+        except Exception as e:
+            logger.exception(
+                "Revise: multi-turn rebuild failed — keeping segment "
+                "updates only: %s", e,
+            )
+            rebuild_status = f"rebuild_failed: {type(e).__name__}"
+
     return {
         "revised": revised_count,
         "total_segments": len(segments),
         "model_used": model_key,
+        "rebuild_status": rebuild_status,
     }
 
 
