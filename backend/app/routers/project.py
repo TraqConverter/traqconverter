@@ -1573,7 +1573,12 @@ def revise_project(
     # fails (timeout, API error), keep the segment updates and
     # surface the error to the client.
     rebuild_status = "skipped_no_instructions"
-    if instructions and (project.source_kind or "").upper() == "PDF":
+    # source_kind is None for projects created via /upload (it only
+    # gets populated later by the export pipeline), so we can't rely
+    # on it as a gate. Use the source filename extension instead —
+    # the rebuild needs a PDF to feed to Claude.
+    is_pdf = (project.file_name or "").lower().endswith(".pdf")
+    if instructions and is_pdf:
         try:
             import tempfile as _tf
             from pathlib import Path as _P
