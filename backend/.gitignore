@@ -1,0 +1,38 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- Environment ---
+.env
+.env.*
+!.env.example
+
+# --- IDE ---
+.vscode/
+.idea/
+
+# --- Tests / coverage ---
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Worker scratch dirs (audit HIGH-11) ---
+# These are created at translation time and were not previously ignored,
+# so 30+ stray PDFs kept getting committed.
+worker_temp/
+uploads/
+*.tmp.pdf
+*.tmp.docx
+
+# --- Misc ---
+node_modules/
+.DS_Store

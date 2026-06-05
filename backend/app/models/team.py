@@ -1,0 +1,26 @@
+import uuid
+from sqlalchemy import Column, String, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+
+from app.database import Base
+from app.models.user import User
+
+class Team(Base):
+    __tablename__ = "teams"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+
+    # Optional company address shown on cert templates / exports.
+    address = Column(String, nullable=True)
+
+    # Company stamp — image overlaid at the bottom of every TRANSLATED
+    # page in the rebuild (never on the embedded original pages).
+    # stamp_alignment is "left" | "center" | "right" so different
+    # teams can put it wherever fits their letterhead.
+    stamp_s3_key = Column(String, nullable=True)
+    stamp_alignment = Column(String, nullable=False, default="right")
+
+    owner = relationship("User")

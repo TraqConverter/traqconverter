@@ -1,0 +1,79 @@
+# ============================================================
+# TraqConverter — local dev / staging stack
+#
+#   docker compose up -d            # start everything
+#   docker compose logs -f api      # tail the API
+#   docker compose run --rm api alembic upgrade head
+# ============================================================
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: traqconverter
+      POSTGRES_PASSWORD: traqconverter
+      POSTGRES_DB: traqconverter
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U traqconverter"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - ./backend/.env
+    environment:
+      # Override the DB URL so we point at the compose service rather
+      # than localhost. Everything else comes from .env.
+      database_url: postgresql+psycopg2://traqconverter:traqconverter@db:5432/traqconverter
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/app/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - ./backend/.env
+    environment:
+      database_url: postgresql+psycopg2://traqconverter:traqconverter@db:5432/traqconverter
+    command: ["python", "-m", "worker.worker"]
+    volumes:
+      - uploads:/app/uploads
+
+  web:
+    build:
+      context: ./traqconverter-frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+
+volumes:
+  db_data:
+  uploads:
