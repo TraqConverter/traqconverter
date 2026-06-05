@@ -8,12 +8,31 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
 from app.models.team import Team
+from app.models.team_member import TeamMember
 from app.models.credit import CreditWallet
 from app.models.stripe_event import StripeEvent
 from app.config import settings
 from app.core.plan_features import SUBSCRIPTION_GRANTS
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_user_team(db: Session, user: User):
+    """Audit P1 #6: owner-or-member so invited members can buy
+    credits and upgrade plans.
+    """
+    team = db.query(Team).filter(Team.owner_id == user.id).first()
+    if team:
+        return team
+    membership = (
+        db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
+    )
+    if membership:
+        return (
+            db.query(Team).filter(Team.id == membership.team_id).first()
+        )
+    return None
+
 
 router = APIRouter(prefix="/subscription", tags=["subscription"])
 
@@ -54,10 +73,7 @@ def create_checkout_session(
         raise HTTPException(status_code=400, detail="Invalid plan")
 
     # Resolve team
-    team = db.query(Team).filter(
-        Team.owner_id == current_user.id
-    ).first()
-
+    team = _resolve_user_team(db, current_user)
     if not team:
         raise HTTPException(status_code=400, detail="Team not found")
 
@@ -308,10 +324,7 @@ def purchase_credits(
             ),
         )
 
-    team = db.query(Team).filter(
-        Team.owner_id == current_user.id
-    ).first()
-
+    team = _resolve_user_team(db, current_user)
     if not team:
         raise HTTPException(status_code=400, detail="Team not found")
 

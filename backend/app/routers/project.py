@@ -131,13 +131,27 @@ async def upload_project(
                 }
 
         # ----------------------------------------------------
-        # Get Team (CRITICAL FIX)
+        # Get Team — owner first, then membership fallback so
+        # invited team members can upload too (Audit P1 #6).
         # ----------------------------------------------------
         team = (
             db.query(Team)
             .filter(Team.owner_id == current_user.id)
             .first()
         )
+        if not team:
+            from app.models.team_member import TeamMember
+            membership = (
+                db.query(TeamMember)
+                .filter(TeamMember.user_id == current_user.id)
+                .first()
+            )
+            if membership:
+                team = (
+                    db.query(Team)
+                    .filter(Team.id == membership.team_id)
+                    .first()
+                )
 
         if not team:
             raise HTTPException(status_code=400, detail="Team not found")
@@ -474,18 +488,9 @@ def get_project_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-
-    project = (
-        db.query(TranslationProject)
-        .filter(
-            TranslationProject.id == project_id,
-            TranslationProject.user_id == current_user.id,
-        )
-        .first()
-    )
-
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Audit P1 #4: team-aware so assigned teammates can read
+    # status (was owner-only).
+    project = get_user_project_or_404(db, project_id, current_user)
 
     progress = 0
     if project.total_segments and project.total_segments > 0:
@@ -581,18 +586,8 @@ def get_project_segments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # 🔒 Ensure project belongs to user
-    project = (
-        db.query(TranslationProject)
-        .filter(
-            TranslationProject.id == project_id,
-            TranslationProject.user_id == current_user.id,
-        )
-        .first()
-    )
-
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    # Audit P1 #4: team-aware so teammates can read segments.
+    project = get_user_project_or_404(db, project_id, current_user)
 
     # 📄 Get segments
     segments = (
@@ -1734,4 +1729,64 @@ def delete_project(
     from app.models.segment_comment import SegmentComment
 
     # Audit HIGH-3: scope by team, not creator.
-    proje
+    project = get_user_project_or_404(db, project_id, current_user)
+    pid = str(project.id)
+
+    try:
+        # 1) Comments — keyed by segment id.
+        segment_ids = [
+            row[0]
+            for row in db.query(TranslationSegment.id)
+            .filter(TranslationSegment.project_id == project.id)
+            .all()
+        ]
+        if segment_ids:
+            db.query(SegmentComment).filter(
+                SegmentComment.segment_id.in_(segment_ids)
+            ).delete(synchronize_session=False)
+
+        # 2) Segments themselves.
+        db.query(TranslationSegment).filter(
+            TranslationSegment.project_id == project.id
+        ).delete(synchronize_session=False)
+
+        # 3) Translation memory entries scoped to this project (the
+        #    table is raw SQL so we use text() to avoid coupling to
+        #    a possibly absent model).
+        try:
+            db.execute(
+                text(
+                    "DELETE FROM translation_memory WHERE project_id = :pid"
+                ),
+                {"pid": pid},
+            )
+        except Exception:
+            db.rollback()
+            project = get_user_project_or_404(db, project_id, current_user)
+
+        # 4) Job queue rows. The schema migration set ON DELETE
+        #    CASCADE here, but we're explicit to be safe on older
+        #    deployments.
+        try:
+            db.execute(
+                text(
+                    "DELETE FROM translation_jobs WHERE project_id = :pid"
+                ),
+                {"pid": pid},
+            )
+        except Exception:
+            db.rollback()
+            project = get_user_project_or_404(db, project_id, current_user)
+
+        # 5) Finally the project row itself.
+        db.delete(project)
+        db.commit()
+    except Exception as e:
+        logger.exception("Project delete failed: %s", e)
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Couldn't delete project — {type(e).__name__}",
+        )
+
+    return {"message": "Project deleted successfully"}
