@@ -161,22 +161,41 @@ def _classify_document(pdf_bytes: bytes) -> str:
 
 _FORM_DUMP_PROMPT = (
     "You are looking at one page of a structured form (tax return, "
-    "application, registration form, or similar). List every visible "
-    "label, section code (RA1, RN3, etc.), column number (1..16), "
-    "filled-in value (tax code, amount, percentage, date, ID), and "
-    "section title.\n\n"
-    "Output ONE JSON array. Each entry is an object with keys:\n"
-    "  - 'kind'  : one of section_title, field_label, section_code, "
+    "application, registration form, or similar).\n\n"
+    "PART A — Field listing.\n"
+    "List every visible label, section code (RA1, RN3, etc.), column "
+    "number (1..16), filled-in value (tax code, amount, percentage, "
+    "date, ID), and section title.\n\n"
+    "PART B — Style metadata.\n"
+    "Identify the visual style of each form section: header bar fill "
+    "color, body background fill color, text color, and how many "
+    "columns the section's data grid uses with their approximate width "
+    "proportion (sums to 100).\n\n"
+    "Output ONE JSON OBJECT with two top-level keys:\n"
+    "  'fields' : ARRAY of field entries, each an object with keys:\n"
+    "    - 'kind'  : one of section_title, field_label, section_code, "
     "column_number, value, checkbox, instruction_note\n"
-    "  - 'text'  : the verbatim text exactly as it appears on the form, "
-    "in the source language\n"
-    "  - 'group' : the form section this belongs to (e.g. 'QUADRO RA', "
-    "'QUADRO RN', 'Header'). Use 'Header' for items above the first "
-    "section.\n\n"
-    "Be exhaustive — DO NOT skip cells just because they look empty. "
-    "Empty value cells should appear as {'kind':'value','text':',00',"
-    "'group':...}. Reply with ONLY the JSON array, no prose, no "
-    "code fence."
+    "    - 'text'  : verbatim source-language text\n"
+    "    - 'group' : the section this belongs to (e.g. 'QUADRO RA', "
+    "'QUADRO RN', 'Header')\n"
+    "  'sections' : ARRAY of section style entries, one per logical "
+    "section, each an object with keys:\n"
+    "    - 'name'         : section identifier matching the 'group' "
+    "values used above\n"
+    "    - 'header_fill'  : hex color of the section header bar "
+    "(e.g. '1F4E79') or null if no shaded header\n"
+    "    - 'body_fill'    : hex color of the cell background or "
+    "null for plain white\n"
+    "    - 'text_color'   : hex color of the label text (e.g. "
+    "'FFFFFF' for white-on-blue) or null for default black\n"
+    "    - 'columns'      : integer column count for this section's "
+    "main grid (or null if no grid)\n"
+    "    - 'col_widths'   : array of integers summing to 100, each "
+    "the percent width of one column from left to right (or null "
+    "if 'columns' is null)\n\n"
+    "Be exhaustive. Empty value cells still get a field entry with "
+    "text ',00' or '\u2014'. Reply with ONLY the JSON object, no "
+    "prose, no code fence."
 )
 
 
@@ -249,27 +268,39 @@ def _extract_form_fields_via_vision(pdf_bytes: bytes) -> list:
                     if raw.lower().startswith("json"):
                         raw = raw[4:]
                     raw = raw.strip("` \n")
+                parsed = None
                 try:
-                    fields = _json.loads(raw)
+                    parsed = _json.loads(raw)
                 except Exception:
-                    # Try to salvage the array portion.
-                    start = raw.find("[")
-                    end = raw.rfind("]")
-                    if start != -1 and end != -1 and end > start:
-                        try:
-                            fields = _json.loads(raw[start:end + 1])
-                        except Exception:
-                            fields = []
-                    else:
-                        fields = []
-                if isinstance(fields, list) and fields:
+                    # Try object {} first, then array [] as legacy
+                    # fallback.
+                    for op, cl in (("{", "}"), ("[", "]")):
+                        start = raw.find(op)
+                        end = raw.rfind(cl)
+                        if start != -1 and end != -1 and end > start:
+                            try:
+                                parsed = _json.loads(raw[start:end + 1])
+                                break
+                            except Exception:
+                                continue
+                fields = []
+                sections = []
+                if isinstance(parsed, dict):
+                    fields = parsed.get("fields") or []
+                    sections = parsed.get("sections") or []
+                elif isinstance(parsed, list):
+                    # Legacy array-only shape.
+                    fields = parsed
+                if fields or sections:
                     pages_out.append({
                         "page": page_idx + 1,
                         "fields": fields,
+                        "sections": sections,
                     })
                     logger.info(
-                        "Form-field dump page %d: %d entries",
-                        page_idx + 1, len(fields),
+                        "Form-field dump page %d: %d fields, %d "
+                        "styled sections",
+                        page_idx + 1, len(fields), len(sections),
                     )
             except Exception:
                 logger.exception(
@@ -285,7 +316,9 @@ def _extract_form_fields_via_vision(pdf_bytes: bytes) -> list:
 
 
 def _format_form_fields_for_prompt(pages: list) -> str:
-    """Render the form-field dump for embedding in the prompt."""
+    """Render the form-field dump (incl. per-section style metadata)
+    for embedding in the prompt.
+    """
     if not pages:
         return "(no exhaustive form-field dump available)"
     import json as _json
@@ -293,11 +326,25 @@ def _format_form_fields_for_prompt(pages: list) -> str:
     for entry in pages:
         out_lines.append(f"--- PAGE {entry['page']} ---")
         try:
+            out_lines.append("FIELDS:")
             out_lines.append(
-                _json.dumps(entry["fields"], ensure_ascii=False, indent=1)
+                _json.dumps(
+                    entry.get("fields", []),
+                    ensure_ascii=False,
+                    indent=1,
+                )
             )
         except Exception:
             out_lines.append("(failed to serialize page fields)")
+        sections = entry.get("sections") or []
+        if sections:
+            try:
+                out_lines.append("SECTION STYLES:")
+                out_lines.append(
+                    _json.dumps(sections, ensure_ascii=False, indent=1)
+                )
+            except Exception:
+                pass
         out_lines.append("")
     return "\n".join(out_lines)
 
@@ -348,7 +395,62 @@ REQUIREMENTS — FORM-SPECIFIC
     `doc.add_table(rows=N, cols=M)` per section (Quadro RA, Quadro
     RN, etc.). Do NOT render rows as flat paragraphs — that loses
     the visual structure.
-  * Borderless tables — set `tblBorders` to nil on every table.
+  * Match the source's COLORS. For each section in SECTION STYLES,
+    apply the recorded header_fill / body_fill / text_color so the
+    output looks like the original form (not black-on-white). Use
+    this helper at the top of the script:
+
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+        from docx.shared import RGBColor
+
+        def _shade(cell, hex_color):
+            tcPr = cell._tc.get_or_add_tcPr()
+            shd = OxmlElement("w:shd")
+            shd.set(qn("w:val"), "clear")
+            shd.set(qn("w:color"), "auto")
+            shd.set(qn("w:fill"), hex_color)
+            tcPr.append(shd)
+
+        def _text_color(run, hex_color):
+            r, g, b = (
+                int(hex_color[0:2], 16),
+                int(hex_color[2:4], 16),
+                int(hex_color[4:6], 16),
+            )
+            run.font.color.rgb = RGBColor(r, g, b)
+
+    Apply header_fill to the section's HEADER row cells (the row
+    containing the section title or column labels). Apply
+    body_fill to data-row cells when it's not null. Apply
+    text_color to runs inside header cells when the source uses
+    white-on-blue or similar.
+  * Match the source's COLUMN WIDTHS. For each section that has
+    SECTION STYLES.col_widths, set table.autofit = False and
+    write column widths in proportion. The form fits on A4
+    portrait (usable width 18cm), so multiply each percentage by
+    0.18 and round to nearest mm:
+
+        from docx.shared import Cm
+        table.autofit = False
+        usable_cm = 18.0
+        for i, w in enumerate(col_widths):
+            table.columns[i].width = Cm(round(usable_cm * w / 100, 2))
+
+  * Borderless tables by default, BUT if the source has visible
+    grid lines (typical for tax-form data grids), set every cell
+    border to a 0.5pt solid line in #808080 grey using:
+
+        tblPr = table._tbl.tblPr
+        tblBorders = OxmlElement("w:tblBorders")
+        for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+            b = OxmlElement(f"w:{edge}")
+            b.set(qn("w:val"), "single")
+            b.set(qn("w:sz"), "4")
+            b.set(qn("w:color"), "808080")
+            tblBorders.append(b)
+        tblPr.append(tblBorders)
+
   * Section headers ("FORM RA — Income from land", "FORM RN —
     Determination of IRPEF") get their own bold paragraph above
     each table.
