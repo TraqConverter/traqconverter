@@ -38,6 +38,290 @@ logger = logging.getLogger(__name__)
 # single-shot prompt because we expect Claude to iterate based on
 # what its code actually produces — not to nail it in one go.
 # ----------------------------------------------------------------
+# ---- Document-type classifier + adaptive prompt templates ----
+#
+# A previous version had a single _INITIAL_PROMPT optimised for
+# certificates and letters. Tax forms (Italian Modello Redditi etc.)
+# silently failed because Claude tried to satisfy the masthead /
+# "institution name first" rule and ran out of tokens before getting
+# to the form body. We now classify the document and feed a prompt
+# that matches the layout family.
+#
+# Classification: a single Vision call on page 1 returns one of:
+#   CERTIFICATE, FORM, LETTER, RECEIPT, CONTRACT, OTHER
+# OTHER + LETTER fall back to the certificate prompt (closest match).
+
+_CLASSIFY_PROMPT = (
+    "Classify this document into exactly ONE of these categories. "
+    "Respond with ONLY the category name in uppercase, no punctuation, "
+    "no explanation.\n\n"
+    "Categories:\n"
+    "  CERTIFICATE  — diploma, transcript, citizenship cert, residence "
+    "cert, marriage/birth/death cert, employment cert. Usually has a "
+    "centered title, institutional masthead, a few key fields, a stamp "
+    "and a signature.\n"
+    "  FORM         — tax form (Modello Redditi, 1040), application form, "
+    "registration form, government form with many numbered fields/cells "
+    "and column codes (RA1, RN3, etc.) and grids of empty boxes.\n"
+    "  LETTER       — letter, memo, official notice, correspondence with "
+    "flowing paragraphs and a date/signature block.\n"
+    "  RECEIPT      — receipt, invoice, payment confirmation, itemised "
+    "list of charges with totals.\n"
+    "  CONTRACT     — contract, agreement, terms-of-service with "
+    "numbered clauses and signature lines.\n"
+    "  OTHER        — anything else (book pages, articles, etc.).\n\n"
+    "Look ONLY at the document's structure and visual layout — not "
+    "the language. Reply with one word."
+)
+
+
+def _classify_document(pdf_bytes: bytes) -> str:
+    """Use Claude Vision on page 1 to pick a layout family. Returns
+    one of CERTIFICATE / FORM / LETTER / RECEIPT / CONTRACT / OTHER.
+
+    On any failure returns CERTIFICATE (the safest backward-compatible
+    default — the original prompt was tuned for certs).
+    """
+    try:
+        import base64
+        import anthropic  # type: ignore
+        import fitz  # type: ignore  # pymupdf
+    except Exception:
+        return "CERTIFICATE"
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return "CERTIFICATE"
+    try:
+        # Render page 1 at modest DPI so the classifier is fast.
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        if len(doc) == 0:
+            return "CERTIFICATE"
+        pix = doc[0].get_pixmap(dpi=120)
+        png_bytes = pix.tobytes("png")
+        doc.close()
+        if len(png_bytes) > 4_500_000:
+            # Re-render smaller if too big for the API.
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            pix = doc[0].get_pixmap(dpi=80)
+            png_bytes = pix.tobytes("png")
+            doc.close()
+        img_b64 = base64.standard_b64encode(png_bytes).decode("ascii")
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model=os.getenv(
+                "REBUILD_CLASSIFIER_MODEL", "claude-haiku-4-5-20251001"
+            ),
+            max_tokens=20,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": img_b64,
+                            },
+                        },
+                        {"type": "text", "text": _CLASSIFY_PROMPT},
+                    ],
+                }
+            ],
+        )
+        for block in resp.content or []:
+            if getattr(block, "type", "") == "text":
+                raw = (getattr(block, "text", "") or "").strip().upper()
+                # Be lenient about extras.
+                for cat in (
+                    "CERTIFICATE", "FORM", "LETTER", "RECEIPT",
+                    "CONTRACT", "OTHER",
+                ):
+                    if cat in raw:
+                        logger.info(
+                            "Document classified as %s", cat
+                        )
+                        return cat
+        return "CERTIFICATE"
+    except Exception:
+        logger.exception("Document classifier failed — defaulting to CERTIFICATE")
+        return "CERTIFICATE"
+
+
+# ---- FORM prompt — for tax returns, applications, registration forms ----
+#
+# Critical differences from the certificate prompt:
+#   * NO masthead rule. Forms have no institution name to put first.
+#   * Mandate that EVERY visible label, code (RA1, RN3, etc.),
+#     and column number appears in the output.
+#   * Empty cells must still be rendered with ",00" or "—" so the
+#     output has the same shape as the source.
+#   * Tables are MANDATORY. A form rendered as flat paragraphs is
+#     considered a complete failure.
+#   * One python-docx table per logical form section (Quadro RA,
+#     Quadro RN, etc.) — not a single mega-table.
+_PROMPT_FORM = """\
+You are translating a structured FORM (tax return, application,
+registration form, etc.) and producing a Microsoft Word (.docx)
+file that preserves the source's grid layout cell-by-cell.
+
+WORKFLOW
+========
+You have one tool: `run_python_docx_code`. You call it with a
+complete python-docx script. We run it in a sandbox and return
+diagnostics. Iterate until the form fully matches the source.
+
+REQUIREMENTS — FORM-SPECIFIC
+============================
+  * Translate from {source_lang} into {target_lang}.
+  * Save the finished DOCX to exactly: r"{output_path}"
+  * A4 page size (Cm(21) × Cm(29.7)), 1.5cm margins.
+  * Body font 10pt for cells, 11pt for section headers.
+  * Reproduce EVERY VISIBLE LABEL from the source. Field labels
+    (e.g. "Dominical income non-revalued", "Days", "%", "Special
+    cases", "Continuation"), section codes (RA1, RA2, RN1, RN3),
+    and column numbers (1, 2, 3 … 16) MUST appear in your output.
+  * Reproduce every value, code, and number visible in the form —
+    tax codes (e.g. MSLMHL79C43H501M), monetary values (32,260),
+    children's IDs, percentages (50%), date fragments.
+  * Empty cells still get rendered — show ",00" for empty money
+    fields, just the column number for empty number-only cells.
+    The shape of the form must survive even when most cells are
+    blank.
+  * Use python-docx TABLES for every grid in the form. ONE
+    `doc.add_table(rows=N, cols=M)` per section (Quadro RA, Quadro
+    RN, etc.). Do NOT render rows as flat paragraphs — that loses
+    the visual structure.
+  * Borderless tables — set `tblBorders` to nil on every table.
+  * Section headers ("FORM RA — Income from land", "FORM RN —
+    Determination of IRPEF") get their own bold paragraph above
+    each table.
+  * The agency name at the top (e.g. "Revenue Agency / Agenzia
+    delle Entrate"), document title ("INCOME / REDDITI"), and tax
+    year ("TAX YEAR 2024 / PERIODO D'IMPOSTA 2024") should be
+    typed out as the first few paragraphs in 11pt bold — NOT as
+    bracketed image placeholders.
+  * NEVER write [Coat of Arms], [Stamp], [Signature: ...],
+    [Logo], or any other bracketed image marker.
+  * NEVER write HTML tags (<p>, <br>, style="...", <center>).
+    For alignment use `paragraph.alignment =
+    WD_ALIGN_PARAGRAPH.CENTER`. For bold use `run.bold = True`.
+  * FORBIDDEN: a CERTIFIED TRANSLATION block, "I hereby certify",
+    "Translator: <email>", "Note: This is a translation of...",
+    or any translator's note. The wrapper appends the real cert
+    AFTER your body.
+
+EXTRACTED IMAGES (in ./images/)
+===============================
+{image_list}
+
+EXTRACTED TABLES (use these JSON values verbatim — these ARE the
+form's data)
+===============================
+{table_list}
+
+Begin by writing the first version of the script and calling
+`run_python_docx_code`. The output must contain at least one
+python-docx table per major form section.
+"""
+
+
+# ---- LETTER prompt — for memos, official notices, correspondence ----
+_PROMPT_LETTER = """\
+You are translating a LETTER or MEMO and producing a Microsoft
+Word (.docx) file that preserves the source's visual layout.
+
+WORKFLOW
+========
+You have one tool: `run_python_docx_code`. Call it with a
+complete python-docx script. Iterate based on diagnostics.
+
+REQUIREMENTS
+============
+  * Translate from {source_lang} into {target_lang}.
+  * Save the finished DOCX to exactly: r"{output_path}"
+  * A4 page size, 2cm margins, 11pt body.
+  * Top-of-page block: sender name + sender address + date,
+    aligned right. Then recipient block aligned left. Then
+    subject line in bold. Then the letter body as flowing
+    paragraphs. Then closing salutation. Then typed name +
+    title at the bottom.
+  * NO inline images. The wrapper embeds the original source
+    pages BEFORE your body, so the original masthead /
+    letterhead is preserved at full quality.
+  * NEVER write bracketed image markers ([Coat of Arms],
+    [Stamp], [Signature], etc.) or HTML tags.
+  * FORBIDDEN: a CERTIFIED TRANSLATION block / "I hereby
+    certify" / translator's note. The wrapper appends the
+    real cert AFTER your body.
+
+EXTRACTED IMAGES (in ./images/)
+===============================
+{image_list}
+
+EXTRACTED TABLES
+===============================
+{table_list}
+
+Begin by writing the first version of the script.
+"""
+
+
+# ---- RECEIPT prompt — for invoices, receipts, payment confirmations ----
+_PROMPT_RECEIPT = """\
+You are translating a RECEIPT or INVOICE and producing a Microsoft
+Word (.docx) file that preserves the itemised structure.
+
+WORKFLOW
+========
+One tool: `run_python_docx_code`. Iterate on diagnostics.
+
+REQUIREMENTS
+============
+  * Translate from {source_lang} into {target_lang}.
+  * Save the finished DOCX to: r"{output_path}"
+  * A4 page size, 1.5cm margins, 11pt body, 10pt for itemised
+    rows.
+  * Top of page: merchant / issuer name in 14pt bold, then
+    address + tax ID + receipt date in normal weight.
+  * The itemised list MUST be a real python-docx table (one
+    row per line item). Columns typically: description,
+    quantity, unit price, total. Currency symbols and
+    decimals preserved verbatim (€ 32,260,00 stays as
+    "€ 32,260.00" or local convention as appropriate).
+  * Totals block at the bottom: subtotal, tax, grand total,
+    each on its own line, right-aligned, bold for the grand
+    total.
+  * NEVER write bracketed image markers or HTML tags.
+  * FORBIDDEN: CERTIFIED TRANSLATION block / translator's
+    note.
+
+EXTRACTED IMAGES (in ./images/)
+===============================
+{image_list}
+
+EXTRACTED TABLES
+===============================
+{table_list}
+
+Begin by writing the first version of the script.
+"""
+
+
+def _select_prompt_for(doc_type: str) -> str:
+    """Map a classifier output to a prompt template."""
+    doc_type = (doc_type or "CERTIFICATE").upper().strip()
+    return {
+        "CERTIFICATE": _INITIAL_PROMPT,
+        "FORM": _PROMPT_FORM,
+        "LETTER": _PROMPT_LETTER,
+        "RECEIPT": _PROMPT_RECEIPT,
+        "CONTRACT": _PROMPT_LETTER,   # close enough — flowing text + clauses
+        "OTHER": _INITIAL_PROMPT,     # safe default
+    }.get(doc_type, _INITIAL_PROMPT)
+
+
 _INITIAL_PROMPT = """\
 You are translating a document and producing a Microsoft Word
 (.docx) file that preserves the source's visual layout.
@@ -216,7 +500,7 @@ _FORBIDDEN_PATTERNS = [
 ]
 
 
-def _inspect_docx(docx_bytes: bytes) -> dict:
+def _inspect_docx(docx_bytes: bytes, doc_type: str = "CERTIFICATE") -> dict:
     """Return a structured report describing the DOCX so Claude can
     judge whether it matches the source."""
     if not docx_bytes:
@@ -278,11 +562,26 @@ def _inspect_docx(docx_bytes: bytes) -> dict:
         pat.pattern for pat in _FORBIDDEN_PATTERNS if pat.search(full_text)
     ]
 
+    # Filter out cert-block paragraphs before measuring "real" body
+    # text — if the only content is a "CERTIFIED TRANSLATION
+    # STATEMENT" / "I hereby certify" block, body chars should
+    # register as ~0 so we can warn that the rebuild is empty.
+    cert_block_re = re.compile(
+        r"(CERTIFIED TRANSLATION|I hereby certify|Translator:|"
+        r"This is a translation of)",
+        re.I,
+    )
+    real_body_paragraphs = [
+        p for p in body_paragraphs if not cert_block_re.search(p)
+    ]
+    body_text_chars = sum(len(p) for p in real_body_paragraphs)
+
     report = {
         "success": True,
         "file_size_bytes": len(docx_bytes),
         "page_count_estimate": page_count_estimate,
         "paragraph_count": len(body_paragraphs),
+        "body_text_chars": body_text_chars,
         "first_paragraphs": body_paragraphs[:20],
         "last_paragraphs": body_paragraphs[-5:] if len(body_paragraphs) > 20 else [],
         "table_count": len(tables),
@@ -294,6 +593,31 @@ def _inspect_docx(docx_bytes: bytes) -> dict:
     # Practical warnings — turn obvious problems into something
     # Claude reads as "fix this".
     warnings = []
+    # Empty-body detector. If the only paragraphs we wrote are the
+    # cert block (or there's almost no real text at all), Claude
+    # has produced a shell document — treat this as a hard failure
+    # signal so the loop retries.
+    if body_text_chars < 300 and len(tables) > 0:
+        warnings.append(
+            "CRITICAL: your output has %d body-text chars across %d "
+            "paragraphs and %d tables — but the tables are EMPTY. "
+            "You generated table scaffolding without filling it with "
+            "the source's labels and values. Re-emit the script and "
+            "actually populate each cell using "
+            "table.cell(r, c).text = ... or "
+            "table.cell(r, c).paragraphs[0].add_run(...)." % (
+                body_text_chars,
+                len(body_paragraphs),
+                len(tables),
+            )
+        )
+    elif body_text_chars < 200:
+        warnings.append(
+            "CRITICAL: your output has only %d body-text chars. The "
+            "source document is non-empty — you have not transcribed "
+            "its content. Re-emit the script and write out the source's "
+            "labels, headings, and values explicitly." % body_text_chars
+        )
     if forbidden_hits:
         warnings.append(
             "Your output contains a CERTIFIED TRANSLATION / certification "
@@ -346,7 +670,8 @@ def _inspect_docx(docx_bytes: bytes) -> dict:
     # Detect missing masthead. If the first non-empty body
     # paragraph isn't a short centered name-like string
     # (mostly uppercase letters + spaces, <= 60 chars), warn.
-    if body_paragraphs:
+    # Skip for FORM/RECEIPT — they have no institutional masthead.
+    if body_paragraphs and doc_type not in ("FORM", "RECEIPT"):
         first = body_paragraphs[0].strip()
         looks_like_masthead = (
             len(first) <= 60
@@ -491,12 +816,19 @@ def author_rebuild_docx_multiturn(
         logger.exception("Table pre-extraction failed — continuing")
         tables = []
 
+    # Classify the document type up front. The chosen template
+    # changes the rules Claude follows so that e.g. a tax form
+    # doesn't try to satisfy a "first paragraph is the institution
+    # name" rule that doesn't apply to it.
+    doc_type = _classify_document(pdf_bytes)
+    prompt_template = _select_prompt_for(doc_type)
+
     image_list_text = (
         _vision_image_list_text
         if _vision_image_list_text
         else _format_image_list(images)
     )
-    initial_prompt = _INITIAL_PROMPT.format(
+    initial_prompt = prompt_template.format(
         source_lang=source_lang or "the source language",
         target_lang=target_lang,
         output_path=output_path,
@@ -611,7 +943,7 @@ def author_rebuild_docx_multiturn(
             )
 
             if success and docx_bytes:
-                inspection = _inspect_docx(docx_bytes)
+                inspection = _inspect_docx(docx_bytes, doc_type=doc_type)
                 # Save the latest good DOCX bytes so we can return
                 # them even if a later turn fails.
                 last_good_docx = docx_bytes
@@ -638,6 +970,29 @@ def author_rebuild_docx_multiturn(
         shutil.rmtree(out_dir, ignore_errors=True)
     except Exception:
         pass
+
+    # Final check — if the last good DOCX has near-zero body text
+    # but the source PDF is non-empty, we've produced a shell
+    # document. Raise rather than silently shipping empty pages.
+    if last_good_docx:
+        try:
+            body_chars = int(
+                last_good_inspection.get("body_text_chars", -1) or -1
+            )
+        except Exception:
+            body_chars = -1
+        if 0 <= body_chars < 150:
+            raise RuntimeError(
+                "Multi-turn rebuild produced an empty body "
+                "(%d body chars across %d paragraphs). "
+                "The pipeline failed to transcribe the source." % (
+                    body_chars,
+                    int(
+                        last_good_inspection.get("paragraph_count", 0)
+                        or 0
+                    ),
+                )
+            )
 
     if not last_good_docx:
         raise RuntimeError(
