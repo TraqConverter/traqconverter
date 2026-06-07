@@ -148,6 +148,161 @@ def _classify_document(pdf_bytes: bytes) -> str:
         logger.exception("Document classifier failed — defaulting to CERTIFICATE")
         return "CERTIFICATE"
 
+# ---- Exhaustive form-field extraction (FORM-only) --------------
+#
+# For tax forms / applications / structured forms, doing a generic
+# vision pass and asking Claude to "extract tables" misses field
+# labels that aren't in obvious grid rows (section headers,
+# numbered checkboxes, free-text fields). This function asks
+# Claude Vision to produce a flat JSON listing EVERY visible
+# label, code, and value on the page. The JSON is then embedded
+# in the FORM prompt as ground truth so the authoring step
+# doesn't have to OCR.
+
+_FORM_DUMP_PROMPT = (
+    "You are looking at one page of a structured form (tax return, "
+    "application, registration form, or similar). List every visible "
+    "label, section code (RA1, RN3, etc.), column number (1..16), "
+    "filled-in value (tax code, amount, percentage, date, ID), and "
+    "section title.\n\n"
+    "Output ONE JSON array. Each entry is an object with keys:\n"
+    "  - 'kind'  : one of section_title, field_label, section_code, "
+    "column_number, value, checkbox, instruction_note\n"
+    "  - 'text'  : the verbatim text exactly as it appears on the form, "
+    "in the source language\n"
+    "  - 'group' : the form section this belongs to (e.g. 'QUADRO RA', "
+    "'QUADRO RN', 'Header'). Use 'Header' for items above the first "
+    "section.\n\n"
+    "Be exhaustive — DO NOT skip cells just because they look empty. "
+    "Empty value cells should appear as {'kind':'value','text':',00',"
+    "'group':...}. Reply with ONLY the JSON array, no prose, no "
+    "code fence."
+)
+
+
+def _extract_form_fields_via_vision(pdf_bytes: bytes) -> list:
+    """Run an exhaustive form-field dump on every page. Returns a
+    list of {'page': N, 'fields': [...]} dicts ready to embed in
+    the FORM prompt. Empty list on any failure — the FORM prompt
+    still works without this, just less reliably.
+    """
+    try:
+        import base64
+        import json as _json
+        import anthropic  # type: ignore
+        import fitz  # type: ignore
+    except Exception:
+        return []
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return []
+
+    model = os.getenv("REBUILD_FORM_DUMP_MODEL", "claude-opus-4-6")
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        return []
+
+    pages_out = []
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        for page_idx in range(len(doc)):
+            try:
+                page = doc[page_idx]
+                # Render at high DPI so small cells / fine print
+                # are legible.
+                pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
+                png_bytes = pix.tobytes("png")
+                if len(png_bytes) > 4_500_000:
+                    pix = page.get_pixmap(matrix=fitz.Matrix(1.6, 1.6))
+                    png_bytes = pix.tobytes("png")
+                img_b64 = base64.standard_b64encode(png_bytes).decode("ascii")
+                resp = client.messages.create(
+                    model=model,
+                    max_tokens=6000,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": "image/png",
+                                        "data": img_b64,
+                                    },
+                                },
+                                {"type": "text", "text": _FORM_DUMP_PROMPT},
+                            ],
+                        }
+                    ],
+                )
+                raw = ""
+                for block in resp.content or []:
+                    if getattr(block, "type", "") == "text":
+                        raw += getattr(block, "text", "") or ""
+                raw = raw.strip()
+                # Strip optional code fences.
+                if raw.startswith("```"):
+                    raw = raw.lstrip("`")
+                    if raw.lower().startswith("json"):
+                        raw = raw[4:]
+                    raw = raw.strip("` \n")
+                try:
+                    fields = _json.loads(raw)
+                except Exception:
+                    # Try to salvage the array portion.
+                    start = raw.find("[")
+                    end = raw.rfind("]")
+                    if start != -1 and end != -1 and end > start:
+                        try:
+                            fields = _json.loads(raw[start:end + 1])
+                        except Exception:
+                            fields = []
+                    else:
+                        fields = []
+                if isinstance(fields, list) and fields:
+                    pages_out.append({
+                        "page": page_idx + 1,
+                        "fields": fields,
+                    })
+                    logger.info(
+                        "Form-field dump page %d: %d entries",
+                        page_idx + 1, len(fields),
+                    )
+            except Exception:
+                logger.exception(
+                    "Form-field dump page %d failed", page_idx + 1
+                )
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+
+    return pages_out
+
+
+def _format_form_fields_for_prompt(pages: list) -> str:
+    """Render the form-field dump for embedding in the prompt."""
+    if not pages:
+        return "(no exhaustive form-field dump available)"
+    import json as _json
+    out_lines = []
+    for entry in pages:
+        out_lines.append(f"--- PAGE {entry['page']} ---")
+        try:
+            out_lines.append(
+                _json.dumps(entry["fields"], ensure_ascii=False, indent=1)
+            )
+        except Exception:
+            out_lines.append("(failed to serialize page fields)")
+        out_lines.append("")
+    return "\n".join(out_lines)
+
+
+
 
 # ---- FORM prompt — for tax returns, applications, registration forms ----
 #
@@ -220,6 +375,13 @@ EXTRACTED TABLES (use these JSON values verbatim — these ARE the
 form's data)
 ===============================
 {table_list}
+
+EXHAUSTIVE FORM-FIELD DUMP (every visible label, code, column number,
+and value, page by page — use this as ground truth, do NOT skip
+entries, do NOT translate the codes themselves like RA1, RN3, but
+DO translate the labels into {target_lang})
+===============================
+{form_fields}
 
 Begin by writing the first version of the script and calling
 `run_python_docx_code`. The output must contain at least one
@@ -714,6 +876,22 @@ def _inspect_docx(docx_bytes: bytes, doc_type: str = "CERTIFICATE") -> dict:
 # Main loop.
 # ----------------------------------------------------------------
 
+def _pdf_page_count(pdf_bytes: bytes) -> int:
+    """Count pages without holding the PDF open. Returns 1 on
+    failure so callers that branch on >1 don't take the multi-page
+    path against their will.
+    """
+    try:
+        import fitz  # type: ignore
+    except Exception:
+        return 1
+    try:
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
+            return max(1, len(d))
+    except Exception:
+        return 1
+
+
 def author_rebuild_docx_multiturn(
     pdf_bytes: bytes,
     source_lang: str,
@@ -723,6 +901,39 @@ def author_rebuild_docx_multiturn(
     max_turns: int = 6,
     timeout_per_run_seconds: int = 180,
     extra_instructions: Optional[str] = None,
+) -> bytes:
+    """End-to-end multi-turn Claude-authored rebuild.
+
+    `extra_instructions`: when set, appended to the initial prompt as
+    USER FEEDBACK so Claude addresses the user's concerns on this
+    rebuild. Used by the Request Revision flow.
+
+    Internally delegates to _author_rebuild_docx_multiturn_core,
+    which classifies the document and routes multi-page FORMs
+    through the page-by-page path.
+    """
+    return _author_rebuild_docx_multiturn_core(
+        pdf_bytes,
+        source_lang,
+        target_lang,
+        model=model,
+        max_turns=max_turns,
+        timeout_per_run_seconds=timeout_per_run_seconds,
+        extra_instructions=extra_instructions,
+    )
+
+
+def _author_rebuild_docx_multiturn_core(
+    pdf_bytes: bytes,
+    source_lang: str,
+    target_lang: str,
+    *,
+    model: Optional[str] = None,
+    max_turns: int = 6,
+    timeout_per_run_seconds: int = 180,
+    extra_instructions: Optional[str] = None,
+    _force_doc_type: Optional[str] = None,
+    _disable_page_by_page: bool = False,
 ) -> bytes:
     """End-to-end multi-turn Claude-authored rebuild.
 
@@ -820,21 +1031,70 @@ def author_rebuild_docx_multiturn(
     # changes the rules Claude follows so that e.g. a tax form
     # doesn't try to satisfy a "first paragraph is the institution
     # name" rule that doesn't apply to it.
-    doc_type = _classify_document(pdf_bytes)
+    if _force_doc_type:
+        doc_type = _force_doc_type.upper()
+    else:
+        doc_type = _classify_document(pdf_bytes)
+
+    # Multi-page FORM documents go through the page-by-page rebuild
+    # (one full multi-turn loop per page, then merge) so Claude
+    # doesn't run out of output tokens mid-form.
+    if (
+        doc_type == "FORM"
+        and not _disable_page_by_page
+        and _pdf_page_count(pdf_bytes) > 1
+    ):
+        logger.info(
+            "Routing multi-page FORM to page-by-page rebuild"
+        )
+        return _author_rebuild_form_page_by_page(
+            pdf_bytes,
+            source_lang,
+            target_lang,
+            model=model,
+            max_turns=max_turns,
+            timeout_per_run_seconds=timeout_per_run_seconds,
+            extra_instructions=extra_instructions,
+        )
+
     prompt_template = _select_prompt_for(doc_type)
+
+    # For FORM documents do an exhaustive Vision-based field dump
+    # so the authoring step has the verbatim list of every cell.
+    form_fields_text = "(not applicable for this document type)"
+    if doc_type == "FORM":
+        try:
+            form_pages = _extract_form_fields_via_vision(pdf_bytes)
+            form_fields_text = _format_form_fields_for_prompt(form_pages)
+            logger.info(
+                "FORM field dump: %d pages extracted", len(form_pages)
+            )
+        except Exception:
+            logger.exception("FORM field dump failed — continuing without it")
 
     image_list_text = (
         _vision_image_list_text
         if _vision_image_list_text
         else _format_image_list(images)
     )
-    initial_prompt = prompt_template.format(
+
+    # The FORM template references {form_fields}; other templates
+    # don't. Format with both kwargs — Python's str.format ignores
+    # unused keys only via dict-unpacking, so build the kwargs to
+    # match the active template.
+    format_kwargs = dict(
         source_lang=source_lang or "the source language",
         target_lang=target_lang,
         output_path=output_path,
         image_list=image_list_text,
         table_list=_format_table_list(tables),
     )
+    # Only the FORM template uses {form_fields}; only pass it if
+    # the active template references it (avoid KeyError on other
+    # templates that don't have the placeholder).
+    if "{form_fields}" in prompt_template:
+        format_kwargs["form_fields"] = form_fields_text
+    initial_prompt = prompt_template.format(**format_kwargs)
     # Append user-provided revision feedback so this rebuild
     # actually addresses what the user typed in the Request
     # Revision modal. Without this, the multi-turn loop runs the
@@ -1027,3 +1287,169 @@ def author_rebuild_docx_multiturn(
         logger.exception("Post-processor chain raised; returning raw bytes")
 
     return docx_bytes
+
+
+def _split_pdf_per_page(pdf_bytes: bytes) -> list:
+    """Return a list of single-page PDF bytes objects, one per page
+    of the input PDF. Empty list on any failure.
+    """
+    try:
+        import io as _io
+        import fitz  # type: ignore
+    except Exception:
+        return []
+    try:
+        src = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        return []
+    out = []
+    try:
+        for i in range(len(src)):
+            try:
+                dst = fitz.open()
+                dst.insert_pdf(src, from_page=i, to_page=i)
+                buf = _io.BytesIO()
+                dst.save(buf)
+                dst.close()
+                out.append(buf.getvalue())
+            except Exception:
+                logger.exception("Single-page split failed on page %d", i + 1)
+    finally:
+        try:
+            src.close()
+        except Exception:
+            pass
+    return out
+
+
+def _merge_authored_docx_fragments(fragments: list) -> bytes:
+    """Concatenate multiple authored DOCX byte blobs into one. Uses
+    export_wrapper._append_body_from as the body-merge primitive so
+    we share its trim-trailing-blank-para / drop-sectPr handling.
+
+    A page break is inserted between fragments so each source page
+    starts on its own output page.
+    """
+    if not fragments:
+        return b""
+    if len(fragments) == 1:
+        return fragments[0]
+    try:
+        import io as _io
+        from docx import Document  # type: ignore
+        from docx.enum.text import WD_BREAK  # type: ignore
+        from app.services.export_wrapper import _append_body_from
+    except Exception:
+        logger.exception("Fragment merge unavailable — returning first only")
+        return fragments[0]
+
+    try:
+        out_doc = Document(_io.BytesIO(fragments[0]))
+    except Exception:
+        logger.exception("Could not open fragment 0 — returning raw bytes")
+        return fragments[0]
+
+    for raw in fragments[1:]:
+        # Page break between fragments.
+        try:
+            p = out_doc.add_paragraph()
+            r = p.add_run()
+            r.add_break(WD_BREAK.PAGE)
+        except Exception:
+            logger.exception("Page-break insertion failed")
+        try:
+            src_doc = Document(_io.BytesIO(raw))
+            _append_body_from(src_doc, out_doc)
+        except Exception:
+            logger.exception("Fragment append failed")
+
+    buf = _io.BytesIO()
+    try:
+        out_doc.save(buf)
+        return buf.getvalue()
+    except Exception:
+        logger.exception("Merged DOCX save failed — returning first fragment")
+        return fragments[0]
+
+
+def _author_rebuild_form_page_by_page(
+    pdf_bytes: bytes,
+    source_lang: str,
+    target_lang: str,
+    *,
+    model = None,
+    max_turns: int = 4,
+    timeout_per_run_seconds: int = 180,
+    extra_instructions = None,
+) -> bytes:
+    """Multi-page FORM rebuild: split into single pages, run a full
+    multi-turn rebuild on each, then merge the resulting DOCXs.
+
+    Falls back to a single whole-document rebuild on any internal
+    failure (so we never lose ALL pages just because one failed).
+
+    Returns merged DOCX bytes.
+    """
+    pages = _split_pdf_per_page(pdf_bytes)
+    if not pages or len(pages) == 1:
+        logger.info(
+            "Form page-by-page: %d page(s) — using whole-document path",
+            len(pages),
+        )
+        # Fall back to whole-doc rebuild by re-entering the main
+        # function with a sentinel that disables this code path
+        # (avoids infinite recursion).
+        return _author_rebuild_docx_multiturn_core(
+            pdf_bytes,
+            source_lang,
+            target_lang,
+            model=model,
+            max_turns=max_turns,
+            timeout_per_run_seconds=timeout_per_run_seconds,
+            extra_instructions=extra_instructions,
+            _force_doc_type="FORM",
+            _disable_page_by_page=True,
+        )
+
+    fragments = []
+    for i, page_pdf in enumerate(pages, start=1):
+        logger.info(
+            "Form page-by-page: rebuilding page %d / %d",
+            i, len(pages),
+        )
+        try:
+            page_extra = (
+                (extra_instructions or "")
+                + f"\n\nThis is PAGE {i} of {len(pages)} of a multi-page "
+                "form. Translate this page only. Do not add masthead or "
+                "cert blocks — the wrapper handles those."
+            ).strip()
+            page_docx = _author_rebuild_docx_multiturn_core(
+                page_pdf,
+                source_lang,
+                target_lang,
+                model=model,
+                max_turns=max_turns,
+                timeout_per_run_seconds=timeout_per_run_seconds,
+                extra_instructions=page_extra,
+                _force_doc_type="FORM",
+                _disable_page_by_page=True,
+            )
+            fragments.append(page_docx)
+        except Exception:
+            logger.exception(
+                "Form page %d rebuild failed — skipping page", i
+            )
+
+    if not fragments:
+        raise RuntimeError(
+            "Form page-by-page rebuild produced no successful pages"
+        )
+
+    merged = _merge_authored_docx_fragments(fragments)
+    logger.info(
+        "Form page-by-page complete: merged %d fragment(s) -> %d bytes",
+        len(fragments), len(merged),
+    )
+    return merged
+
