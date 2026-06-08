@@ -225,40 +225,23 @@ _TYPE_HINTS = {
         "only; the wrapper provides the originals on separate pages."
     ),
     "FORM": (
-        "  * IMPORTANT: produce a CLEAN FLAT TRANSCRIPTION, "
-        "not a colored visual replica of the source. The reference "
-        "output is Claude.ai chat's transcription style:\n"
-        "      - Each form cell's content goes on its OWN line "
-        "(separate paragraph). A label, a column number, and a "
-        "value each get their own line.\n"
-        "      - Section titles (e.g. 'DEPENDENT FAMILY MEMBERS', "
-        "'FORM RA', 'INCOME FROM LAND', 'FORM RN', 'IRPEF') "
-        "are written as BOLD plain paragraphs, NOT inside colored "
-        "banner cells.\n"
-        "      - NO colored cell backgrounds, NO _shade() calls, "
-        "NO blue header bars. Keep everything black-on-white.\n"
-        "      - Don't use python-docx tables at all unless the "
-        "source has a true small table the reader needs visualized. "
-        "Prefer flat paragraphs for grid data.\n"
-        "  * Row codes (RA1, RA2 ... RN29, RN30) get their own "
-        "BOLD paragraph; the column numbers (1, 2, 3 ... 16) "
-        "each get a plain paragraph; the values (or ',00' for "
-        "empty money cells) each get their own paragraph.\n"
-        "  * Preserve EVERY label, code, column number, and value "
-        "visible in the EXTRACTED TABLES + EXHAUSTIVE FIELD DUMP. "
-        "Use those as ground truth.\n"
-        "  * Blank line between major sub-sections; no blank lines "
-        "between consecutive cells of the same row.\n"
-        "  * Example shape for one row:\n"
-        "      RA1   (bold)\n"
-        "      1\n"
-        "      ,00\n"
-        "      2\n"
-        "      3\n"
-        "      ,00\n"
-        "      4\n"
-        "      5\n"
-        "      ... (continues through col 16)"
+        "  * ONE python-docx table per logical section. RN1, RN2, RN3 "
+        "... RN29 belong in the SAME table as separate rows. NEVER "
+        "create one-row tables per RN/RA entry -- that fragmentation "
+        "is the #1 failure mode for tax-form rebuilds.\n"
+        "  * For each section's TOP header row that spans the full "
+        "width, call _merge_row(table, 0, 'SECTION NAME', bold=True). "
+        "Do NOT write the section name into every column cell.\n"
+        "  * For column-label rows where one logical heading spans "
+        "multiple columns (e.g. 'Ownership' spanning 'days' and '%'), "
+        "use cells[i].merge(cells[j]) and write the heading once.\n"
+        "  * Empty cells render as ',00' or just the column number -- "
+        "preserve the form's grid shape.\n"
+        "  * Use the EXTRACTED TABLES + EXHAUSTIVE FIELD DUMP below "
+        "as ground truth for every label, code (RA1, RN3), column "
+        "number, and value.\n"
+        "  * Apply SECTION STYLES (header_fill, body_fill, col_widths) "
+        "via _shade(cell, hex) and table.columns[i].width = Cm(...)."
     ),
 
     "LETTER": (
@@ -290,7 +273,7 @@ def _type_label(doc_type: str) -> str:
     """Human-readable form of a classifier output."""
     return {
         "CERTIFICATE": "official certificate or transcript",
-        "FORM": "structured form transcription (tax return / application / registration form -- output as flat readable text, NOT a colored visual replica)",
+        "FORM": "structured form (tax return, application, registration)",
         "LETTER": "letter or memo",
         "RECEIPT": "receipt or invoice",
         "CONTRACT": "contract or agreement",

@@ -1554,6 +1554,14 @@ export default function EditorPage() {
             {/* RIGHT — EDITABLE TRANSLATION (default) or RENDERED PDF
                 (when EDIT toggle is off). The editor is the primary
                 working surface; the PDF view is for visual review. */}
+            {/* Both modes now render CompareEditPanel (docx-preview).
+                The previous "Show preview" path went through a backend
+                LibreOffice DOCX -> PDF conversion which fails on the
+                heavy authored DOCX (thousands of paragraphs) and the
+                browser PDF viewer rendered a black background. We
+                already have a working DOCX renderer in CompareEditPanel,
+                so reuse it for both modes — the toggle now just
+                controls editing affordances. */}
             {compareEdit ? (
               <CompareEditPanel
                 projectId={String(id)}
@@ -1561,32 +1569,11 @@ export default function EditorPage() {
                 externalReloadKey={compareReloadKey}
               />
             ) : (
-            <ComparePane
-              label="TRANSLATION"
-              data={
-                rebuildPreview && rebuildPreview.url
-                  ? {
-                      url: rebuildPreview.url,
-                      kind:
-                        rebuildPreview.kind === "docx"
-                          ? "other"
-                          : (rebuildPreview.kind as "pdf" | "image" | "other"),
-                      filename: rebuildPreview.filename || "",
-                    }
-                  : null
-              }
-              loading={compareLoading}
-              emptyHint={
-                rebuildPreview && !rebuildPreview.url
-                  ? "Rebuild not generated yet — export the project as PDF or DOCX first, then come back here to compare."
-                  : "Loading rebuild…"
-              }
-              docxFallback={
-                rebuildPreview?.kind === "docx" && rebuildPreview.url
-                  ? rebuildPreview.url
-                  : null
-              }
-            />
+              <CompareEditPanel
+                projectId={String(id)}
+                compareOpen={compareMode}
+                externalReloadKey={compareReloadKey}
+              />
             )}
             </div>
           </div>
@@ -3424,4 +3411,15 @@ function Stat({
         color: active ? "#0a7870" : "#8a8270",
       }}
     >
-      <div className="text-xs font-semibold flex items-c
+      <div className="text-xs font-semibold flex items-center justify-center gap-1">
+        {label}
+        {typeof count === "number" && (
+          <span
+            className="text-[10px] tabular-nums px-1 rounded-full"
+            style={{ color: "#9a9178" }}
+          >
+            · {count}
+          </span>
+        )}
+      </div>
+    </button>
