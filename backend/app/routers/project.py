@@ -5,7 +5,7 @@ from uuid import UUID
 from pathlib import Path
 from app.models.translation_segment import TranslationSegment
 
-from fastapi import Form
+from fastapi import Form, BackgroundTasks
 from fastapi import (
     APIRouter,
     UploadFile,
@@ -1486,10 +1486,110 @@ def clear_edited_html(
     return {"ok": True}
 
 
+
+def _revise_rebuild_background(
+    project_id_str: str,
+    file_path_key: str,
+    file_name: str,
+    source_lang: str,
+    target_lang: str,
+    model_key: str,
+    instructions: str,
+) -> None:
+    """Run the multi-turn Claude rebuild for /revise out-of-band.
+
+    Created because /revise was timing out on the frontend: the
+    multi-turn rebuild can take 1-5 minutes and the synchronous HTTP
+    request would die long before that. This runs in a FastAPI
+    BackgroundTask so the HTTP response returns immediately and the
+    rebuild proceeds in a worker thread.
+
+    Opens a fresh DB session and project row -- we cannot reuse the
+    request scope's session safely from a background thread.
+    """
+    import tempfile as _tf
+    from pathlib import Path as _P
+    from app.database import SessionLocal
+    from app.services.s3_service import (
+        download_file_from_s3,
+        upload_file_to_s3,
+    )
+    from app.services.claude_multiturn_rebuild import (
+        author_rebuild_docx_multiturn,
+    )
+
+    db_bg = SessionLocal()
+    try:
+        try:
+            from uuid import UUID as _UUID
+            pid = _UUID(project_id_str)
+        except Exception:
+            logger.exception(
+                "Revise BG: bad project id %s", project_id_str
+            )
+            return
+
+        project = (
+            db_bg.query(TranslationProject)
+            .filter(TranslationProject.id == pid)
+            .first()
+        )
+        if not project:
+            logger.warning("Revise BG: project %s gone", project_id_str)
+            return
+
+        tmp_dir = _P(_tf.mkdtemp())
+        try:
+            src_path = tmp_dir / (file_name or "source.pdf")
+            download_file_from_s3(file_path_key, src_path)
+            with open(src_path, "rb") as f:
+                pdf_bytes = f.read()
+
+            logger.info(
+                "Revise BG: starting multi-turn rebuild (project=%s, "
+                "%d chars of instructions)",
+                project_id_str, len(instructions or ""),
+            )
+            docx_bytes = author_rebuild_docx_multiturn(
+                pdf_bytes,
+                source_lang or "",
+                target_lang or "",
+                model=model_key or "claude-opus-4-6",
+                extra_instructions=instructions or None,
+            )
+            out_path = tmp_dir / f"authored_{project.id}.docx"
+            with open(out_path, "wb") as f:
+                f.write(docx_bytes)
+            key = upload_file_to_s3(out_path)
+
+            project.authored_docx_s3_key = key
+            project.edited_html = None
+            db_bg.commit()
+            logger.info(
+                "Revise BG: rebuild OK (project=%s key=%s)",
+                project_id_str, key,
+            )
+        except Exception as e:
+            db_bg.rollback()
+            logger.exception(
+                "Revise BG: rebuild failed for project %s: %s",
+                project_id_str, e,
+            )
+        finally:
+            import shutil as _sh
+            _sh.rmtree(tmp_dir, ignore_errors=True)
+    finally:
+        try:
+            db_bg.close()
+        except Exception:
+            pass
+
+
 @router.post("/{project_id}/revise")
 def revise_project(
     project_id: UUID,
     data: _ReviseProjectPayload,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1572,66 +1672,23 @@ def revise_project(
     # / export uses this fresh DOCX. Best-effort: if the rebuild
     # fails (timeout, API error), keep the segment updates and
     # surface the error to the client.
+    # The multi-turn rebuild is expensive (1-5 min). Run it in a
+    # FastAPI BackgroundTask so this HTTP request returns now.
+    # Frontend tells the user to reload in a couple of minutes.
     rebuild_status = "skipped_no_instructions"
-    # source_kind is None for projects created via /upload (it only
-    # gets populated later by the export pipeline), so we can't rely
-    # on it as a gate. Use the source filename extension instead —
-    # the rebuild needs a PDF to feed to Claude.
     is_pdf = (project.file_name or "").lower().endswith(".pdf")
     if instructions and is_pdf:
-        try:
-            import tempfile as _tf
-            from pathlib import Path as _P
-            from app.services.s3_service import (
-                download_file_from_s3,
-                upload_file_to_s3,
-            )
-            from app.services.claude_multiturn_rebuild import (
-                author_rebuild_docx_multiturn,
-            )
-
-            tmp_dir = _P(_tf.mkdtemp())
-            try:
-                src_path = tmp_dir / (project.file_name or "source.pdf")
-                download_file_from_s3(project.file_path, src_path)
-                with open(src_path, "rb") as f:
-                    pdf_bytes = f.read()
-
-                logger.info(
-                    "Revise: re-running multi-turn rebuild with "
-                    "user instructions (project=%s, %d chars of "
-                    "instructions)",
-                    str(project.id), len(instructions),
-                )
-                docx_bytes = author_rebuild_docx_multiturn(
-                    pdf_bytes,
-                    project.source_language or "",
-                    project.target_language or "",
-                    model=model_key or "claude-opus-4-6",
-                    extra_instructions=instructions,
-                )
-
-                out_path = tmp_dir / f"authored_{project.id}.docx"
-                with open(out_path, "wb") as f:
-                    f.write(docx_bytes)
-                key = upload_file_to_s3(out_path)
-                project.authored_docx_s3_key = key
-                project.edited_html = None
-                db.commit()
-                rebuild_status = "rebuilt"
-                logger.info(
-                    "Revise: rebuild OK (project=%s key=%s)",
-                    str(project.id), key,
-                )
-            finally:
-                import shutil as _sh
-                _sh.rmtree(tmp_dir, ignore_errors=True)
-        except Exception as e:
-            logger.exception(
-                "Revise: multi-turn rebuild failed — keeping segment "
-                "updates only: %s", e,
-            )
-            rebuild_status = f"rebuild_failed: {type(e).__name__}"
+        background_tasks.add_task(
+            _revise_rebuild_background,
+            str(project.id),
+            project.file_path,
+            project.file_name or "",
+            project.source_language or "",
+            project.target_language or "",
+            model_key or "",
+            instructions or "",
+        )
+        rebuild_status = "rebuild_in_progress"
 
     return {
         "revised": revised_count,
