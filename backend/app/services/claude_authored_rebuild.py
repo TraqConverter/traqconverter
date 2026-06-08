@@ -1714,6 +1714,47 @@ def _split_crammed_table_rows(docx_bytes: bytes) -> bytes:
         return docx_bytes
 
 
+def _image_is_mostly_uniform(img_path) -> bool:
+    """Return True if the image is dominated by a single color (within
+    a tight tolerance). Used to skip image substitutions where the
+    extracted crop is mostly desk/paper background rather than the
+    actual logo/stamp.
+
+    Heuristic: down-sample to 32x32, count pixels within +-12 of the
+    most common color. If >=72% of pixels match, treat as background.
+
+    Returns False on any failure (so we don't drop legitimate images
+    on a stdlib hiccup).
+    """
+    try:
+        from PIL import Image
+        from collections import Counter
+        im = Image.open(str(img_path)).convert("RGB")
+        im = im.resize((32, 32))
+        pixels = list(im.getdata())
+        # Bin to 16-unit buckets so near-matches count together.
+        buckets = [
+            ((r // 16) * 16, (g // 16) * 16, (b // 16) * 16)
+            for (r, g, b) in pixels
+        ]
+        counts = Counter(buckets)
+        top_color, top_count = counts.most_common(1)[0]
+        # Tight match (+/-12) around top_color.
+        tr, tg, tb = top_color
+        within = 0
+        for (r, g, b) in pixels:
+            if (
+                abs(r - tr) <= 12
+                and abs(g - tg) <= 12
+                and abs(b - tb) <= 12
+            ):
+                within += 1
+        ratio = within / max(1, len(pixels))
+        return ratio >= 0.72
+    except Exception:
+        return False
+
+
 def _replace_image_placeholders(docx_bytes: bytes, work_dir: Path) -> bytes:
     """Replace bracketed text placeholders with actual extracted
     images.
@@ -1739,6 +1780,24 @@ def _replace_image_placeholders(docx_bytes: bytes, work_dir: Path) -> bytes:
             return docx_bytes
 
         all_imgs = sorted(images_dir.glob("*.png")) + sorted(images_dir.glob("*.jpg")) + sorted(images_dir.glob("*.jpeg"))
+        # Drop background-only crops up front. Phone-photo PDFs of
+        # paper docs produce rectangles full of desk-wood / paper
+        # background which substitute as wrong-looking solid color
+        # blocks. Better to leave the slot empty -- the wrapper's
+        # source-page embed shows the original at full quality.
+        kept = []
+        dropped = 0
+        for p in all_imgs:
+            if _image_is_mostly_uniform(p):
+                dropped += 1
+                continue
+            kept.append(p)
+        if dropped:
+            logger.info(
+                "image substitution: dropped %d background-only crop(s)",
+                dropped,
+            )
+        all_imgs = kept
         if not all_imgs:
             return docx_bytes
 
