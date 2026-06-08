@@ -269,9 +269,11 @@ export default function EditorPage() {
       const tail =
         rebuildStatus === "rebuilt"
           ? "\nDocument rebuilt with your feedback — preview updated."
-          : rebuildStatus && rebuildStatus.startsWith("rebuild_failed")
-            ? "\nNote: segment text updated, but the visual rebuild failed — try ✦ Re-run Claude."
-            : ""
+          : rebuildStatus === "rebuild_in_progress"
+            ? "\nClaude is rebuilding the document in the background (1–5 min). Reload the editor in a couple of minutes to see the new layout."
+            : rebuildStatus && rebuildStatus.startsWith("rebuild_failed")
+              ? "\nNote: segment text updated, but the visual rebuild failed — try ✦ Re-run Claude."
+              : ""
       alert(
         `Revision complete — ${revised} / ${total} segments improved.${tail}`,
       )
@@ -3414,12 +3416,4 @@ function Stat({
       <div className="text-xs font-semibold flex items-center justify-center gap-1">
         {label}
         {typeof count === "number" && (
-          <span
-            className="text-[10px] tabular-nums px-1 rounded-full"
-            style={{ color: "#9a9178" }}
-          >
-            · {count}
-          </span>
-        )}
-      </div>
-    </button>
+          <span
