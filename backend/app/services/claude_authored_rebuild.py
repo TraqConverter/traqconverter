@@ -2243,6 +2243,147 @@ def _strip_html_and_bracket_artifacts(docx_bytes: bytes) -> bytes:
         return docx_bytes
 
 
+def _merge_adjacent_compatible_tables(docx_bytes: bytes) -> bytes:
+    """Merge runs of consecutive single-row <w:tbl> elements that
+    have the same column count into one multi-row table.
+
+    Claude sometimes fragments tax-form sections into N one-row
+    tables (one per RN/RA entry) instead of one table with N rows.
+    This walks the body, finds adjacent <w:tbl> siblings whose
+    column count matches, and consolidates by moving rows from the
+    trailing tables into the first one, then deleting the consumed
+    tables. Empty paragraphs between compatible tables are also
+    removed.
+
+    Best-effort; failures return the original bytes unchanged.
+    """
+    try:
+        import io as _io2
+        import zipfile as _zip
+        from xml.etree import ElementTree as ET
+
+        W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        ET.register_namespace("w", W_NS)
+        TBL = "{%s}tbl" % W_NS
+        TR = "{%s}tr" % W_NS
+        TC = "{%s}tc" % W_NS
+        TBLGRID = "{%s}tblGrid" % W_NS
+
+        def _col_count(tbl_el):
+            grid = tbl_el.find(TBLGRID)
+            if grid is not None:
+                return len(list(grid))
+            best = 0
+            for tr in tbl_el.findall(TR):
+                n = len(tr.findall(TC))
+                if n > best:
+                    best = n
+            return best
+
+        in_buf = _io2.BytesIO(docx_bytes)
+        out_buf = _io2.BytesIO()
+        modified = False
+        merges_done = 0
+
+        with _zip.ZipFile(in_buf, "r") as zin:
+            with _zip.ZipFile(out_buf, "w", _zip.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    if item.filename == "word/document.xml":
+                        try:
+                            root = ET.fromstring(data)
+                            body = root.find("{%s}body" % W_NS)
+                            if body is not None:
+                                children = list(body)
+                                i = 0
+                                while i < len(children):
+                                    el = children[i]
+                                    if el.tag != TBL:
+                                        i += 1
+                                        continue
+                                    head_cols = _col_count(el)
+                                    if head_cols == 0:
+                                        i += 1
+                                        continue
+                                    # Try to absorb next tables.
+                                    while True:
+                                        # Find next non-empty
+                                        # sibling.
+                                        j = i + 1
+                                        skipped = []
+                                        while j < len(children):
+                                            nxt = children[j]
+                                            if nxt.tag == TBL:
+                                                break
+                                            tag = nxt.tag.split("}")[-1]
+                                            if tag in ("p", "sectPr"):
+                                                if tag == "p":
+                                                    has_text = False
+                                                    for t in nxt.iter("{%s}t" % W_NS):
+                                                        if (t.text or "").strip():
+                                                            has_text = True
+                                                            break
+                                                    if has_text:
+                                                        break
+                                                skipped.append(j)
+                                                j += 1
+                                                continue
+                                            break
+                                        if (
+                                            j >= len(children)
+                                            or children[j].tag != TBL
+                                        ):
+                                            break
+                                        nxt = children[j]
+                                        if _col_count(nxt) != head_cols:
+                                            break
+                                        # Move rows.
+                                        for tr in list(nxt.findall(TR)):
+                                            el.append(tr)
+                                        # Delete absorbed table +
+                                        # any blank paragraphs.
+                                        for idx in sorted(
+                                            skipped + [j], reverse=True
+                                        ):
+                                            try:
+                                                body.remove(children[idx])
+                                            except Exception:
+                                                pass
+                                        children = list(body)
+                                        modified = True
+                                        merges_done += 1
+                                    i += 1
+
+                                if modified:
+                                    data = ET.tostring(
+                                        root,
+                                        xml_declaration=True,
+                                        encoding="UTF-8",
+                                        standalone=True,
+                                    )
+                        except Exception:
+                            logger.exception(
+                                "merge_adjacent_compatible_tables: "
+                                "failed to parse document.xml -- "
+                                "leaving untouched"
+                            )
+                    zout.writestr(item, data)
+
+        if modified:
+            logger.info(
+                "merge_adjacent_compatible_tables: consolidated "
+                "%d adjacent compatible table(s)", merges_done,
+            )
+            return out_buf.getvalue()
+        return docx_bytes
+    except Exception:
+        logger.exception(
+            "merge_adjacent_compatible_tables crashed; "
+            "returning bytes unchanged"
+        )
+        return docx_bytes
+
+
 def _strip_broken_image_drawings(docx_bytes: bytes) -> bytes:
     """Remove any <w:drawing> whose embedded relationship ID
     doesn't actually exist in word/_rels/document.xml.rels.
@@ -2453,6 +2594,10 @@ def author_rebuild_docx(
         # '[Coat of Arms]') Claude sometimes leaves in body text
         # despite the prompt forbidding both.
         docx_bytes = _strip_html_and_bracket_artifacts(docx_bytes)
+        # Consolidate adjacent 1-row tables into one multi-row
+        # table -- fixes the "29 separate one-row tables for
+        # RN1..RN29" fragmentation pattern.
+        docx_bytes = _merge_adjacent_compatible_tables(docx_bytes)
         # If Claude left any bracketed image placeholders despite
         # the prompt instruction, try to substitute the actual
         # extracted image. Uses out_dir/images/.
