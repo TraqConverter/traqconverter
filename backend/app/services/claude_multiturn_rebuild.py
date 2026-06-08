@@ -121,6 +121,12 @@ decision is your judgment call):
     [Stamp: ...], [Signature: ...], [Photo], [Logo].
     Type out names; the wrapper embeds original source pages
     as the visual reference for stamps/signatures.
+  * Do NOT call doc.add_picture(...) anywhere in your script.
+    The wrapper provides the original source pages BEFORE your
+    body, so coat of arms / logos / stamps / signatures are
+    already shown in their proper form. Inserting images from
+    ./images/ here usually produces a desk-background or
+    paper-edge crop where the official symbol should be.
   * A4 page size unless the source is obviously different.
 
 Helper recipes you can paste at the top of your script:
