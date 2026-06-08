@@ -51,6 +51,166 @@ logger = logging.getLogger(__name__)
 #   CERTIFICATE, FORM, LETTER, RECEIPT, CONTRACT, OTHER
 # OTHER + LETTER fall back to the certificate prompt (closest match).
 
+# ---- UNIVERSAL prompt — Claude.ai-parity approach -------------
+#
+# Every prior version of this prompt accumulated rules patching
+# specific failure modes. Each rule removed a degree of freedom
+# Claude needs to handle documents we haven't seen. Stripping
+# down to the essentials — trusting Claude's judgment for layout
+# while keeping the post-processors as the safety net — matches
+# how Claude.ai chat handles arbitrary document uploads.
+#
+# The classifier still runs (cheap Haiku Vision call) and the
+# result becomes a 2-3 line HINT inside the universal prompt
+# rather than picking from a fork of 4 different templates.
+
+_UNIVERSAL_PROMPT = """\
+You are translating a document and producing a Microsoft Word
+(.docx) file that closely matches the source's visual layout.
+
+Tool: `run_python_docx_code`. Write a complete python-docx Python
+script, we run it in a sandbox, you see diagnostics
+(file size, page count, paragraph samples, image / table counts,
+body-text char count, warnings), then iterate until the output
+matches the source.
+
+Save the final DOCX to exactly: r"{output_path}"
+
+Translate from {source_lang} into {target_lang}.
+
+Match the source's structure faithfully. Use python-docx tables
+for tabular data, paragraphs for flowing text, headings where
+the source has them. Preserve colors, column widths, and section
+styles when they're visually meaningful. Use python-docx native
+styling — paragraph.alignment, run.bold, run.underline,
+run.font.color.rgb, and the _shade(cell, hex) helper for cell
+backgrounds. NEVER write HTML tags as visible text.
+
+HARD RULES (these prevent known failure modes — every other
+decision is your judgment call):
+
+  * No CERTIFIED TRANSLATION / "I hereby certify" / translator's
+    note block ANYWHERE in your output. The wrapper appends the
+    real cert AFTER your body.
+  * No HTML tags as visible text. If you want centered text use
+    `paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER`, never
+    write `<center>` / `<p style="...">` / `<br>`.
+  * No bracketed image placeholders like [Coat of Arms],
+    [Stamp: ...], [Signature: ...], [Photo], [Logo].
+    Type out names; the wrapper embeds original source pages
+    as the visual reference for stamps/signatures.
+  * A4 page size unless the source is obviously different.
+
+Helper recipes you can paste at the top of your script:
+
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.shared import Cm, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    def _shade(cell, hex_color):
+        tcPr = cell._tc.get_or_add_tcPr()
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), hex_color)
+        tcPr.append(shd)
+
+    def _text_color(run, hex_color):
+        r, g, b = (
+            int(hex_color[0:2], 16),
+            int(hex_color[2:4], 16),
+            int(hex_color[4:6], 16),
+        )
+        run.font.color.rgb = RGBColor(r, g, b)
+
+DOCUMENT-TYPE HINT
+==================
+This document looks like a {doc_type_label}.
+{type_hint}
+
+EXTRACTED IMAGES (in ./images/, if any)
+=======================================
+{image_list}
+
+EXTRACTED TABLES (use these JSON values verbatim if present)
+=======================================
+{table_list}
+
+{form_fields_section}
+
+Begin by writing the first version of your script and calling
+`run_python_docx_code`. Use your judgment for everything not
+covered by the hard rules.
+"""
+
+
+# Tiny, focused hints per document type. Replace 100+ lines of
+# per-type rules with 2-4 lines that orient Claude's judgment.
+_TYPE_HINTS = {
+    "CERTIFICATE": (
+        "  * Institution name as a centered bold heading near the top "
+        "(typed out, not as an image).\n"
+        "  * Match the source's centered-title + bold-subheading +\n"
+        "    underlined-fill-in-value pattern where present.\n"
+        "  * Keep stamps and signatures as text (officer name + title) "
+        "only; the wrapper provides the originals on separate pages."
+    ),
+    "FORM": (
+        "  * One python-docx table per logical section (Quadro RA, "
+        "Quadro RN, etc.).\n"
+        "  * Empty cells should still appear, rendered as ',00' or "
+        "just the column number — preserve the form's grid shape.\n"
+        "  * Use the EXTRACTED TABLES + EXHAUSTIVE FIELD DUMP below "
+        "as ground truth for every label, code (RA1, RN3), column "
+        "number, and value.\n"
+        "  * Apply SECTION STYLES (header_fill, body_fill, col_widths)\n"
+        "    via _shade(cell, hex) and table.columns[i].width = Cm(...)."
+    ),
+    "LETTER": (
+        "  * Top: sender address + date on the right, then recipient "
+        "left, then bold subject line.\n"
+        "  * Body as flowing paragraphs.\n"
+        "  * Bottom: closing salutation + typed name + title."
+    ),
+    "RECEIPT": (
+        "  * Merchant / issuer name in 14pt bold at the top.\n"
+        "  * Itemised list as a python-docx table (description, qty, "
+        "unit price, total).\n"
+        "  * Totals block right-aligned at the bottom, grand total bold."
+    ),
+    "CONTRACT": (
+        "  * Title centered + bold at the top.\n"
+        "  * Numbered clauses as separate paragraphs preserving the "
+        "source's numbering scheme.\n"
+        "  * Signature lines at the bottom."
+    ),
+    "OTHER": (
+        "  * Match the source's general structure — headings, "
+        "paragraphs, tables, images where they appear."
+    ),
+}
+
+
+def _type_label(doc_type: str) -> str:
+    """Human-readable form of a classifier output."""
+    return {
+        "CERTIFICATE": "official certificate or transcript",
+        "FORM": "structured form (tax return, application, registration)",
+        "LETTER": "letter or memo",
+        "RECEIPT": "receipt or invoice",
+        "CONTRACT": "contract or agreement",
+        "OTHER": "general document",
+    }.get(doc_type.upper(), "general document")
+
+
+def _select_prompt_for(doc_type: str) -> str:
+    """Return the universal prompt — type-specific rules now live
+    in {type_hint} placeholder inside the template.
+    """
+    return _UNIVERSAL_PROMPT
+
+
 _CLASSIFY_PROMPT = (
     "Classify this document into exactly ONE of these categories. "
     "Respond with ONLY the category name in uppercase, no punctuation, "
@@ -363,214 +523,15 @@ def _format_form_fields_for_prompt(pages: list) -> str:
 #     considered a complete failure.
 #   * One python-docx table per logical form section (Quadro RA,
 #     Quadro RN, etc.) — not a single mega-table.
-_PROMPT_FORM = """\
-You are translating a structured FORM (tax return, application,
-registration form, etc.) and producing a Microsoft Word (.docx)
-file that preserves the source's grid layout cell-by-cell.
-
-WORKFLOW
-========
-You have one tool: `run_python_docx_code`. You call it with a
-complete python-docx script. We run it in a sandbox and return
-diagnostics. Iterate until the form fully matches the source.
-
-REQUIREMENTS — FORM-SPECIFIC
-============================
-  * Translate from {source_lang} into {target_lang}.
-  * Save the finished DOCX to exactly: r"{output_path}"
-  * A4 page size (Cm(21) × Cm(29.7)), 1.5cm margins.
-  * Body font 10pt for cells, 11pt for section headers.
-  * Reproduce EVERY VISIBLE LABEL from the source. Field labels
-    (e.g. "Dominical income non-revalued", "Days", "%", "Special
-    cases", "Continuation"), section codes (RA1, RA2, RN1, RN3),
-    and column numbers (1, 2, 3 … 16) MUST appear in your output.
-  * Reproduce every value, code, and number visible in the form —
-    tax codes (e.g. MSLMHL79C43H501M), monetary values (32,260),
-    children's IDs, percentages (50%), date fragments.
-  * Empty cells still get rendered — show ",00" for empty money
-    fields, just the column number for empty number-only cells.
-    The shape of the form must survive even when most cells are
-    blank.
-  * Use python-docx TABLES for every grid in the form. ONE
-    `doc.add_table(rows=N, cols=M)` per section (Quadro RA, Quadro
-    RN, etc.). Do NOT render rows as flat paragraphs — that loses
-    the visual structure.
-  * Match the source's COLORS. For each section in SECTION STYLES,
-    apply the recorded header_fill / body_fill / text_color so the
-    output looks like the original form (not black-on-white). Use
-    this helper at the top of the script:
-
-        from docx.oxml import OxmlElement
-        from docx.oxml.ns import qn
-        from docx.shared import RGBColor
-
-        def _shade(cell, hex_color):
-            tcPr = cell._tc.get_or_add_tcPr()
-            shd = OxmlElement("w:shd")
-            shd.set(qn("w:val"), "clear")
-            shd.set(qn("w:color"), "auto")
-            shd.set(qn("w:fill"), hex_color)
-            tcPr.append(shd)
-
-        def _text_color(run, hex_color):
-            r, g, b = (
-                int(hex_color[0:2], 16),
-                int(hex_color[2:4], 16),
-                int(hex_color[4:6], 16),
-            )
-            run.font.color.rgb = RGBColor(r, g, b)
-
-    Apply header_fill to the section's HEADER row cells (the row
-    containing the section title or column labels). Apply
-    body_fill to data-row cells when it's not null. Apply
-    text_color to runs inside header cells when the source uses
-    white-on-blue or similar.
-  * Match the source's COLUMN WIDTHS. For each section that has
-    SECTION STYLES.col_widths, set table.autofit = False and
-    write column widths in proportion. The form fits on A4
-    portrait (usable width 18cm), so multiply each percentage by
-    0.18 and round to nearest mm:
-
-        from docx.shared import Cm
-        table.autofit = False
-        usable_cm = 18.0
-        for i, w in enumerate(col_widths):
-            table.columns[i].width = Cm(round(usable_cm * w / 100, 2))
-
-  * Borderless tables by default, BUT if the source has visible
-    grid lines (typical for tax-form data grids), set every cell
-    border to a 0.5pt solid line in #808080 grey using:
-
-        tblPr = table._tbl.tblPr
-        tblBorders = OxmlElement("w:tblBorders")
-        for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
-            b = OxmlElement(f"w:{edge}")
-            b.set(qn("w:val"), "single")
-            b.set(qn("w:sz"), "4")
-            b.set(qn("w:color"), "808080")
-            tblBorders.append(b)
-        tblPr.append(tblBorders)
-
-  * Section headers ("FORM RA — Income from land", "FORM RN —
-    Determination of IRPEF") get their own bold paragraph above
-    each table.
-  * The agency name at the top (e.g. "Revenue Agency / Agenzia
-    delle Entrate"), document title ("INCOME / REDDITI"), and tax
-    year ("TAX YEAR 2024 / PERIODO D'IMPOSTA 2024") should be
-    typed out as the first few paragraphs in 11pt bold — NOT as
-    bracketed image placeholders.
-  * NEVER write [Coat of Arms], [Stamp], [Signature: ...],
-    [Logo], or any other bracketed image marker.
-  * NEVER write HTML tags (<p>, <br>, style="...", <center>).
-    For alignment use `paragraph.alignment =
-    WD_ALIGN_PARAGRAPH.CENTER`. For bold use `run.bold = True`.
-  * FORBIDDEN: a CERTIFIED TRANSLATION block, "I hereby certify",
-    "Translator: <email>", "Note: This is a translation of...",
-    or any translator's note. The wrapper appends the real cert
-    AFTER your body.
-
-EXTRACTED IMAGES (in ./images/)
-===============================
-{image_list}
-
-EXTRACTED TABLES (use these JSON values verbatim — these ARE the
-form's data)
-===============================
-{table_list}
-
-EXHAUSTIVE FORM-FIELD DUMP (every visible label, code, column number,
-and value, page by page — use this as ground truth, do NOT skip
-entries, do NOT translate the codes themselves like RA1, RN3, but
-DO translate the labels into {target_lang})
-===============================
-{form_fields}
-
-Begin by writing the first version of the script and calling
-`run_python_docx_code`. The output must contain at least one
-python-docx table per major form section.
-"""
+_PROMPT_FORM = _UNIVERSAL_PROMPT  # aliased to universal prompt
 
 
 # ---- LETTER prompt — for memos, official notices, correspondence ----
-_PROMPT_LETTER = """\
-You are translating a LETTER or MEMO and producing a Microsoft
-Word (.docx) file that preserves the source's visual layout.
-
-WORKFLOW
-========
-You have one tool: `run_python_docx_code`. Call it with a
-complete python-docx script. Iterate based on diagnostics.
-
-REQUIREMENTS
-============
-  * Translate from {source_lang} into {target_lang}.
-  * Save the finished DOCX to exactly: r"{output_path}"
-  * A4 page size, 2cm margins, 11pt body.
-  * Top-of-page block: sender name + sender address + date,
-    aligned right. Then recipient block aligned left. Then
-    subject line in bold. Then the letter body as flowing
-    paragraphs. Then closing salutation. Then typed name +
-    title at the bottom.
-  * NO inline images. The wrapper embeds the original source
-    pages BEFORE your body, so the original masthead /
-    letterhead is preserved at full quality.
-  * NEVER write bracketed image markers ([Coat of Arms],
-    [Stamp], [Signature], etc.) or HTML tags.
-  * FORBIDDEN: a CERTIFIED TRANSLATION block / "I hereby
-    certify" / translator's note. The wrapper appends the
-    real cert AFTER your body.
-
-EXTRACTED IMAGES (in ./images/)
-===============================
-{image_list}
-
-EXTRACTED TABLES
-===============================
-{table_list}
-
-Begin by writing the first version of the script.
-"""
+_PROMPT_LETTER = _UNIVERSAL_PROMPT  # aliased to universal prompt
 
 
 # ---- RECEIPT prompt — for invoices, receipts, payment confirmations ----
-_PROMPT_RECEIPT = """\
-You are translating a RECEIPT or INVOICE and producing a Microsoft
-Word (.docx) file that preserves the itemised structure.
-
-WORKFLOW
-========
-One tool: `run_python_docx_code`. Iterate on diagnostics.
-
-REQUIREMENTS
-============
-  * Translate from {source_lang} into {target_lang}.
-  * Save the finished DOCX to: r"{output_path}"
-  * A4 page size, 1.5cm margins, 11pt body, 10pt for itemised
-    rows.
-  * Top of page: merchant / issuer name in 14pt bold, then
-    address + tax ID + receipt date in normal weight.
-  * The itemised list MUST be a real python-docx table (one
-    row per line item). Columns typically: description,
-    quantity, unit price, total. Currency symbols and
-    decimals preserved verbatim (€ 32,260,00 stays as
-    "€ 32,260.00" or local convention as appropriate).
-  * Totals block at the bottom: subtotal, tax, grand total,
-    each on its own line, right-aligned, bold for the grand
-    total.
-  * NEVER write bracketed image markers or HTML tags.
-  * FORBIDDEN: CERTIFIED TRANSLATION block / translator's
-    note.
-
-EXTRACTED IMAGES (in ./images/)
-===============================
-{image_list}
-
-EXTRACTED TABLES
-===============================
-{table_list}
-
-Begin by writing the first version of the script.
-"""
+_PROMPT_RECEIPT = _UNIVERSAL_PROMPT  # aliased to universal prompt
 
 
 def _select_prompt_for(doc_type: str) -> str:
@@ -586,106 +547,7 @@ def _select_prompt_for(doc_type: str) -> str:
     }.get(doc_type, _INITIAL_PROMPT)
 
 
-_INITIAL_PROMPT = """\
-You are translating a document and producing a Microsoft Word
-(.docx) file that preserves the source's visual layout.
-
-WORKFLOW
-========
-You have one tool: `run_python_docx_code`. You call it with a
-complete python-docx script. We run the script in a sandbox and
-return diagnostics: file size, page count, first ~20 body
-paragraphs, image count, table count, forbidden-string flags,
-and any traceback. You then iterate — fix whatever doesn't match
-the source, call the tool again, repeat until the output matches.
-
-When the output looks correct (no forbidden-string warnings, the
-content matches the source, layout looks right), STOP responding
-and we'll take whatever the last successful run produced.
-
-REQUIREMENTS
-============
-  * Translate from {source_lang} into {target_lang}.
-  * Save the finished DOCX to exactly: r"{output_path}"
-  * A4 page size (Cm(21) × Cm(29.7)), 2cm margins.
-  * Body font 11pt minimum. Match the source's bold pattern —
-    do NOT bold body paragraphs, two-label rows, or all-caps
-    centered statements unless the source itself uses bold there.
-  * Tables: borderless. Set tblBorders to nil on every table.
-    Set width per column with `t.columns[i].width = Cm(N)`.
-  * Two-label rows (e.g. "Cert. No. X" + "Student ID Y"): keep
-    on ONE paragraph using a right-aligned tab stop at Cm(17).
-  * Source-PDF images live at ./images/ (filenames provided
-    below). Insert with `doc.add_picture("images/X.png", width=Cm(N))`
-    using these sizes: crest 2.5cm, logo 3cm, seal/stamp 3cm,
-    signature 5cm, photo 3cm. NEVER stretch a small image past
-    its sizing budget.
-  * FORBIDDEN: a CERTIFIED TRANSLATION / "I hereby certify" /
-    "Translator: <email>" / "Signature: ___" block anywhere in
-    your output. ALSO FORBIDDEN: any "Note: This is a translation
-    of the original..." / "This document is a translation of..."
-    sentence at the bottom — DO NOT add one. The certification
-    page is appended by our wrapper AFTER your translation. Your
-    job is the translation body only. Stop when the source's
-    last paragraph is translated.
-  * NEVER WRITE HTML TAGS. You are authoring a python-docx
-    script, NOT generating HTML. Do NOT write the literal strings
-    "<p>", "<br>", "<div>", "<span>", style="...", "<b>" or any
-    other HTML markup inside doc.add_paragraph(), p.add_run(),
-    or any other text call. If the user asks for "centered" text,
-    you set paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER (and
-    `from docx.enum.text import WD_ALIGN_PARAGRAPH` at the top).
-    For bold, use run.bold = True. Word renders HTML as visible
-    text — the user sees the literal "<p style=...>" string in
-    their document. This is a hard rule with no exceptions.
-  * NEVER WRITE BRACKETED IMAGE PLACEHOLDERS as visible body
-    text. Do NOT write "[Coat of Arms]", "[Stamp: ...]",
-    "[Signature: ...]", "[Photo]", "[Seal]", "[Logo]", "[QR
-    Code]", "[Crest]" or anything similar inside add_paragraph()
-    / add_run(). Per the TEXT-ONLY rule above, omit these
-    elements entirely — the source pages embedded by the wrapper
-    already show the originals at full quality.
-  * REQUIRED FIRST OUTPUT: the very first paragraph of your
-    translation body MUST be the institution's name in
-    {target_lang}, centered, BOLD, 14pt (e.g.
-    "UNIVERSITY OF FLORENCE" or "MINISTRY OF THE INTERIOR").
-    The second paragraph MUST be the sub-department in normal
-    weight, centered (e.g. "Student Registrar's Office").
-    DO NOT skip this. Even if the source PDF has the masthead
-    as a graphic, type it out as text — Claude.ai chat always
-    does this when given a PDF, and we want the same output.
-  * NO INLINE IMAGES ANYWHERE IN THE TRANSLATION BODY.
-    Do NOT call doc.add_picture() at all. Do NOT insert a
-    crest, logo, signature, seal, stamp, photo, QR code,
-    or any other image — even if filenames are listed
-    below. The wrapper embeds the FULL source PDF pages
-    BEFORE your body, so the original crest / signature /
-    seal / stamp are all preserved in their proper
-    high-fidelity form on the source pages. Your translation
-    is TEXT-ONLY.
-      - Masthead: institution name typed in 12-14pt bold.
-      - Signature block: officer name typed in normal
-        weight, no signature image, no seal image.
-      - Stamps / seals / QR codes: omit entirely from your
-        body.
-    This is the user's explicit instruction. Adding inline
-    images produces blurry tiny rectangles that look
-    broken — the source pages already show the originals
-    at full quality.
-
-EXTRACTED IMAGES (in ./images/)
-===============================
-{image_list}
-
-EXTRACTED TABLES (use these JSON values verbatim for any data
-table in your output)
-===============================
-{table_list}
-
-Begin by writing the first version of the script and calling
-`run_python_docx_code` with it. After each tool result, fix what
-needs fixing.
-"""
+_INITIAL_PROMPT = _UNIVERSAL_PROMPT  # aliased to universal prompt
 
 
 _TOOL_DEFINITION = {
@@ -1000,7 +862,7 @@ def author_rebuild_docx_multiturn(
     target_lang: str,
     *,
     model: Optional[str] = None,
-    max_turns: int = 6,
+    max_turns: int = 10,
     timeout_per_run_seconds: int = 180,
     extra_instructions: Optional[str] = None,
 ) -> bytes:
@@ -1031,7 +893,7 @@ def _author_rebuild_docx_multiturn_core(
     target_lang: str,
     *,
     model: Optional[str] = None,
-    max_turns: int = 6,
+    max_turns: int = 10,
     timeout_per_run_seconds: int = 180,
     extra_instructions: Optional[str] = None,
     _force_doc_type: Optional[str] = None,
@@ -1180,22 +1042,31 @@ def _author_rebuild_docx_multiturn_core(
         else _format_image_list(images)
     )
 
-    # The FORM template references {form_fields}; other templates
-    # don't. Format with both kwargs — Python's str.format ignores
-    # unused keys only via dict-unpacking, so build the kwargs to
-    # match the active template.
+    # Universal prompt receives all kwargs every time. {form_fields_section}
+    # is set to either the JSON dump block (FORM) or a small "(not
+    # applicable)" note.
+    if doc_type == "FORM" and form_fields_text and form_fields_text != "(not applicable for this document type)":
+        form_fields_section = (
+            "EXHAUSTIVE FORM-FIELD DUMP (every visible label / code / "
+            "column number / value per page — use as ground truth)\n"
+            "===================================================\n"
+            + form_fields_text
+        )
+    else:
+        form_fields_section = ""
+
     format_kwargs = dict(
         source_lang=source_lang or "the source language",
         target_lang=target_lang,
         output_path=output_path,
         image_list=image_list_text,
         table_list=_format_table_list(tables),
+        doc_type_label=_type_label(doc_type),
+        type_hint=_TYPE_HINTS.get(
+            doc_type.upper(), _TYPE_HINTS["OTHER"]
+        ),
+        form_fields_section=form_fields_section,
     )
-    # Only the FORM template uses {form_fields}; only pass it if
-    # the active template references it (avoid KeyError on other
-    # templates that don't have the placeholder).
-    if "{form_fields}" in prompt_template:
-        format_kwargs["form_fields"] = form_fields_text
     initial_prompt = prompt_template.format(**format_kwargs)
     # Append user-provided revision feedback so this rebuild
     # actually addresses what the user typed in the Request
@@ -1244,12 +1115,38 @@ def _author_rebuild_docx_multiturn_core(
             turn, max_turns, chosen_model,
         )
         try:
-            resp = client.messages.create(
+            # Build the API call. Extended thinking + larger token
+            # budget = closer to Claude.ai chat behavior. Thinking
+            # is optional (fails gracefully on older SDKs).
+            api_kwargs = dict(
                 model=chosen_model,
-                max_tokens=16000,
+                max_tokens=32000,
                 tools=[_TOOL_DEFINITION],
                 messages=messages,
             )
+            if os.getenv("REBUILD_EXTENDED_THINKING", "1").lower() not in ("0", "false", "no", "off"):
+                # 12000 thinking tokens — enough to plan a long
+                # document. The Anthropic SDK accepts a "thinking"
+                # parameter on models that support it; we wrap in
+                # try/except below to handle SDKs that don't.
+                api_kwargs["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": 12000,
+                }
+            try:
+                resp = client.messages.create(**api_kwargs)
+            except TypeError:
+                # SDK didn't accept "thinking" — retry without it.
+                api_kwargs.pop("thinking", None)
+                resp = client.messages.create(**api_kwargs)
+            except Exception as _e:
+                msg = str(_e)
+                # Some models reject thinking + tools; retry plain.
+                if "thinking" in msg.lower() and "thinking" in api_kwargs:
+                    api_kwargs.pop("thinking", None)
+                    resp = client.messages.create(**api_kwargs)
+                else:
+                    raise
         except Exception as e:
             logger.exception("Anthropic call failed on turn %d: %s", turn, e)
             # If we already have a working DOCX from an earlier turn,
