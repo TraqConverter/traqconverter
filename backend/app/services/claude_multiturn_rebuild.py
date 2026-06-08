@@ -86,6 +86,28 @@ styling — paragraph.alignment, run.bold, run.underline,
 run.font.color.rgb, and the _shade(cell, hex) helper for cell
 backgrounds. NEVER write HTML tags as visible text.
 
+CONSOLIDATE TABLES. One python-docx table per LOGICAL SECTION.
+If the source has 29 rows under a single heading, that's ONE
+table with 29 rows — NOT 29 one-row tables. Creating a separate
+table per row is the most common failure mode of this pipeline;
+don't do it.
+
+MERGE CELLS for headers. When a section title spans the full
+width of a table (e.g. "SECTION RN — Determination of IRPEF"),
+use _merge_row(table, 0, "...", bold=True) so the title appears
+ONCE in a merged cell — don't duplicate the same text across
+every column. Same for column groupings: use _merge_col() for
+vertical spans.
+
+ONE TABLE, MANY ROWS — example pattern:
+
+    section_table = doc.add_table(rows=1 + len(rows_data), cols=N)
+    _merge_row(section_table, 0, "SECTION RN — IRPEF", bold=True)
+    for i, (code, label, val) in enumerate(rows_data, start=1):
+        _set_cell(section_table, i, 0, code, bold=True)
+        _set_cell(section_table, i, 1, label)
+        _set_cell(section_table, i, 2, val, align="right")
+
 HARD RULES (these prevent known failure modes — every other
 decision is your judgment call):
 
@@ -124,6 +146,46 @@ Helper recipes you can paste at the top of your script:
         )
         run.font.color.rgb = RGBColor(r, g, b)
 
+    def _merge_row(table, row_idx, text=None, *, bold=False, align="center"):
+        # Merge every cell in row `row_idx` into one wide cell.
+        # If `text` is given, write it once into the merged cell.
+        # Use this for section-header rows that span the full table
+        # width. DO NOT duplicate the same text across every column.
+        cells = table.rows[row_idx].cells
+        merged = cells[0].merge(cells[-1])
+        if text is not None:
+            merged.text = ""
+            p = merged.paragraphs[0]
+            if align == "center":
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            elif align == "right":
+                from docx.enum.text import WD_ALIGN_PARAGRAPH as _A
+                p.alignment = _A.RIGHT
+            run = p.add_run(text)
+            run.bold = bold
+        return merged
+
+    def _merge_col(table, col_idx, row_start, row_end):
+        # Merge a vertical run of cells in one column.
+        # Use for column headers that span multiple header rows.
+        top = table.cell(row_start, col_idx)
+        bot = table.cell(row_end, col_idx)
+        return top.merge(bot)
+
+    def _set_cell(table, row, col, text, *, bold=False, align=None):
+        # Replace a cell's content cleanly. Clears existing
+        # paragraphs first so you don't double-up text.
+        cell = table.cell(row, col)
+        cell.text = ""
+        p = cell.paragraphs[0]
+        if align == "center":
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        elif align == "right":
+            from docx.enum.text import WD_ALIGN_PARAGRAPH as _A
+            p.alignment = _A.RIGHT
+        run = p.add_run(text)
+        run.bold = bold
+
 DOCUMENT-TYPE HINT
 ==================
 This document looks like a {doc_type_label}.
@@ -157,15 +219,23 @@ _TYPE_HINTS = {
         "only; the wrapper provides the originals on separate pages."
     ),
     "FORM": (
-        "  * One python-docx table per logical section (Quadro RA, "
-        "Quadro RN, etc.).\n"
-        "  * Empty cells should still appear, rendered as ',00' or "
-        "just the column number — preserve the form's grid shape.\n"
+        "  * ONE python-docx table per logical section. RN1, RN2, RN3 "
+        "... RN29 belong in the SAME table as separate rows. NEVER "
+        "create one-row tables per RN/RA entry — that fragmentation "
+        "is the #1 failure mode for tax-form rebuilds.\n"
+        "  * For each section's TOP header row that spans the full "
+        "width, call _merge_row(table, 0, 'SECTION NAME', bold=True). "
+        "Do NOT write the section name into every column cell.\n"
+        "  * For column-label rows where one logical heading spans "
+        "multiple columns (e.g. 'Ownership' spanning 'days' and '%'), "
+        "use cells[i].merge(cells[j]) and write the heading once.\n"
+        "  * Empty cells render as ',00' or just the column number — "
+        "preserve the form's grid shape.\n"
         "  * Use the EXTRACTED TABLES + EXHAUSTIVE FIELD DUMP below "
         "as ground truth for every label, code (RA1, RN3), column "
         "number, and value.\n"
-        "  * Apply SECTION STYLES (header_fill, body_fill, col_widths)\n"
-        "    via _shade(cell, hex) and table.columns[i].width = Cm(...)."
+        "  * Apply SECTION STYLES (header_fill, body_fill, col_widths) "
+        "via _shade(cell, hex) and table.columns[i].width = Cm(...)."
     ),
     "LETTER": (
         "  * Top: sender address + date on the right, then recipient "
@@ -935,6 +1005,7 @@ def _author_rebuild_docx_multiturn_core(
             _strip_html_and_bracket_artifacts,
             _replace_image_placeholders,
             _strip_broken_image_drawings,
+            _merge_adjacent_compatible_tables,
         )
     except Exception as e:
         raise RuntimeError(f"Helper import failed: {e}")
@@ -1281,6 +1352,11 @@ def _author_rebuild_docx_multiturn_core(
         # "<p style=\"text-align: center;\">FOO</p>" or
         # "[Coat of Arms]"). Both should never appear in the output.
         docx_bytes = _strip_html_and_bracket_artifacts(docx_bytes)
+        # Merge adjacent 1-row tables that have the same column
+        # structure into a single multi-row table. Catches the
+        # "29 one-row tables for RN1..RN29" fragmentation that
+        # Claude still produces sometimes.
+        docx_bytes = _merge_adjacent_compatible_tables(docx_bytes)
         docx_bytes = _strip_broken_image_drawings(docx_bytes)
     except Exception:
         logger.exception("Post-processor chain raised; returning raw bytes")
