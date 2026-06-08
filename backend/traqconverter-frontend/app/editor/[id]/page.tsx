@@ -1368,7 +1368,22 @@ export default function EditorPage() {
               >
                 <button
                   type="button"
-                  onClick={() => setCompareEdit((v) => !v)}
+                  onClick={() => {
+                    setCompareEdit((v) => {
+                      const next = !v
+                      // Switching FROM edit TO preview: make sure the
+                      // PDF rebuild has been loaded. loadCompare() only
+                      // runs when Compare mode first opens, so if the
+                      // user lands directly in Compare and toggles to
+                      // preview, rebuildPreview would still be null and
+                      // the right pane would show "Loading rebuild…"
+                      // forever.
+                      if (!next && (!rebuildPreview || !rebuildPreview.url)) {
+                        loadCompare()
+                      }
+                      return next
+                    })
+                  }}
                   className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
                   style={{
                     background: compareEdit ? "#ffffff" : "#0a7870",
@@ -3409,33 +3424,4 @@ function Stat({
         color: active ? "#0a7870" : "#8a8270",
       }}
     >
-      <div className="text-xs font-semibold flex items-center justify-center gap-1">
-        {label}
-        {typeof count === "number" && (
-          <span
-            className="text-[10px] tabular-nums px-1 rounded-full"
-            style={{ color: "#9a9178" }}
-          >
-            · {count}
-          </span>
-        )}
-      </div>
-    </button>
-  )
-}
-
-function StatusRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div
-      className="flex items-center justify-between py-2"
-      style={{ borderBottom: "1px solid #f1e8d1" }}
-    >
-      <div className="text-sm" style={{ color: "#6b6558" }}>
-        {label}
-      </div>
-      <div className="text-sm font-semibold" style={{ color: "#1f2a2e" }}>
-        {value}
-      </div>
-    </div>
-  )
-}
+      <div className="text-xs font-semibold flex items-c
