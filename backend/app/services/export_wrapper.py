@@ -116,6 +116,40 @@ def _install_stamp_in_footer(section, stamp_path: Path, alignment: str = "right"
 # Append the body of another DOCX into the current one.
 # ----------------------------------------------------------------
 
+
+def _detect_source_page_orientation(source_path) -> str:
+    """Return 'portrait' or 'landscape' based on the source PDF's
+    first-page aspect ratio. Defaults to portrait on any error so
+    we never break existing behavior.
+    """
+    try:
+        import fitz  # type: ignore
+        try:
+            d = fitz.open(str(source_path))
+            try:
+                if len(d) == 0:
+                    return "portrait"
+                r = d[0].rect
+                return "landscape" if r.width > r.height else "portrait"
+            finally:
+                d.close()
+        except Exception:
+            pass
+    except Exception:
+        pass
+    try:
+        import pypdf
+        r = pypdf.PdfReader(str(source_path))
+        if not r.pages:
+            return "portrait"
+        box = r.pages[0].mediabox
+        w = float(box.width)
+        h = float(box.height)
+        return "landscape" if w > h else "portrait"
+    except Exception:
+        return "portrait"
+
+
 def _append_body_from(src_doc: Document, dst_doc: Document):
     """Copy paragraphs and tables from `src_doc.body` into `dst_doc.body`,
     preserving formatting at the XML level.
@@ -398,13 +432,21 @@ def build_full_export_docx(
                 and source_path.exists()
                 and str(source_path).lower().endswith(".pdf")
             ):
+                # Match source orientation -- if the original is
+                # landscape, the translation must be landscape too.
+                src_orient = _detect_source_page_orientation(source_path)
+                if src_orient == "landscape":
+                    # A4 landscape: 29.7cm x 21cm.
+                    pg_w, pg_h = Cm(29.7), Cm(21)
+                    src_img_w = Cm(27.7)  # 1cm margins
+                else:
+                    # A4 portrait: 21cm x 29.7cm.
+                    pg_w, pg_h = Cm(21), Cm(29.7)
+                    src_img_w = Cm(19)
                 page_imgs = _render_source_pages_as_images(source_path, work_dir)
                 if page_imgs:
-                    # A4 explicit so source images at Cm(19) fit
-                    # within the printable area (default Letter
-                    # is 1cm too short vertically).
-                    section.page_width = Cm(21)
-                    section.page_height = Cm(29.7)
+                    section.page_width = pg_w
+                    section.page_height = pg_h
                     section.top_margin = Cm(1)
                     section.bottom_margin = Cm(1)
                     section.left_margin = Cm(1)
@@ -412,8 +454,8 @@ def build_full_export_docx(
                 for i, img in enumerate(page_imgs):
                     if i > 0:
                         new_sect = out.add_section(WD_SECTION.NEW_PAGE)
-                        new_sect.page_width = Cm(21)
-                        new_sect.page_height = Cm(29.7)
+                        new_sect.page_width = pg_w
+                        new_sect.page_height = pg_h
                         new_sect.top_margin = Cm(1)
                         new_sect.bottom_margin = Cm(1)
                         new_sect.left_margin = Cm(1)
@@ -423,18 +465,15 @@ def build_full_export_docx(
                     p.paragraph_format.space_before = Pt(0)
                     p.paragraph_format.space_after = Pt(0)
                     run = p.add_run()
-                    # 19cm with 1cm margins on A4 (21cm wide) =
-                    # full-bleed source page, leaves a hair of
-                    # safety so the image never overflows.
-                    run.add_picture(str(img), width=Cm(19))
+                    # Full-bleed source page (1cm margin each side).
+                    run.add_picture(str(img), width=src_img_w)
                 if page_imgs:
                     source_added = True
-                    # Translation body section: normal 2cm
-                    # margins, starts on a fresh NEW_PAGE so
-                    # it's visually separated from the source.
+                    # Translation body section: matches source
+                    # orientation; normal 2cm margins; fresh page.
                     body_sect = out.add_section(WD_SECTION.NEW_PAGE)
-                    body_sect.page_width = Cm(21)
-                    body_sect.page_height = Cm(29.7)
+                    body_sect.page_width = pg_w
+                    body_sect.page_height = pg_h
                     body_sect.top_margin = Cm(2)
                     body_sect.bottom_margin = Cm(2.2)
                     body_sect.left_margin = Cm(2)

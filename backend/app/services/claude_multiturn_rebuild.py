@@ -231,7 +231,7 @@ _TYPE_HINTS = {
         "  * For section-header rows that span the full width, call "
         "_merge_row(table, 0, 'SECTION NAME', bold=True). Do NOT "
         "write the section name into every column cell.\n"
-        "  * STRICT column widths. For each table whose section "
+        "  * PAGE ORIENTATION MUST MATCH THE SOURCE. If the source page is portrait, your translation page stays portrait even when the grid has 17 columns. Fit wide grids by setting tight column widths (e.g. 0.9-1.1cm each) and dropping the cell font to 7pt -- never flip to landscape unless the source page itself is landscape.\n  * STRICT column widths. For each table whose section "
         "has col_widths in SECTION STYLES, set table.autofit=False "
         "AND apply the proportions verbatim:\n"
         "      page_cm = 18.0  # A4 portrait usable width\n"
@@ -1047,7 +1047,6 @@ def _author_rebuild_docx_multiturn_core(
             _replace_image_placeholders,
             _strip_broken_image_drawings,
             _merge_adjacent_compatible_tables,
-            _auto_landscape_wide_tables,
             _collapse_pre_section_whitespace,
         )
     except Exception as e:
@@ -1411,9 +1410,11 @@ def _author_rebuild_docx_multiturn_core(
         # "29 one-row tables for RN1..RN29" fragmentation that
         # Claude still produces sometimes.
         docx_bytes = _merge_adjacent_compatible_tables(docx_bytes)
-        # Wide tables get switched to landscape A4 sections so
-        # they don't overflow portrait page width.
-        docx_bytes = _auto_landscape_wide_tables(docx_bytes)
+        # NOTE: _auto_landscape_wide_tables intentionally skipped.
+        # The translation page must match the SOURCE page's
+        # orientation, not auto-flip based on table width. Wide
+        # tables get fitted by tighter column widths + smaller
+        # font instead. The function still exists but is unwired.
         # Strip empty paragraphs between page breaks and next section.
         docx_bytes = _collapse_pre_section_whitespace(docx_bytes)
         docx_bytes = _strip_broken_image_drawings(docx_bytes)
