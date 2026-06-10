@@ -2900,9 +2900,8 @@ def author_rebuild_docx(
         # table -- fixes the "29 separate one-row tables for
         # RN1..RN29" fragmentation pattern.
         docx_bytes = _merge_adjacent_compatible_tables(docx_bytes)
-        # Wide tables (>10 columns) get switched to landscape A4 so
-        # they don't get cropped at portrait's 18cm usable width.
-        docx_bytes = _auto_landscape_wide_tables(docx_bytes)
+        # NOTE: auto-landscape skipped intentionally -- translation
+        # page orientation must match source orientation per-page.
         # Drop empty paragraphs sitting between a page break and
         # the next section so new pages start at the top.
         docx_bytes = _collapse_pre_section_whitespace(docx_bytes)
