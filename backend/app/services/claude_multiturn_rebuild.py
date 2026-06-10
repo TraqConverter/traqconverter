@@ -312,6 +312,24 @@ _CLASSIFY_PROMPT = (
 )
 
 
+
+# Models that have ADAPTIVE thinking always-on at the API level:
+# they reject (or warn on) the explicit `thinking` parameter that
+# extended-thinking-capable models use. Fable 5 and Mythos 5 fall
+# in this category per the Anthropic docs (June 2026 launch).
+_ADAPTIVE_THINKING_MODELS = (
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-mythos-preview",
+)
+
+
+def _uses_adaptive_thinking(model: str) -> bool:
+    """True for models where we must skip the explicit thinking arg."""
+    m = (model or "").strip().lower()
+    return any(m.startswith(prefix) for prefix in _ADAPTIVE_THINKING_MODELS)
+
+
 def _classify_document(pdf_bytes: bytes) -> str:
     """Use Claude Vision on page 1 to pick a layout family. Returns
     one of CERTIFICATE / FORM / LETTER / RECEIPT / CONTRACT / OTHER.
@@ -1183,7 +1201,11 @@ def _author_rebuild_docx_multiturn_core(
         }
     ]
 
-    chosen_model = model or "claude-opus-4-6"
+    chosen_model = (
+        model
+        or os.getenv("REBUILD_DEFAULT_MODEL")
+        or "claude-fable-5"
+    )
     last_good_docx: bytes = b""
     last_good_inspection: dict = {}
 
@@ -1202,7 +1224,14 @@ def _author_rebuild_docx_multiturn_core(
                 tools=[_TOOL_DEFINITION],
                 messages=messages,
             )
-            if os.getenv("REBUILD_EXTENDED_THINKING", "1").lower() not in ("0", "false", "no", "off"):
+            # Skip explicit thinking for models that already do
+            # adaptive thinking always-on (Fable 5, Mythos 5).
+            allow_thinking = (
+                os.getenv("REBUILD_EXTENDED_THINKING", "1").lower()
+                not in ("0", "false", "no", "off")
+                and not _uses_adaptive_thinking(chosen_model)
+            )
+            if allow_thinking:
                 # 12000 thinking tokens — enough to plan a long
                 # document. The Anthropic SDK accepts a "thinking"
                 # parameter on models that support it; we wrap in
