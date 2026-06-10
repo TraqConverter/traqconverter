@@ -225,23 +225,39 @@ _TYPE_HINTS = {
         "only; the wrapper provides the originals on separate pages."
     ),
     "FORM": (
-        "  * ONE python-docx table per logical section. RN1, RN2, RN3 "
-        "... RN29 belong in the SAME table as separate rows. NEVER "
-        "create one-row tables per RN/RA entry -- that fragmentation "
-        "is the #1 failure mode for tax-form rebuilds.\n"
-        "  * For each section's TOP header row that spans the full "
-        "width, call _merge_row(table, 0, 'SECTION NAME', bold=True). "
-        "Do NOT write the section name into every column cell.\n"
-        "  * For column-label rows where one logical heading spans "
-        "multiple columns (e.g. 'Ownership' spanning 'days' and '%'), "
-        "use cells[i].merge(cells[j]) and write the heading once.\n"
-        "  * Empty cells render as ',00' or just the column number -- "
-        "preserve the form's grid shape.\n"
-        "  * Use the EXTRACTED TABLES + EXHAUSTIVE FIELD DUMP below "
-        "as ground truth for every label, code (RA1, RN3), column "
-        "number, and value.\n"
-        "  * Apply SECTION STYLES (header_fill, body_fill, col_widths) "
-        "via _shade(cell, hex) and table.columns[i].width = Cm(...)."
+        "  * ONE python-docx table per logical section. RN1..RN31 "
+        "belong in the SAME table as separate rows. NEVER create "
+        "one-row tables per RN/RA entry.\n"
+        "  * For section-header rows that span the full width, call "
+        "_merge_row(table, 0, 'SECTION NAME', bold=True). Do NOT "
+        "write the section name into every column cell.\n"
+        "  * STRICT column widths. For each table whose section "
+        "has col_widths in SECTION STYLES, set table.autofit=False "
+        "AND apply the proportions verbatim:\n"
+        "      page_cm = 18.0  # A4 portrait usable width\n"
+        "      table.autofit = False\n"
+        "      for i, w in enumerate(col_widths):\n"
+        "          table.columns[i].width = Cm(page_cm * w / 100)\n"
+        "    For tables with >10 columns the wrapper switches the\n"
+        "    page to landscape automatically; size for 26cm width\n"
+        "    when col_widths sum to 100 and the table is wide.\n"
+        "  * RN SUB-FIELDS as a NESTED TABLE inside the sub-detail "
+        "cell. When an RN entry has N sub-fields (e.g. RN6 has "
+        "Spouse / Children / Other) render them SIDE-BY-SIDE using "
+        "a 1xN nested table inside the cell, NOT stacked paragraphs:\n"
+        "      sub_cell = rn_table.cell(i, 2)\n"
+        "      sub_cell.text = \"\"\n"
+        "      inner = sub_cell.add_table(rows=2, cols=len(subs))\n"
+        "      for j, (lbl, val) in enumerate(subs):\n"
+        "          _set_cell(inner, 0, j, lbl, size_pt=7)\n"
+        "          _set_cell(inner, 1, j, val, size_pt=8, bold=bool(val))\n"
+        "    This matches the source layout where columns 1-3 of "
+        "an RN row sit horizontally, not vertically.\n"
+        "  * Empty cells render as ',00' or just the column number "
+        "to preserve the form's grid shape.\n"
+        "  * Use EXTRACTED TABLES + EXHAUSTIVE FIELD DUMP as ground "
+        "truth. Apply SECTION STYLES header_fill / body_fill via "
+        "_shade(cell, hex)."
     ),
 
     "LETTER": (
@@ -1031,6 +1047,8 @@ def _author_rebuild_docx_multiturn_core(
             _replace_image_placeholders,
             _strip_broken_image_drawings,
             _merge_adjacent_compatible_tables,
+            _auto_landscape_wide_tables,
+            _collapse_pre_section_whitespace,
         )
     except Exception as e:
         raise RuntimeError(f"Helper import failed: {e}")
@@ -1393,6 +1411,11 @@ def _author_rebuild_docx_multiturn_core(
         # "29 one-row tables for RN1..RN29" fragmentation that
         # Claude still produces sometimes.
         docx_bytes = _merge_adjacent_compatible_tables(docx_bytes)
+        # Wide tables get switched to landscape A4 sections so
+        # they don't overflow portrait page width.
+        docx_bytes = _auto_landscape_wide_tables(docx_bytes)
+        # Strip empty paragraphs between page breaks and next section.
+        docx_bytes = _collapse_pre_section_whitespace(docx_bytes)
         docx_bytes = _strip_broken_image_drawings(docx_bytes)
     except Exception:
         logger.exception("Post-processor chain raised; returning raw bytes")

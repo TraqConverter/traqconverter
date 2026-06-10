@@ -2443,6 +2443,249 @@ def _merge_adjacent_compatible_tables(docx_bytes: bytes) -> bytes:
         return docx_bytes
 
 
+def _auto_landscape_wide_tables(docx_bytes: bytes) -> bytes:
+    """Insert a landscape section break before any table with more
+    than WIDE_COL_THRESHOLD columns, and a portrait one after, so
+    wide tables get an A4 landscape page (29.7cm x 21cm) instead
+    of getting cropped at 18cm of usable portrait width.
+
+    Best-effort; failures return the original bytes unchanged.
+    """
+    WIDE_COL_THRESHOLD = 10
+    try:
+        import io as _io
+        import zipfile as _zip
+        from xml.etree import ElementTree as ET
+
+        W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        ET.register_namespace("w", W_NS)
+        TBL = "{%s}tbl" % W_NS
+        TBLGRID = "{%s}tblGrid" % W_NS
+        P_TAG = "{%s}p" % W_NS
+        PPR = "{%s}pPr" % W_NS
+        SECTPR = "{%s}sectPr" % W_NS
+
+        def _make_sectpr(orientation):
+            """Build a <w:sectPr> with the desired page orientation.
+            Portrait: 11906x16838 twips (A4). Landscape swaps them."""
+            sp = ET.SubElement(ET.Element("w:tmp"), "{%s}sectPr" % W_NS)
+            pgsz = ET.SubElement(sp, "{%s}pgSz" % W_NS)
+            if orientation == "landscape":
+                pgsz.set("{%s}w" % W_NS, "16838")
+                pgsz.set("{%s}h" % W_NS, "11906")
+                pgsz.set("{%s}orient" % W_NS, "landscape")
+            else:
+                pgsz.set("{%s}w" % W_NS, "11906")
+                pgsz.set("{%s}h" % W_NS, "16838")
+            pgmar = ET.SubElement(sp, "{%s}pgMar" % W_NS)
+            pgmar.set("{%s}top" % W_NS, "850")
+            pgmar.set("{%s}right" % W_NS, "850")
+            pgmar.set("{%s}bottom" % W_NS, "850")
+            pgmar.set("{%s}left" % W_NS, "850")
+            pgmar.set("{%s}header" % W_NS, "0")
+            pgmar.set("{%s}footer" % W_NS, "0")
+            pgmar.set("{%s}gutter" % W_NS, "0")
+            return sp
+
+        def _wrap_paragraph_with_sectpr(orientation):
+            """Build a <w:p> whose pPr ends with the sectPr."""
+            p = ET.Element(P_TAG)
+            ppr = ET.SubElement(p, PPR)
+            ppr.append(_make_sectpr(orientation))
+            return p
+
+        in_buf = _io.BytesIO(docx_bytes)
+        out_buf = _io.BytesIO()
+        modified = False
+        inserted = 0
+
+        with _zip.ZipFile(in_buf, "r") as zin:
+            with _zip.ZipFile(out_buf, "w", _zip.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    if item.filename == "word/document.xml":
+                        try:
+                            root = ET.fromstring(data)
+                            body = root.find("{%s}body" % W_NS)
+                            if body is not None:
+                                children = list(body)
+                                # Walk in order, wrap any wide table
+                                # with landscape boundary above and
+                                # portrait boundary below.
+                                new_kids = []
+                                for el in children:
+                                    if el.tag == TBL:
+                                        grid = el.find(TBLGRID)
+                                        col_count = (
+                                            len(list(grid))
+                                            if grid is not None
+                                            else 0
+                                        )
+                                        if col_count > WIDE_COL_THRESHOLD:
+                                            # Boundary BEFORE table:
+                                            # paragraph with landscape
+                                            # sectPr (closes the prev
+                                            # section as landscape too,
+                                            # but Word's sectPr applies
+                                            # to the PRECEDING content
+                                            # so we need the boundary
+                                            # marker to apply landscape
+                                            # to the table that follows.
+                                            new_kids.append(
+                                                _wrap_paragraph_with_sectpr(
+                                                    "portrait"
+                                                )
+                                            )
+                                            new_kids.append(el)
+                                            new_kids.append(
+                                                _wrap_paragraph_with_sectpr(
+                                                    "landscape"
+                                                )
+                                            )
+                                            modified = True
+                                            inserted += 1
+                                            continue
+                                    new_kids.append(el)
+                                if modified:
+                                    # Replace body children.
+                                    for c in list(body):
+                                        body.remove(c)
+                                    for c in new_kids:
+                                        body.append(c)
+                                    data = ET.tostring(
+                                        root,
+                                        xml_declaration=True,
+                                        encoding="UTF-8",
+                                        standalone=True,
+                                    )
+                        except Exception:
+                            logger.exception(
+                                "auto_landscape_wide_tables: parse "
+                                "failed -- leaving untouched"
+                            )
+                    zout.writestr(item, data)
+
+        if modified:
+            logger.info(
+                "auto_landscape_wide_tables: wrapped %d wide table(s) "
+                "in landscape A4 sections", inserted,
+            )
+            return out_buf.getvalue()
+        return docx_bytes
+    except Exception:
+        logger.exception("auto_landscape_wide_tables crashed")
+        return docx_bytes
+
+
+def _collapse_pre_section_whitespace(docx_bytes: bytes) -> bytes:
+    """Drop empty paragraphs that sit between a page break and the
+    next content. Prevents large empty bands at the top of new pages
+    after section breaks or explicit page breaks.
+
+    Targets:
+      * <w:p> with no <w:t>/<w:drawing> content, that follow another
+        <w:p> containing a <w:br type='page'>.
+      * Same for paragraphs immediately following a <w:sectPr>.
+
+    Best-effort; failures return the original bytes unchanged.
+    """
+    try:
+        import io as _io
+        import zipfile as _zip
+        from xml.etree import ElementTree as ET
+
+        W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        ET.register_namespace("w", W_NS)
+        P_TAG = "{%s}p" % W_NS
+        BR_TAG = "{%s}br" % W_NS
+        T_TAG = "{%s}t" % W_NS
+        DRAW_TAG = "{%s}drawing" % W_NS
+        SECTPR_TAG = "{%s}sectPr" % W_NS
+
+        def _has_page_break(p):
+            for b in p.iter(BR_TAG):
+                if b.get("{%s}type" % W_NS) == "page":
+                    return True
+            return False
+
+        def _is_empty_p(p):
+            for t in p.iter(T_TAG):
+                if (t.text or "").strip():
+                    return False
+            for _ in p.iter(DRAW_TAG):
+                return False
+            if _has_page_break(p):
+                return False
+            # If it carries a sectPr, treat as structural (don't drop).
+            if p.find("{%s}pPr/%s" % (W_NS, SECTPR_TAG)) is not None:
+                return False
+            return True
+
+        in_buf = _io.BytesIO(docx_bytes)
+        out_buf = _io.BytesIO()
+        modified = False
+        dropped = 0
+
+        with _zip.ZipFile(in_buf, "r") as zin:
+            with _zip.ZipFile(out_buf, "w", _zip.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    if item.filename == "word/document.xml":
+                        try:
+                            root = ET.fromstring(data)
+                            body = root.find("{%s}body" % W_NS)
+                            if body is not None:
+                                children = list(body)
+                                prev_was_break = False
+                                kept = []
+                                for el in children:
+                                    if (
+                                        el.tag == P_TAG
+                                        and prev_was_break
+                                        and _is_empty_p(el)
+                                    ):
+                                        # Skip — empty para after a break.
+                                        dropped += 1
+                                        modified = True
+                                        continue
+                                    kept.append(el)
+                                    # Update prev_was_break.
+                                    if el.tag == P_TAG and _has_page_break(el):
+                                        prev_was_break = True
+                                    elif el.tag.endswith("}sectPr"):
+                                        prev_was_break = True
+                                    else:
+                                        prev_was_break = False
+                                if modified:
+                                    for c in list(body):
+                                        body.remove(c)
+                                    for c in kept:
+                                        body.append(c)
+                                    data = ET.tostring(
+                                        root,
+                                        xml_declaration=True,
+                                        encoding="UTF-8",
+                                        standalone=True,
+                                    )
+                        except Exception:
+                            logger.exception(
+                                "collapse_pre_section_whitespace: parse "
+                                "failed -- leaving untouched"
+                            )
+                    zout.writestr(item, data)
+
+        if modified:
+            logger.info(
+                "collapse_pre_section_whitespace: dropped %d empty "
+                "paragraph(s) after page/section breaks", dropped,
+            )
+            return out_buf.getvalue()
+        return docx_bytes
+    except Exception:
+        logger.exception("collapse_pre_section_whitespace crashed")
+        return docx_bytes
+
+
 def _strip_broken_image_drawings(docx_bytes: bytes) -> bytes:
     """Remove any <w:drawing> whose embedded relationship ID
     doesn't actually exist in word/_rels/document.xml.rels.
@@ -2657,6 +2900,12 @@ def author_rebuild_docx(
         # table -- fixes the "29 separate one-row tables for
         # RN1..RN29" fragmentation pattern.
         docx_bytes = _merge_adjacent_compatible_tables(docx_bytes)
+        # Wide tables (>10 columns) get switched to landscape A4 so
+        # they don't get cropped at portrait's 18cm usable width.
+        docx_bytes = _auto_landscape_wide_tables(docx_bytes)
+        # Drop empty paragraphs sitting between a page break and
+        # the next section so new pages start at the top.
+        docx_bytes = _collapse_pre_section_whitespace(docx_bytes)
         # If Claude left any bracketed image placeholders despite
         # the prompt instruction, try to substitute the actual
         # extracted image. Uses out_dir/images/.
