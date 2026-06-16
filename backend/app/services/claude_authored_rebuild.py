@@ -932,7 +932,7 @@ def _format_image_list(images: list) -> str:
 
 def _extract_tables_via_vision(
     pdf_bytes: bytes,
-    model: str = "claude-opus-4-6",
+    model: str = "claude-opus-4-8",
 ) -> list:
     """Pre-pass: render each page of the PDF as an image and ask
     Claude Vision to extract any data tables as structured JSON.
@@ -1093,7 +1093,7 @@ def _call_claude_to_author(
     output_path: str,
     images: list,
     tables: list,
-    model: str = "claude-opus-4-6",
+    model: str = "claude-opus-4-8",
 ) -> str:
     """Send the PDF + prompt to Claude and return the raw code block.
 
@@ -2834,13 +2834,13 @@ def author_rebuild_docx(
             )
             logger.info(
                 "Using multi-turn rebuild loop (model=%s)",
-                model or "claude-opus-4-6",
+                model or "claude-opus-4-8",
             )
             return author_rebuild_docx_multiturn(
                 pdf_bytes,
                 source_lang,
                 target_lang,
-                model=model or "claude-opus-4-6",
+                model=model or "claude-opus-4-8",
             )
         except Exception:
             logger.exception(
@@ -2873,7 +2873,7 @@ def author_rebuild_docx(
             output_path=output_path,
             images=images,
             tables=tables,
-            model=model or "claude-opus-4-6",
+            model=model or "claude-opus-4-8",
         )
         script = _strip_code_fence(raw)
         _validate_script(script, output_path)

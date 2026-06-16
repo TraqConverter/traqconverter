@@ -1554,7 +1554,7 @@ def _revise_rebuild_background(
                 pdf_bytes,
                 source_lang or "",
                 target_lang or "",
-                model=model_key or "claude-opus-4-6",
+                model=model_key or "claude-opus-4-8",
                 extra_instructions=instructions or None,
             )
             out_path = tmp_dir / f"authored_{project.id}.docx"
