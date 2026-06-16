@@ -23,16 +23,16 @@ class SegmentUpdate(BaseModel):
 
 
 class SegmentRetranslate(BaseModel):
-    # Optional steering for the AI — e.g. "Make this more formal",
-    # "Use 'Municipality of' instead of 'City of'", "Translate as a
-    # full sentence". Appended to the system prompt so users can
-    # nudge a single segment without changing the project glossary.
+
+
+
+
     instructions: str | None = None
 
 
-# =========================================
-# GET SEGMENTS FOR PROJECT — team scoped
-# =========================================
+
+
+
 
 @router.get("/project/{project_id}")
 def get_segments(
@@ -60,9 +60,9 @@ def get_segments(
     ]
 
 
-# =========================================
-# UPDATE SEGMENT — team scoped (CRIT-1 fix)
-# =========================================
+
+
+
 
 @router.patch("/{segment_id}")
 def update_segment(
@@ -87,15 +87,15 @@ def update_segment(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Tenant guard — reject segments that don't belong to a team this user is on.
+
     assert_project_access(db, project, current_user)
 
     segment.translated_text = data.translated_text
     db.commit()
     db.refresh(segment)
 
-    # Store in Translation Memory (team scoped — same as before, but now
-    # the underlying segment is verified to belong to the caller's team).
+
+
     try:
         store_tm_entry(
             db=db,
@@ -106,7 +106,7 @@ def update_segment(
             translated_text=data.translated_text,
         )
     except Exception:
-        # TM write failures shouldn't fail the user's edit.
+
         pass
 
     return {
@@ -116,9 +116,9 @@ def update_segment(
     }
 
 
-# =========================================
-# AI RETRANSLATE — single segment
-# =========================================
+
+
+
 
 @router.post("/{segment_id}/retranslate")
 def retranslate_segment(
@@ -165,9 +165,9 @@ def retranslate_segment(
 
     try:
         if instructions:
-            # Custom-instructions path — build the prompt directly so
-            # the user steering takes effect. Reuses the same model
-            # router as translate_text/translate_batch.
+
+
+
             src_name = humanize_lang(project.source_language)
             tgt_name = humanize_lang(project.target_language)
             system_prompt = (
@@ -184,8 +184,8 @@ def retranslate_segment(
                 max_tokens=2048,
             )
         else:
-            # No instructions — let translate_text apply glossary +
-            # default rules.
+
+
             new_translation = translate_text(
                 text=src_text,
                 source_lang=project.source_language,
@@ -199,8 +199,8 @@ def retranslate_segment(
         )
 
     segment.translated_text = (new_translation or "").strip()
-    # Re-translation invalidates a previous approval — the user
-    # should review the new text before approving.
+
+
     segment.approved = False
     db.commit()
     db.refresh(segment)

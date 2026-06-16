@@ -33,36 +33,36 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
-# ----------------------------------------------------------------
-# Initial prompt for the loop's first turn. Much shorter than the
-# single-shot prompt because we expect Claude to iterate based on
-# what its code actually produces — not to nail it in one go.
-# ----------------------------------------------------------------
-# ---- Document-type classifier + adaptive prompt templates ----
-#
-# A previous version had a single _INITIAL_PROMPT optimised for
-# certificates and letters. Tax forms (Italian Modello Redditi etc.)
-# silently failed because Claude tried to satisfy the masthead /
-# "institution name first" rule and ran out of tokens before getting
-# to the form body. We now classify the document and feed a prompt
-# that matches the layout family.
-#
-# Classification: a single Vision call on page 1 returns one of:
-#   CERTIFICATE, FORM, LETTER, RECEIPT, CONTRACT, OTHER
-# OTHER + LETTER fall back to the certificate prompt (closest match).
 
-# ---- UNIVERSAL prompt — Claude.ai-parity approach -------------
-#
-# Every prior version of this prompt accumulated rules patching
-# specific failure modes. Each rule removed a degree of freedom
-# Claude needs to handle documents we haven't seen. Stripping
-# down to the essentials — trusting Claude's judgment for layout
-# while keeping the post-processors as the safety net — matches
-# how Claude.ai chat handles arbitrary document uploads.
-#
-# The classifier still runs (cheap Haiku Vision call) and the
-# result becomes a 2-3 line HINT inside the universal prompt
-# rather than picking from a fork of 4 different templates.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 _UNIVERSAL_PROMPT = """\
 You are translating a document and producing a Microsoft Word
@@ -213,8 +213,8 @@ covered by the hard rules.
 """
 
 
-# Tiny, focused hints per document type. Replace 100+ lines of
-# per-type rules with 2-4 lines that orient Claude's judgment.
+
+
 _TYPE_HINTS = {
     "CERTIFICATE": (
         "  * Institution name as a centered bold heading near the top "
@@ -329,10 +329,10 @@ _CLASSIFY_PROMPT = (
 
 
 
-# Models that have ADAPTIVE thinking always-on at the API level:
-# they reject (or warn on) the explicit `thinking` parameter that
-# extended-thinking-capable models use. Fable 5 and Mythos 5 fall
-# in this category per the Anthropic docs (June 2026 launch).
+
+
+
+
 _ADAPTIVE_THINKING_MODELS = (
     "claude-fable-5",
     "claude-mythos-5",
@@ -364,7 +364,7 @@ def _classify_document(pdf_bytes: bytes) -> str:
     if not api_key:
         return "CERTIFICATE"
     try:
-        # Render page 1 at modest DPI so the classifier is fast.
+
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         if len(doc) == 0:
             return "CERTIFICATE"
@@ -372,7 +372,7 @@ def _classify_document(pdf_bytes: bytes) -> str:
         png_bytes = pix.tobytes("png")
         doc.close()
         if len(png_bytes) > 4_500_000:
-            # Re-render smaller if too big for the API.
+
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             pix = doc[0].get_pixmap(dpi=80)
             png_bytes = pix.tobytes("png")
@@ -404,7 +404,7 @@ def _classify_document(pdf_bytes: bytes) -> str:
         for block in resp.content or []:
             if getattr(block, "type", "") == "text":
                 raw = (getattr(block, "text", "") or "").strip().upper()
-                # Be lenient about extras.
+
                 for cat in (
                     "CERTIFICATE", "FORM", "LETTER", "RECEIPT",
                     "CONTRACT", "OTHER",
@@ -419,16 +419,16 @@ def _classify_document(pdf_bytes: bytes) -> str:
         logger.exception("Document classifier failed — defaulting to CERTIFICATE")
         return "CERTIFICATE"
 
-# ---- Exhaustive form-field extraction (FORM-only) --------------
-#
-# For tax forms / applications / structured forms, doing a generic
-# vision pass and asking Claude to "extract tables" misses field
-# labels that aren't in obvious grid rows (section headers,
-# numbered checkboxes, free-text fields). This function asks
-# Claude Vision to produce a flat JSON listing EVERY visible
-# label, code, and value on the page. The JSON is then embedded
-# in the FORM prompt as ground truth so the authoring step
-# doesn't have to OCR.
+
+
+
+
+
+
+
+
+
+
 
 _FORM_DUMP_PROMPT = (
     "You are looking at one page of a structured form (tax return, "
@@ -500,8 +500,8 @@ def _extract_form_fields_via_vision(pdf_bytes: bytes) -> list:
         for page_idx in range(len(doc)):
             try:
                 page = doc[page_idx]
-                # Render at high DPI so small cells / fine print
-                # are legible.
+
+
                 pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5))
                 png_bytes = pix.tobytes("png")
                 if len(png_bytes) > 4_500_000:
@@ -533,7 +533,7 @@ def _extract_form_fields_via_vision(pdf_bytes: bytes) -> list:
                     if getattr(block, "type", "") == "text":
                         raw += getattr(block, "text", "") or ""
                 raw = raw.strip()
-                # Strip optional code fences.
+
                 if raw.startswith("```"):
                     raw = raw.lstrip("`")
                     if raw.lower().startswith("json"):
@@ -543,8 +543,8 @@ def _extract_form_fields_via_vision(pdf_bytes: bytes) -> list:
                 try:
                     parsed = _json.loads(raw)
                 except Exception:
-                    # Try object {} first, then array [] as legacy
-                    # fallback.
+
+
                     for op, cl in (("{", "}"), ("[", "]")):
                         start = raw.find(op)
                         end = raw.rfind(cl)
@@ -560,7 +560,7 @@ def _extract_form_fields_via_vision(pdf_bytes: bytes) -> list:
                     fields = parsed.get("fields") or []
                     sections = parsed.get("sections") or []
                 elif isinstance(parsed, list):
-                    # Legacy array-only shape.
+
                     fields = parsed
                 if fields or sections:
                     pages_out.append({
@@ -622,27 +622,27 @@ def _format_form_fields_for_prompt(pages: list) -> str:
 
 
 
-# ---- FORM prompt — for tax returns, applications, registration forms ----
-#
-# Critical differences from the certificate prompt:
-#   * NO masthead rule. Forms have no institution name to put first.
-#   * Mandate that EVERY visible label, code (RA1, RN3, etc.),
-#     and column number appears in the output.
-#   * Empty cells must still be rendered with ",00" or "—" so the
-#     output has the same shape as the source.
-#   * Tables are MANDATORY. A form rendered as flat paragraphs is
-#     considered a complete failure.
-#   * One python-docx table per logical form section (Quadro RA,
-#     Quadro RN, etc.) — not a single mega-table.
-_PROMPT_FORM = _UNIVERSAL_PROMPT  # aliased to universal prompt
 
 
-# ---- LETTER prompt — for memos, official notices, correspondence ----
-_PROMPT_LETTER = _UNIVERSAL_PROMPT  # aliased to universal prompt
 
 
-# ---- RECEIPT prompt — for invoices, receipts, payment confirmations ----
-_PROMPT_RECEIPT = _UNIVERSAL_PROMPT  # aliased to universal prompt
+
+
+
+
+
+
+
+
+_PROMPT_FORM = _UNIVERSAL_PROMPT
+
+
+
+_PROMPT_LETTER = _UNIVERSAL_PROMPT
+
+
+
+_PROMPT_RECEIPT = _UNIVERSAL_PROMPT
 
 
 def _select_prompt_for(doc_type: str) -> str:
@@ -653,12 +653,12 @@ def _select_prompt_for(doc_type: str) -> str:
         "FORM": _PROMPT_FORM,
         "LETTER": _PROMPT_LETTER,
         "RECEIPT": _PROMPT_RECEIPT,
-        "CONTRACT": _PROMPT_LETTER,   # close enough — flowing text + clauses
-        "OTHER": _INITIAL_PROMPT,     # safe default
+        "CONTRACT": _PROMPT_LETTER,
+        "OTHER": _INITIAL_PROMPT,
     }.get(doc_type, _INITIAL_PROMPT)
 
 
-_INITIAL_PROMPT = _UNIVERSAL_PROMPT  # aliased to universal prompt
+_INITIAL_PROMPT = _UNIVERSAL_PROMPT
 
 
 _TOOL_DEFINITION = {
@@ -690,10 +690,10 @@ _TOOL_DEFINITION = {
 }
 
 
-# ----------------------------------------------------------------
-# Sandbox execution helpers (delegated to the existing single-shot
-# service so we share the same hardened preamble).
-# ----------------------------------------------------------------
+
+
+
+
 
 def _run_in_sandbox(code: str, output_path: str, timeout_seconds: int = 180) -> tuple[bool, str, bytes]:
     """Run `code` in the existing sandbox. Returns
@@ -715,15 +715,15 @@ def _run_in_sandbox(code: str, output_path: str, timeout_seconds: int = 180) -> 
         )
         return (True, "", docx_bytes)
     except Exception as e:
-        # Try to surface the underlying subprocess stderr if present.
+
         msg = str(e)
         return (False, msg, b"")
 
 
-# ----------------------------------------------------------------
-# DOCX inspection: produce a structured diagnostic that Claude can
-# read after each tool call.
-# ----------------------------------------------------------------
+
+
+
+
 
 _FORBIDDEN_PATTERNS = [
     re.compile(r"\bCERTIFIED\s+TRANSLATION\b", re.I),
@@ -731,7 +731,7 @@ _FORBIDDEN_PATTERNS = [
     re.compile(r"^\s*Translator\s*:\s*\S+@\S+", re.I | re.M),
     re.compile(r"^\s*Signature\s*:\s*_+", re.I | re.M),
     re.compile(r"this\s+translation\s+is\s+accurate\s+and\s+complete", re.I),
-    # Translator's note variants — user explicitly wants these gone.
+
     re.compile(r"\bNote\s*:\s*This\s+(is|document)\s+(an|a)?\s*\w*\s*translation\b", re.I),
     re.compile(r"\bThis\s+document\s+is\s+(an|a)\s+\w+\s+translation\s+of\s+the\s+original\b", re.I),
 ]
@@ -771,7 +771,7 @@ def _inspect_docx(docx_bytes: bytes, doc_type: str = "CERTIFICATE") -> dict:
     except Exception as e:
         return {"error": f"document.xml parse failed: {e}"}
 
-    # Paragraph texts.
+
     body_paragraphs = []
     if body is not None:
         for p in body.iter(P_TAG):
@@ -779,7 +779,7 @@ def _inspect_docx(docx_bytes: bytes, doc_type: str = "CERTIFICATE") -> dict:
             if txt:
                 body_paragraphs.append(txt)
 
-    # Page count estimate: 1 + (page breaks) + (section breaks of type nextPage).
+
     page_break_count = sum(
         1 for br in root.iter(BR_TAG)
         if br.get("{%s}type" % W_NS) == "page"
@@ -787,22 +787,22 @@ def _inspect_docx(docx_bytes: bytes, doc_type: str = "CERTIFICATE") -> dict:
     section_count = sum(1 for _ in root.iter(SECTPR_TAG))
     page_count_estimate = max(1, page_break_count + max(1, section_count) - 1)
 
-    # Tables.
+
     tables = list(root.iter(TBL_TAG))
 
-    # Drawings (images).
+
     drawings = list(root.iter(DRAW_TAG))
 
-    # Forbidden-string scan.
+
     full_text = "\n".join(body_paragraphs)
     forbidden_hits = [
         pat.pattern for pat in _FORBIDDEN_PATTERNS if pat.search(full_text)
     ]
 
-    # Filter out cert-block paragraphs before measuring "real" body
-    # text — if the only content is a "CERTIFIED TRANSLATION
-    # STATEMENT" / "I hereby certify" block, body chars should
-    # register as ~0 so we can warn that the rebuild is empty.
+
+
+
+
     cert_block_re = re.compile(
         r"(CERTIFIED TRANSLATION|I hereby certify|Translator:|"
         r"This is a translation of)",
@@ -827,13 +827,13 @@ def _inspect_docx(docx_bytes: bytes, doc_type: str = "CERTIFICATE") -> dict:
         "forbidden_string_hits": forbidden_hits,
     }
 
-    # Practical warnings — turn obvious problems into something
-    # Claude reads as "fix this".
+
+
     warnings = []
-    # Empty-body detector. If the only paragraphs we wrote are the
-    # cert block (or there's almost no real text at all), Claude
-    # has produced a shell document — treat this as a hard failure
-    # signal so the loop retries.
+
+
+
+
     if body_text_chars < 300 and len(tables) > 0:
         warnings.append(
             "CRITICAL: your output has %d body-text chars across %d "
@@ -871,23 +871,23 @@ def _inspect_docx(docx_bytes: bytes, doc_type: str = "CERTIFICATE") -> dict:
             "zip. Use existing files in ./images/ via doc.add_picture()."
         )
 
-    # Detect "tabular data rendered as a flat paragraph list" — a
-    # common regression where Claude bypasses doc.add_table() and
-    # emits each course code / name / grade / date as a separate
-    # paragraph. Signature: 5+ consecutive short paragraphs where
-    # most look like table cell values (course code, "Passed",
-    # grade fractions, sector codes, dates).
+
+
+
+
+
+
     cell_like_count = 0
     consecutive_cell_runs = []
     current_run = 0
     cell_patterns = [
-        re.compile(r"^\d{6,10}$"),                    # course code
+        re.compile(r"^\d{6,10}$"),
         re.compile(r"^Passed$|^Failed$|^Approved$", re.I),
-        re.compile(r"^\d{2}/\d{2}$"),                 # grade fraction
-        re.compile(r"^\d+$"),                         # credits
-        re.compile(r"^[A-Z]{2,4}/\d{1,3}$"),          # sector code
-        re.compile(r"^\d{2}/\d{2}/\d{4}$"),           # date
-        re.compile(r"^PDS\d-\d{4}$"),                 # didactic plan
+        re.compile(r"^\d{2}/\d{2}$"),
+        re.compile(r"^\d+$"),
+        re.compile(r"^[A-Z]{2,4}/\d{1,3}$"),
+        re.compile(r"^\d{2}/\d{2}/\d{4}$"),
+        re.compile(r"^PDS\d-\d{4}$"),
     ]
     for p in body_paragraphs:
         is_cell = (
@@ -904,10 +904,10 @@ def _inspect_docx(docx_bytes: bytes, doc_type: str = "CERTIFICATE") -> dict:
     if current_run >= 5:
         consecutive_cell_runs.append(current_run)
 
-    # Detect missing masthead. If the first non-empty body
-    # paragraph isn't a short centered name-like string
-    # (mostly uppercase letters + spaces, <= 60 chars), warn.
-    # Skip for FORM/RECEIPT — they have no institutional masthead.
+
+
+
+
     if body_paragraphs and doc_type not in ("FORM", "RECEIPT"):
         first = body_paragraphs[0].strip()
         looks_like_masthead = (
@@ -947,9 +947,9 @@ def _inspect_docx(docx_bytes: bytes, doc_type: str = "CERTIFICATE") -> dict:
     return report
 
 
-# ----------------------------------------------------------------
-# Main loop.
-# ----------------------------------------------------------------
+
+
+
 
 def _pdf_page_count(pdf_bytes: bytes) -> int:
     """Count pages without holding the PDF open. Returns 1 on
@@ -1032,8 +1032,8 @@ def _author_rebuild_docx_multiturn_core(
         raise RuntimeError("ANTHROPIC_API_KEY not set")
     client = anthropic.Anthropic(api_key=api_key)
 
-    # Reuse the image / table pre-extraction from the single-shot
-    # service so we don't duplicate logic.
+
+
     try:
         from app.services.claude_authored_rebuild import (
             _extract_pdf_images,
@@ -1055,13 +1055,13 @@ def _author_rebuild_docx_multiturn_core(
     out_dir = Path(tempfile.mkdtemp(prefix="claude_multiturn_"))
     output_path = str(out_dir / "rebuild.docx")
 
-    # Pre-extract assets.
-    # 1) Vision-based image-region cropper — high-DPI render +
-    #    Claude Vision identifies crests/signatures/seals and
-    #    returns bounding boxes. This is the claude.ai-parity
-    #    approach. Try it first; if it returns 0 regions or
-    #    fails, fall back to the legacy XObject-extraction +
-    #    header/footer-strip method.
+
+
+
+
+
+
+
     images = []
     _vision_image_list_text = None
     try:
@@ -1104,18 +1104,18 @@ def _author_rebuild_docx_multiturn_core(
         logger.exception("Table pre-extraction failed — continuing")
         tables = []
 
-    # Classify the document type up front. The chosen template
-    # changes the rules Claude follows so that e.g. a tax form
-    # doesn't try to satisfy a "first paragraph is the institution
-    # name" rule that doesn't apply to it.
+
+
+
+
     if _force_doc_type:
         doc_type = _force_doc_type.upper()
     else:
         doc_type = _classify_document(pdf_bytes)
 
-    # Multi-page FORM documents go through the page-by-page rebuild
-    # (one full multi-turn loop per page, then merge) so Claude
-    # doesn't run out of output tokens mid-form.
+
+
+
     if (
         doc_type == "FORM"
         and not _disable_page_by_page
@@ -1136,8 +1136,8 @@ def _author_rebuild_docx_multiturn_core(
 
     prompt_template = _select_prompt_for(doc_type)
 
-    # For FORM documents do an exhaustive Vision-based field dump
-    # so the authoring step has the verbatim list of every cell.
+
+
     form_fields_text = "(not applicable for this document type)"
     if doc_type == "FORM":
         try:
@@ -1155,9 +1155,9 @@ def _author_rebuild_docx_multiturn_core(
         else _format_image_list(images)
     )
 
-    # Universal prompt receives all kwargs every time. {form_fields_section}
-    # is set to either the JSON dump block (FORM) or a small "(not
-    # applicable)" note.
+
+
+
     if doc_type == "FORM" and form_fields_text and form_fields_text != "(not applicable for this document type)":
         form_fields_section = (
             "EXHAUSTIVE FORM-FIELD DUMP (every visible label / code / "
@@ -1181,11 +1181,11 @@ def _author_rebuild_docx_multiturn_core(
         form_fields_section=form_fields_section,
     )
     initial_prompt = prompt_template.format(**format_kwargs)
-    # Append user-provided revision feedback so this rebuild
-    # actually addresses what the user typed in the Request
-    # Revision modal. Without this, the multi-turn loop runs the
-    # same prompt as before and produces effectively the same
-    # output — which is why the client said "nothing changes".
+
+
+
+
+
     if extra_instructions and extra_instructions.strip():
         initial_prompt += (
             "\n\n"
@@ -1232,27 +1232,27 @@ def _author_rebuild_docx_multiturn_core(
             turn, max_turns, chosen_model,
         )
         try:
-            # Build the API call. Extended thinking + larger token
-            # budget = closer to Claude.ai chat behavior. Thinking
-            # is optional (fails gracefully on older SDKs).
+
+
+
             api_kwargs = dict(
                 model=chosen_model,
                 max_tokens=32000,
                 tools=[_TOOL_DEFINITION],
                 messages=messages,
             )
-            # Skip explicit thinking for models that already do
-            # adaptive thinking always-on (Fable 5, Mythos 5).
+
+
             allow_thinking = (
                 os.getenv("REBUILD_EXTENDED_THINKING", "1").lower()
                 not in ("0", "false", "no", "off")
                 and not _uses_adaptive_thinking(chosen_model)
             )
             if allow_thinking:
-                # 12000 thinking tokens — enough to plan a long
-                # document. The Anthropic SDK accepts a "thinking"
-                # parameter on models that support it; we wrap in
-                # try/except below to handle SDKs that don't.
+
+
+
+
                 api_kwargs["thinking"] = {
                     "type": "enabled",
                     "budget_tokens": 12000,
@@ -1260,12 +1260,12 @@ def _author_rebuild_docx_multiturn_core(
             try:
                 resp = client.messages.create(**api_kwargs)
             except TypeError:
-                # SDK didn't accept "thinking" — retry without it.
+
                 api_kwargs.pop("thinking", None)
                 resp = client.messages.create(**api_kwargs)
             except Exception as _e:
                 msg = str(_e)
-                # Some models reject thinking + tools; retry plain.
+
                 if "thinking" in msg.lower() and "thinking" in api_kwargs:
                     api_kwargs.pop("thinking", None)
                     resp = client.messages.create(**api_kwargs)
@@ -1273,13 +1273,13 @@ def _author_rebuild_docx_multiturn_core(
                     raise
         except Exception as e:
             logger.exception("Anthropic call failed on turn %d: %s", turn, e)
-            # If we already have a working DOCX from an earlier turn,
-            # return it. Otherwise re-raise.
+
+
             if last_good_docx:
                 break
             raise
 
-        # Find any tool_use blocks in the response.
+
         tool_use_blocks = []
         text_blocks = []
         for block in resp.content or []:
@@ -1289,8 +1289,8 @@ def _author_rebuild_docx_multiturn_core(
             elif btype == "text":
                 text_blocks.append(getattr(block, "text", "") or "")
 
-        # Always append the assistant turn so the conversation context
-        # is preserved for the next call.
+
+
         messages.append({"role": "assistant", "content": resp.content})
 
         stop_reason = getattr(resp, "stop_reason", None)
@@ -1306,7 +1306,7 @@ def _author_rebuild_docx_multiturn_core(
         )
 
         if not tool_use_blocks:
-            # Claude responded with text only. Treat that as "done".
+
             if text_blocks:
                 logger.info(
                     "Claude finished without further tool calls. "
@@ -1314,7 +1314,7 @@ def _author_rebuild_docx_multiturn_core(
                     "\n".join(text_blocks)[:200],
                 )
             break
-        # Run each tool call, append a tool_result for each.
+
         tool_results = []
         for tu in tool_use_blocks:
             tool_input = getattr(tu, "input", None) or {}
@@ -1327,8 +1327,8 @@ def _author_rebuild_docx_multiturn_core(
 
             if success and docx_bytes:
                 inspection = _inspect_docx(docx_bytes, doc_type=doc_type)
-                # Save the latest good DOCX bytes so we can return
-                # them even if a later turn fails.
+
+
                 last_good_docx = docx_bytes
                 last_good_inspection = inspection
                 report_text = (
@@ -1348,15 +1348,15 @@ def _author_rebuild_docx_multiturn_core(
 
         messages.append({"role": "user", "content": tool_results})
 
-    # Clean up extracted images dir (we keep last_good_docx in memory).
+
     try:
         shutil.rmtree(out_dir, ignore_errors=True)
     except Exception:
         pass
 
-    # Final check — if the last good DOCX has near-zero body text
-    # but the source PDF is non-empty, we've produced a shell
-    # document. Raise rather than silently shipping empty pages.
+
+
+
     if last_good_docx:
         try:
             body_chars = int(
@@ -1392,30 +1392,30 @@ def _author_rebuild_docx_multiturn_core(
         last_good_inspection.get("page_count_estimate", -1),
     )
 
-    # Apply the same post-processor chain as the single-shot path so
-    # any residual cert blocks, table borders, rotation, broken
-    # images, etc. get cleaned up deterministically.
+
+
+
     docx_bytes = last_good_docx
     try:
         docx_bytes = _strip_rotation_from_docx(docx_bytes)
         docx_bytes = _strip_layout_table_borders(docx_bytes)
         docx_bytes = _strip_inline_cert_blocks(docx_bytes)
-        # Strip literal HTML tags and bracketed image placeholders
-        # that Claude sometimes emits as visible body text (e.g.
-        # "<p style=\"text-align: center;\">FOO</p>" or
-        # "[Coat of Arms]"). Both should never appear in the output.
+
+
+
+
         docx_bytes = _strip_html_and_bracket_artifacts(docx_bytes)
-        # Merge adjacent 1-row tables that have the same column
-        # structure into a single multi-row table. Catches the
-        # "29 one-row tables for RN1..RN29" fragmentation that
-        # Claude still produces sometimes.
+
+
+
+
         docx_bytes = _merge_adjacent_compatible_tables(docx_bytes)
-        # NOTE: _auto_landscape_wide_tables intentionally skipped.
-        # The translation page must match the SOURCE page's
-        # orientation, not auto-flip based on table width. Wide
-        # tables get fitted by tighter column widths + smaller
-        # font instead. The function still exists but is unwired.
-        # Strip empty paragraphs between page breaks and next section.
+
+
+
+
+
+
         docx_bytes = _collapse_pre_section_whitespace(docx_bytes)
         docx_bytes = _strip_broken_image_drawings(docx_bytes)
     except Exception:
@@ -1485,7 +1485,7 @@ def _merge_authored_docx_fragments(fragments: list) -> bytes:
         return fragments[0]
 
     for raw in fragments[1:]:
-        # Page break between fragments.
+
         try:
             p = out_doc.add_paragraph()
             r = p.add_run()
@@ -1531,9 +1531,9 @@ def _author_rebuild_form_page_by_page(
             "Form page-by-page: %d page(s) — using whole-document path",
             len(pages),
         )
-        # Fall back to whole-doc rebuild by re-entering the main
-        # function with a sentinel that disables this code path
-        # (avoids infinite recursion).
+
+
+
         return _author_rebuild_docx_multiturn_core(
             pdf_bytes,
             source_lang,

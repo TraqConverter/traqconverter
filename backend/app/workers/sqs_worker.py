@@ -33,9 +33,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# How long to wait between polls when the queue is empty. Postgres can
-# handle aggressive polling but 2s gives us a nice cost/responsiveness
-# balance.
+
+
+
 POLL_INTERVAL_SECONDS = 2
 MAX_ATTEMPTS = 3
 WORKER_ID = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
@@ -144,8 +144,8 @@ def start_worker():
         except Exception as e:
             tb = traceback.format_exc()
             logger.exception("❌ Job failed: %s", e)
-            # If we haven't exhausted retries, leave it pending so it
-            # gets picked up again on the next poll.
+
+
             db = SessionLocal()
             try:
                 row = db.execute(
@@ -161,7 +161,7 @@ def start_worker():
                 db.close()
 
             if attempts < MAX_ATTEMPTS:
-                # Re-enqueue: drop the lock + back to pending.
+
                 db = SessionLocal()
                 try:
                     db.execute(

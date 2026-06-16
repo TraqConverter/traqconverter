@@ -2,8 +2,6 @@
 
 import { useRouter } from "next/navigation"
 
-// Stripe redirects here when the user closes Checkout without paying.
-// We just confirm nothing was charged and offer easy recovery.
 export default function CheckoutCancelPage() {
   const router = useRouter()
 

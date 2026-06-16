@@ -8,7 +8,7 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 
-# Load .env file
+
 env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
@@ -17,10 +17,10 @@ if config.config_file_name is not None:
 
 from app.database import Base
 
-# Import ALL model modules so autogenerate sees every table.
-# Audit medium fix: this list previously had only 5 of the 13+ models,
-# which meant `alembic revision --autogenerate` silently missed schema
-# changes for the rest.
+
+
+
+
 import app.models.user  # noqa: F401
 import app.models.team  # noqa: F401
 import app.models.team_member  # noqa: F401
@@ -36,10 +36,10 @@ import app.models.certification  # noqa: F401
 
 target_metadata = Base.metadata
 
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
+
+
+
+
 
 
 def run_migrations_offline() -> None:

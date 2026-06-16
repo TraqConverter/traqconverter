@@ -8,14 +8,10 @@ export const api = axios.create({
   baseURL: BASE_URL,
 })
 
-// ======================================================
-// REQUEST INTERCEPTOR (STRICT TOKEN HANDLING)
-// ======================================================
 api.interceptors.request.use((config) => {
   if (typeof window !== "undefined") {
     const token = getToken()
 
-    // Prevent broken tokens being sent
     if (token && token !== "undefined" && token !== "null") {
       if (!config.headers) config.headers = {} as typeof config.headers
       ;(config.headers as Record<string, string>).Authorization = `Bearer ${token}`
@@ -25,9 +21,6 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// ======================================================
-// RESPONSE INTERCEPTOR (NO LOOPS + SAFE HANDLING)
-// ======================================================
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -39,7 +32,6 @@ api.interceptors.response.use(
     const status = error.response.status
     const url = error.config?.url || ""
 
-    // HANDLE 401 SAFELY
     if (status === 401) {
       const isAuthRequest =
         url.includes("/login") ||
@@ -48,28 +40,21 @@ api.interceptors.response.use(
       if (typeof window !== "undefined") {
         const currentPath = window.location.pathname
 
-        // ONLY redirect if:
-        // - not already on login
-        // - not an auth request itself
         if (!isAuthRequest && currentPath !== "/login") {
           clearToken()
           window.location.href = "/login"
         }
       }
-      // 401s are expected during token expiry — don't spam the console
+
       return Promise.reject(error)
     }
 
-    // Only log unexpected (non-auth) errors
     console.error("API ERROR:", status, url, error.response.data)
 
     return Promise.reject(error)
   }
 )
 
-// ======================================================
-// FILE UPLOAD (CLEAN)
-// ======================================================
 export const uploadDocument = async (file: File) => {
   const formData = new FormData()
   formData.append("file", file)

@@ -9,22 +9,22 @@ import re
 
 logger = logging.getLogger(__name__)
 
-# --------------------------------------------------
-# CONFIG
-# --------------------------------------------------
+
+
+
 
 POPPLER_PATH = r"C:\poppler\poppler-25.12.0\Library\bin"
 TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
-# Structured document OCR
+
 CUSTOM_CONFIG = r'--oem 3 --psm 4'
 
 
-# --------------------------------------------------
-# IMAGE PREPROCESSING
-# --------------------------------------------------
+
+
+
 
 def preprocess_image(image):
     """
@@ -34,15 +34,15 @@ def preprocess_image(image):
     gray = ImageOps.autocontrast(gray)
     gray = gray.filter(ImageFilter.SHARPEN)
 
-    # Binary threshold
+
     bw = gray.point(lambda x: 0 if x < 180 else 255, "1")
 
     return bw
 
 
-# --------------------------------------------------
-# OCR GARBAGE FILTER
-# --------------------------------------------------
+
+
+
 
 def is_garbage_text(text):
     """
@@ -67,9 +67,9 @@ def is_garbage_text(text):
     return False
 
 
-# --------------------------------------------------
-# OCR LINE EXTRACTION
-# --------------------------------------------------
+
+
+
 
 def extract_text_boxes(image):
     """
@@ -98,14 +98,14 @@ def extract_text_boxes(image):
         except:
             conf = 0
 
-        # Confidence threshold
+
         if conf < 55:
             continue
 
         if is_garbage_text(text):
             continue
 
-        # Skip top logo garbage
+
         if data["top"][i] < 55 and len(text) < 8:
             continue
 
@@ -153,15 +153,15 @@ def extract_text_boxes(image):
             "h": line["y2"] - line["y1"]
         })
 
-    # Natural reading order
+
     boxes.sort(key=lambda b: (round(b["y"] / 8), b["x"]))
 
     return boxes
 
 
-# --------------------------------------------------
-# FONT STYLE
-# --------------------------------------------------
+
+
+
 
 def choose_font(box):
     """
@@ -174,9 +174,9 @@ def choose_font(box):
     return "Helvetica"
 
 
-# --------------------------------------------------
-# WRAP TEXT
-# --------------------------------------------------
+
+
+
 
 def wrap_text(c, text, max_width, font_name, font_size):
     """
@@ -205,9 +205,9 @@ def wrap_text(c, text, max_width, font_name, font_size):
     return lines
 
 
-# --------------------------------------------------
-# OVERLAP DETECTION
-# --------------------------------------------------
+
+
+
 
 def intersects(proposed_area, occupied_areas):
     """
@@ -223,9 +223,9 @@ def intersects(proposed_area, occupied_areas):
     return False
 
 
-# --------------------------------------------------
-# SMART FONT SHRINK (OPTION B)
-# --------------------------------------------------
+
+
+
 
 def fit_text_without_overlap(
     c,
@@ -267,11 +267,11 @@ def fit_text_without_overlap(
             y + rendered_height + 2
         )
 
-        # Must fit box reasonably
+
         if rendered_height > box["h"] * 3:
             continue
 
-        # Must not overlap
+
         if intersects(proposed_area, occupied_areas):
             continue
 
@@ -280,9 +280,9 @@ def fit_text_without_overlap(
     return None, None, None
 
 
-# --------------------------------------------------
-# MAIN PDF BUILDER
-# --------------------------------------------------
+
+
+
 
 def build_searchable_pdf(input_pdf, translated_texts):
     """
@@ -312,7 +312,7 @@ def build_searchable_pdf(input_pdf, translated_texts):
 
         c.setPageSize((width, height))
 
-        # Draw original page
+
         c.drawImage(
             ImageReader(page),
             0,
@@ -340,21 +340,21 @@ def build_searchable_pdf(input_pdf, translated_texts):
             x = box["x"]
             y = height - box["y"] - box["h"]
 
-            # Skip crest/logo
+
             if x < 120 and box["y"] < 150:
                 continue
 
-            # Skip signature/stamp zone
+
             if x > width * 0.68 and box["y"] > height * 0.72:
                 continue
 
-            # Skip footer legal disclaimer
+
             if box["y"] > height * 0.92:
                 continue
 
             font_name = choose_font(box)
 
-            # OPTION B: SHRINK UNTIL SAFE
+
             font_size, wrapped_lines, rendered_height = fit_text_without_overlap(
                 c,
                 translated,
@@ -364,13 +364,13 @@ def build_searchable_pdf(input_pdf, translated_texts):
                 font_name
             )
 
-            # If impossible, skip
+
             if not font_size:
                 continue
 
             line_height = font_size + 2
 
-            # Final rendered area
+
             proposed_area = (
                 x - 2,
                 y - 2,
@@ -380,7 +380,7 @@ def build_searchable_pdf(input_pdf, translated_texts):
 
             occupied_areas.append(proposed_area)
 
-            # Whiteout actual final area
+
             c.setFillColorRGB(1, 1, 1)
             c.rect(
                 x - 2,
@@ -391,7 +391,7 @@ def build_searchable_pdf(input_pdf, translated_texts):
                 stroke=0
             )
 
-            # Draw visible text
+
             c.setFillColorRGB(0, 0, 0)
             c.setFont(font_name, font_size)
 
@@ -401,7 +401,7 @@ def build_searchable_pdf(input_pdf, translated_texts):
 
                 c.drawString(x, start_y, line)
 
-                # Invisible searchable layer
+
                 c.setFillAlpha(0)
                 c.drawString(x, start_y, line)
                 c.setFillAlpha(1)

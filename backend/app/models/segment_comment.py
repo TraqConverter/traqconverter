@@ -21,7 +21,7 @@ class SegmentComment(Base):
     user_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id"),
-        nullable=True  # keep flexible for now
+        nullable=True
     )
 
     text = Column(Text, nullable=False)

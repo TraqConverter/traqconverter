@@ -27,20 +27,20 @@ from app.models.user import User
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Connection registry. "all" is the dashboard channel — keyed by user
-# id rather than a single global list so a broadcast to user X doesn't
-# leak progress to user Y.
+
+
+
 connections: Dict[str, List[WebSocket]] = {"all": []}
 
-# Caps: defensive limits so a misbehaving client can't exhaust file
-# descriptors or memory.
+
+
 MAX_PER_USER = 10
 MAX_GLOBAL = 1000
 
 
-# ============================================================
-# Helpers
-# ============================================================
+
+
+
 
 def _decode_token(token: str | None) -> str | None:
     """Return the user id (`sub` claim) if the JWT is valid, else None."""
@@ -77,7 +77,7 @@ def _user_can_access_project(user_id: str, project_id: str) -> bool:
         if not project:
             return False
 
-        # Owner of the team that owns the project?
+
         is_owner = (
             db.query(Team)
             .filter(Team.id == project.team_id, Team.owner_id == user_id)
@@ -87,7 +87,7 @@ def _user_can_access_project(user_id: str, project_id: str) -> bool:
         if is_owner:
             return True
 
-        # Member of that team?
+
         is_member = (
             db.query(TeamMember)
             .filter(
@@ -115,10 +115,10 @@ def _count_global_sockets() -> int:
     return sum(len(s) for s in connections.values())
 
 
-# ============================================================
-# DASHBOARD CHANNEL — scoped per-user.
-# Connect with: /ws/projects?token=<jwt>
-# ============================================================
+
+
+
+
 
 @router.websocket("/ws/projects")
 async def websocket_all(websocket: WebSocket, token: str | None = None):
@@ -148,10 +148,10 @@ async def websocket_all(websocket: WebSocket, token: str | None = None):
             connections["all"].remove(websocket)
 
 
-# ============================================================
-# PER-PROJECT CHANNEL — verifies the user is on the project's team.
-# Connect with: /ws/projects/{project_id}?token=<jwt>
-# ============================================================
+
+
+
+
 
 @router.websocket("/ws/projects/{project_id}")
 async def websocket_project(
@@ -162,7 +162,7 @@ async def websocket_project(
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    # Validate project_id shape — block control chars / bogus values.
+
     try:
         UUID(project_id)
     except (ValueError, TypeError):
@@ -197,11 +197,11 @@ async def websocket_project(
                 connections.pop(project_id, None)
 
 
-# ============================================================
-# BROADCAST — only sends "all" channel updates to connections that
-# belong to a user with access to the project. Cross-tenant leaks
-# from the worker can't reach unauthorised clients any more.
-# ============================================================
+
+
+
+
+
 
 async def broadcast_progress(project_id: str, data: dict):
     payload = {"project_id": project_id, **data}
@@ -210,9 +210,9 @@ async def broadcast_progress(project_id: str, data: dict):
     project_sockets = connections.get(project_id, [])
     targets.extend(project_sockets)
 
-    # For the "all" channel, only include sockets belonging to users that
-    # can access this project. Filtering happens here rather than at
-    # broadcast time to avoid leaking other tenants' updates.
+
+
+
     for ws in connections.get("all", []):
         uid = getattr(ws, "_tc_user_id", None)
         if uid and _user_can_access_project(uid, project_id):

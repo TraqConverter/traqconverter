@@ -23,7 +23,7 @@ class TeamMember(Base):
         nullable=False,
     )
 
-    # OWNER / ADMIN / MEMBER (free-form so we can add reviewer/PM later)
+
     role = Column(String, nullable=False, default="MEMBER")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
@@ -45,7 +45,7 @@ class TeamInvite(Base):
     )
     email = Column(String, nullable=False, index=True)
     role = Column(String, nullable=False, default="MEMBER")
-    status = Column(String, nullable=False, default="PENDING")  # PENDING / ACCEPTED / CANCELLED
+    status = Column(String, nullable=False, default="PENDING")
     invited_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),

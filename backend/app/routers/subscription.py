@@ -37,23 +37,23 @@ def _resolve_user_team(db: Session, user: User):
 router = APIRouter(prefix="/subscription", tags=["subscription"])
 
 stripe.api_key = settings.stripe_secret_key
-# Audit medium fix: retry idempotent calls (Session.create, retrieve)
-# automatically on transient network errors.
+
+
 stripe.max_network_retries = 3
 
 
-# ============================================================
-#  PLAN CONFIG (ENV-DRIVEN)
-# ============================================================
+
+
+
 PLAN_PRICE_MAP = {
-    "PRO": settings.STRIPE_PRICE_PRO,       # e.g. price_123
-    "BASIC": settings.STRIPE_PRICE_BASIC,   # optional
+    "PRO": settings.STRIPE_PRICE_PRO,
+    "BASIC": settings.STRIPE_PRICE_BASIC,
 }
 
 
-# ============================================================
-# CREATE SUBSCRIPTION CHECKOUT
-# ============================================================
+
+
+
 @router.post("/create-checkout-session")
 def create_checkout_session(
     plan: str,
@@ -67,19 +67,19 @@ def create_checkout_session(
     - Environment configurable
     """
 
-    # Validate plan
+
     price_id = PLAN_PRICE_MAP.get(plan.upper())
     if not price_id:
         raise HTTPException(status_code=400, detail="Invalid plan")
 
-    # Resolve team
+
     team = _resolve_user_team(db, current_user)
     if not team:
         raise HTTPException(status_code=400, detail="Team not found")
 
-    # Append the Stripe session id to the success URL so the frontend can
-    # call /subscription/sync-session and apply the upgrade synchronously
-    # without depending on the webhook arriving first.
+
+
+
     base_success = settings.STRIPE_SUCCESS_URL
     join = "&" if "?" in base_success else "?"
     success_url = f"{base_success}{join}session_id={{CHECKOUT_SESSION_ID}}"
@@ -96,14 +96,14 @@ def create_checkout_session(
         success_url=success_url,
         cancel_url=settings.STRIPE_CANCEL_URL,
 
-        # 🔹 Attach metadata to checkout session
+
         metadata={
             "user_id": str(current_user.id),
             "team_id": str(team.id),
             "plan": plan.upper(),
         },
 
-        # 🔹 Attach metadata to subscription
+
         subscription_data={
             "metadata": {
                 "user_id": str(current_user.id),
@@ -116,12 +116,12 @@ def create_checkout_session(
     return {"checkout_url": session.url}
 
 
-# ============================================================
-# SYNC SESSION — fallback for webhook delivery delays.
-# The /success page calls this with the Stripe session_id; we fetch the
-# session, verify the user owns it, and apply the same upgrade the
-# webhook would have. Idempotent via StripeEvent.
-# ============================================================
+
+
+
+
+
+
 
 @router.post("/sync-session")
 def sync_session(
@@ -139,14 +139,14 @@ def sync_session(
         logger.warning(f"sync-session retrieve failed: {e}")
         raise HTTPException(status_code=404, detail="Stripe session not found")
 
-    # Caller must be the user who started the checkout
+
     metadata = session.get("metadata") or {}
     if metadata.get("user_id") != str(current_user.id):
         raise HTTPException(status_code=403, detail="Not your checkout session")
 
     payment_status = session.get("payment_status")
     if payment_status not in ("paid", "no_payment_required"):
-        # Still pending — let the caller poll again.
+
         return {"status": "pending", "payment_status": payment_status}
 
     plan = (metadata.get("plan") or "").upper()
@@ -161,9 +161,9 @@ def sync_session(
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
-    # ----------------------------------------------------------------
-    # ONE-TIME CREDIT PACK PURCHASE
-    # ----------------------------------------------------------------
+
+
+
     if purchase_type == "credit_purchase" or mode == "payment":
         try:
             credits = int(metadata.get("credits", 0))
@@ -222,9 +222,9 @@ def sync_session(
             "purchased_credits": wallet.purchased_credits,
         }
 
-    # ----------------------------------------------------------------
-    # SUBSCRIPTION UPGRADE (BASIC / PRO)
-    # ----------------------------------------------------------------
+
+
+
     if mode != "subscription" or plan not in SUBSCRIPTION_GRANTS:
         return {"status": "ignored"}
 
@@ -275,11 +275,11 @@ def sync_session(
     return {"status": "success", "tier": plan}
 
 
-# ============================================================
-# CREDIT PACK CONFIG — bound to Stripe price IDs from .env so the
-# packs always check out at the exact price configured in Stripe's
-# dashboard, not a server-side number that could drift.
-# ============================================================
+
+
+
+
+
 CREDIT_PACKS = {
     10: settings.STRIPE_PRICE_CREDITS_10,
     25: settings.STRIPE_PRICE_CREDITS_25,
@@ -287,9 +287,9 @@ CREDIT_PACKS = {
 }
 
 
-# ============================================================
-# ONE-TIME CREDIT PURCHASE — pack-based, uses Stripe price IDs.
-# ============================================================
+
+
+
 @router.post("/purchase-credits")
 def purchase_credits(
     amount: int,
@@ -328,9 +328,9 @@ def purchase_credits(
     if not team:
         raise HTTPException(status_code=400, detail="Team not found")
 
-    # Append the Stripe session id to the success URL so /success can
-    # call /sync-session and land the credits without depending on the
-    # webhook arriving first. Same pattern as the subscription path.
+
+
+
     base_success = settings.STRIPE_SUCCESS_URL
     join = "&" if "?" in base_success else "?"
     success_url = f"{base_success}{join}session_id={{CHECKOUT_SESSION_ID}}"

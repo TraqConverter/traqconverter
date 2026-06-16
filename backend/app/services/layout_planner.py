@@ -229,7 +229,7 @@ def plan_layout(
 
     import anthropic
 
-    # Compact each element to keep the prompt cheap.
+
     compact = []
     for el in elements:
         compact.append(
@@ -297,8 +297,8 @@ def plan_layout(
         logger.warning("Layout planner: response missing 'blocks' key")
         return None
 
-    # Sanity check: planner must reference every element id at most
-    # once and not invent new ones.
+
+
     valid_ids = {el["id"] for el in elements}
     referenced: list[int] = []
     _collect_ids(plan.get("blocks") or [], referenced)
@@ -309,11 +309,11 @@ def plan_layout(
             extra[:5],
         )
         return None
-    # Duplicate ids are normally disallowed, but form-table cells can
-    # legitimately reference the same id twice (label half + value
-    # half). The renderer reads "split_column" to pick which side to
-    # show. We only error out if there's a duplicate that isn't part
-    # of a split-column form table.
+
+
+
+
+
     seen_count: dict[int, int] = {}
     for i in referenced:
         seen_count[i] = seen_count.get(i, 0) + 1
@@ -327,8 +327,8 @@ def plan_layout(
             return None
     missing = sorted(valid_ids - set(referenced))
     if missing:
-        # Append a fallback linear section with the missing ids so we
-        # never silently drop content.
+
+
         logger.info(
             "Layout planner: appending %d unplaced elements as linear tail",
             len(missing),
@@ -339,8 +339,8 @@ def plan_layout(
                 {"kind": "paragraph", "id": mid, "alignment": "left"}
             )
 
-    # Diagnostic: log the SHAPE of the plan so we can see whether
-    # Claude is actually producing rows/tables or just paragraphs.
+
+
     shape = _count_block_kinds(plan.get("blocks") or [])
     logger.info(
         "Layout planner (%s): %d top-level blocks for %d elements — "
@@ -410,7 +410,7 @@ def _walk_check_dupes(blocks: list[Any], dupe_set: set[int]) -> bool:
             except (TypeError, ValueError):
                 continue
             if eid in dupe_set:
-                return False  # dup outside a split-column cell
+                return False
         elif kind == "row":
             for col in b.get("columns") or []:
                 if isinstance(col, dict):
@@ -465,9 +465,9 @@ def _collect_ids_inner(
                         except (TypeError, ValueError):
                             continue
                         if cell.get("split_column"):
-                            # Count split cells once even if both
-                            # label + value halves reference the same
-                            # id.
+
+
+
                             if eid not in seen_split:
                                 out.append(eid)
                                 seen_split.add(eid)

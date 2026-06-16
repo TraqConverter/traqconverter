@@ -9,9 +9,9 @@ def store_segments(db, project_id, team_id, source_language, target_language, pa
 
     for text in paragraphs:
 
-        # --------------------------------
-        # Clean text
-        # --------------------------------
+
+
+
         text = text.strip()
 
         if not text:
@@ -19,9 +19,9 @@ def store_segments(db, project_id, team_id, source_language, target_language, pa
 
         text = " ".join(text.split())
 
-        # --------------------------------
-        # Translation Memory lookup
-        # --------------------------------
+
+
+
         tm_match = db.query(TranslationMemory).filter(
             TranslationMemory.team_id == team_id,
             TranslationMemory.source_language == source_language,
@@ -37,9 +37,9 @@ def store_segments(db, project_id, team_id, source_language, target_language, pa
 
         else:
 
-            # --------------------------------
-            # AI translation fallback
-            # --------------------------------
+
+
+
             try:
 
                 suggested_translation = translate_text(
@@ -48,9 +48,9 @@ def store_segments(db, project_id, team_id, source_language, target_language, pa
                     target_language
                 )
 
-                # --------------------------------
-                # Store new TM entry
-                # --------------------------------
+
+
+
                 if suggested_translation:
 
                     existing_tm = db.query(TranslationMemory).filter(
@@ -76,9 +76,9 @@ def store_segments(db, project_id, team_id, source_language, target_language, pa
             except Exception:
                 suggested_translation = None
 
-        # --------------------------------
-        # Create segment
-        # --------------------------------
+
+
+
         segment = TranslationSegment(
             project_id=project_id,
             segment_index=segment_index,

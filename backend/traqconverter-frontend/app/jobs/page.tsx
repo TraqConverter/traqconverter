@@ -4,14 +4,6 @@ import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 
-// ============================================================
-// PROJECTS LIST — ESPRESSO LOOK
-// Data: GET /projects/ →
-// [{ id, filename, status, progress, source_lang, target_lang,
-//    page_count, credits_used, created_at }]
-// Click a row → /editor/{id}
-// ============================================================
-
 type Assignee = {
   id: string
   email: string
@@ -33,11 +25,6 @@ type Project = {
   assignee: Assignee | null
 }
 
-// The pill the user sees is derived from BOTH axes: `status` (worker
-// progress: PENDING/PROCESSING/COMPLETED/FAILED) and `review_status`
-// (human sign-off: DRAFT/IN_REVIEW/CERTIFIED). When the worker is
-// done we look at review_status instead so a fresh translation sits
-// in "Awaiting review" until a person certifies it.
 function effectiveStatus(p: { status?: string; review_status?: string }) {
   const s = (p.status || "").toUpperCase()
   if (s === "FAILED" || s === "PENDING" || s === "PROCESSING") return s
@@ -45,8 +32,7 @@ function effectiveStatus(p: { status?: string; review_status?: string }) {
     const r = (p.review_status || "").toUpperCase()
     if (r === "CERTIFIED") return "CERTIFIED"
     if (r === "IN_REVIEW") return "IN_REVIEW"
-    // Fall back to "Delivered" for legacy rows whose worker ran
-    // before the IN_REVIEW flip was wired up.
+
     return "COMPLETED"
   }
   return s || "PENDING"
@@ -79,13 +65,12 @@ function statusStyle(status?: string) {
   return STATUS_STYLES[key] || STATUS_STYLES.PENDING
 }
 
-// Map BCP-47-ish language strings → tidy display chip
 function langChip(raw?: string) {
   if (!raw) return "—"
   const s = raw.trim()
-  // Already short codes
+
   if (s.length <= 5 && /^[a-z]/i.test(s)) return s.toLowerCase()
-  // Known full names → codes
+
   const map: Record<string, string> = {
     english: "en",
     spanish: "es",
@@ -104,12 +89,7 @@ function langChip(raw?: string) {
 
 function relativeTime(iso?: string) {
   if (!iso) return "—"
-  // The backend stores created_at as a naive UTC datetime, so the
-  // serialised string can come through without a timezone marker
-  // (e.g. "2026-05-25T12:45:43.627"). new Date() of that interprets
-  // it as LOCAL time, which made everything appear hours older than
-  // it really is. If the string has no Z and no ±offset, append Z
-  // so it's parsed as UTC.
+
   const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(iso)
   const safe = hasTz ? iso : iso + "Z"
   const t = new Date(safe).getTime()
@@ -136,7 +116,6 @@ export default function JobsPage() {
   const [assigningId, setAssigningId] = useState<string | null>(null)
   const [assignBusy, setAssignBusy] = useState<string | null>(null)
 
-  // Rename + delete modals.
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState<string>("")
   const [renameBusy, setRenameBusy] = useState(false)
@@ -202,7 +181,6 @@ export default function JobsPage() {
     fetchMembers()
   }, [])
 
-  // Close the assign popover on outside click
   useEffect(() => {
     if (!assigningId) return
     const onClick = () => setAssigningId(null)
@@ -213,7 +191,7 @@ export default function JobsPage() {
   const fetchJobs = async () => {
     try {
       setLoading(true)
-      // Trailing slash matters — backend has /projects/ to avoid 307
+
       const res = await api.get("/projects/")
       setProjects(res.data || [])
     } catch (err: any) {
@@ -232,7 +210,7 @@ export default function JobsPage() {
       const res = await api.get("/members")
       setMembers(res.data?.members || [])
     } catch {
-      // Non-critical — assign popover just won't show options.
+
       setMembers([])
     }
   }
@@ -315,13 +293,13 @@ export default function JobsPage() {
 
   return (
     <div className="space-y-6 pb-16">
-      {/* BREADCRUMB */}
+      {}
       <div className="text-[12px] tracking-wide" style={{ color: "#9a9178" }}>
         TraqConverter <span style={{ color: "#cfc6ad" }}>›</span>{" "}
         <span style={{ color: "#1f2a2e" }}>Projects</span>
       </div>
 
-      {/* HEADER */}
+      {}
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <h1
@@ -367,7 +345,7 @@ export default function JobsPage() {
         </div>
       )}
 
-      {/* TOOLBAR: tabs + search */}
+      {}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div
           className="flex items-center gap-1 p-1 rounded-full"
@@ -426,7 +404,7 @@ export default function JobsPage() {
         </div>
       </div>
 
-      {/* TABLE */}
+      {}
       <div
         className="rounded-2xl overflow-hidden"
         style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
@@ -495,7 +473,7 @@ export default function JobsPage() {
                   (e.currentTarget.style.background = "#ffffff")
                 }
               >
-                {/* PROJECT */}
+                {}
                 <div className="flex items-center gap-3 min-w-0">
                   <div
                     className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
@@ -538,7 +516,7 @@ export default function JobsPage() {
                   </div>
                 </div>
 
-                {/* LANGUAGES */}
+                {}
                 <div className="flex items-center gap-1.5">
                   <LangChip text={langChip(p.source_lang)} />
                   <svg
@@ -556,7 +534,7 @@ export default function JobsPage() {
                   <LangChip text={langChip(p.target_lang)} />
                 </div>
 
-                {/* STATUS */}
+                {}
                 <div>
                   <span
                     className="inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.04em] px-2.5 py-1 rounded-full"
@@ -570,7 +548,7 @@ export default function JobsPage() {
                   </span>
                 </div>
 
-                {/* PROGRESS */}
+                {}
                 <div className="flex items-center gap-3">
                   <div
                     className="flex-1 h-1.5 rounded-full overflow-hidden"
@@ -597,7 +575,7 @@ export default function JobsPage() {
                   </div>
                 </div>
 
-                {/* ASSIGNEE */}
+                {}
                 <div
                   className="relative"
                   onClick={(e) => e.stopPropagation()}
@@ -765,7 +743,7 @@ export default function JobsPage() {
                   )}
                 </div>
 
-                {/* PAGES */}
+                {}
                 <div
                   className="text-right tabular-nums text-sm"
                   style={{ color: "#4a4638" }}
@@ -773,7 +751,7 @@ export default function JobsPage() {
                   {p.page_count?.toLocaleString() ?? "—"}
                 </div>
 
-                {/* CREATED */}
+                {}
                 <div
                   className="text-right text-sm"
                   style={{ color: "#6b6558" }}
@@ -782,7 +760,7 @@ export default function JobsPage() {
                   {relativeTime(p.created_at)}
                 </div>
 
-                {/* ROW ACTIONS — rename + delete */}
+                {}
                 <div
                   className="flex justify-end items-center gap-1"
                   onClick={(e) => e.stopPropagation()}
@@ -858,7 +836,7 @@ export default function JobsPage() {
         )}
       </div>
 
-      {/* RENAME MODAL */}
+      {}
       {renamingId && (
         <ModalOverlay onClose={closeRename}>
           <div
@@ -938,7 +916,7 @@ export default function JobsPage() {
         </ModalOverlay>
       )}
 
-      {/* DELETE MODAL */}
+      {}
       {deletingId && (
         <ModalOverlay onClose={closeDelete}>
           <div
@@ -1027,10 +1005,6 @@ function ModalOverlay({
     </div>
   )
 }
-
-// ============================================================
-// SUBCOMPONENTS
-// ============================================================
 
 function TabButton({
   label,

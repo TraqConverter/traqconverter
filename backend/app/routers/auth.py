@@ -22,16 +22,16 @@ from app.routers.members import auto_accept_invites
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# Audit CRIT-7 — per-IP throttles on auth endpoints. Generous enough for
-# real shared/NAT users, tight enough that a brute-force script gets
-# 429'd within a second.
+
+
+
 _login_limit = rate_limit("auth_login", max_requests=10, per_seconds=60)
 _register_limit = rate_limit("auth_register", max_requests=5, per_seconds=300)
 
 
-# ============================================================
-# CURRENT USER
-# ============================================================
+
+
+
 @router.get("/me")
 def me(current_user: User = Depends(get_current_user)):
     return {
@@ -45,9 +45,9 @@ def me(current_user: User = Depends(get_current_user)):
     }
 
 
-# ============================================================
-# UPDATE PROFILE
-# ============================================================
+
+
+
 class ProfileUpdate(BaseModel):
     full_name: Optional[str] = None
 
@@ -74,9 +74,9 @@ def update_me(
     }
 
 
-# ============================================================
-# CHANGE PASSWORD
-# ============================================================
+
+
+
 class PasswordChange(BaseModel):
     current_password: str
     new_password: str
@@ -101,15 +101,15 @@ def change_password(
         )
 
     current_user.password_hash = hash_password(payload.new_password)
-    # Audit CRIT-8: invalidate every previously-issued JWT.
+
     current_user.token_version = (
         int(getattr(current_user, "token_version", 0) or 0) + 1
     )
     db.commit()
     db.refresh(current_user)
 
-    # Mint a fresh token for the device that initiated the change so the
-    # user isn't immediately logged out from this page.
+
+
     new_token = create_access_token(
         {"sub": str(current_user.id)},
         token_version=int(current_user.token_version),
@@ -117,14 +117,14 @@ def change_password(
     return {"status": "password_updated", "access_token": new_token}
 
 
-# ============================================================
-# LOGOUT — server-side revocation (Audit P1 #8)
-# ------------------------------------------------------------
-# Frontend just clears localStorage, which leaves the JWT valid
-# for the full expiry window. Bump token_version so every
-# previously-issued token (this one + any clones on other
-# devices) is rejected by the JWT validator on the next request.
-# ============================================================
+
+
+
+
+
+
+
+
 @router.post("/logout")
 def logout(
     db: Session = Depends(get_db),
@@ -137,9 +137,9 @@ def logout(
     return {"status": "logged_out"}
 
 
-# ============================================================
-# DELETE ACCOUNT
-# ============================================================
+
+
+
 class DeleteAccount(BaseModel):
     password: str
     confirm: str
@@ -186,8 +186,8 @@ def delete_account(
         if team is not None:
             team_id = team.id
 
-            # 1) Fetch project IDs once so we can purge their children
-            #    in bulk.
+
+
             project_ids = [
                 row[0]
                 for row in db.query(TranslationProject.id)
@@ -210,12 +210,12 @@ def delete_account(
                     TranslationSegment.project_id.in_(project_ids)
                 ).delete(synchronize_session=False)
 
-                # translation_jobs is project-scoped (FK with CASCADE).
-                # translation_memory is TEAM-scoped on this deployment
-                # (its FK is translation_memory.team_id → teams.id),
-                # so we delete by team_id, not project_id. Both wrapped
-                # in SAVEPOINTs so missing columns / tables don't
-                # roll back the segment + comment deletes above.
+
+
+
+
+
+
                 try:
                     with db.begin_nested():
                         db.execute(
@@ -238,8 +238,8 @@ def delete_account(
                             {"tid": str(team_id)},
                         )
                 except Exception as e:
-                    # Fall back to project-scoped delete if the
-                    # column shape is different on this deployment.
+
+
                     logger.info(
                         "TM team_id cleanup didn't apply, trying project_id: %s",
                         e,
@@ -260,7 +260,7 @@ def delete_account(
                     TranslationProject.team_id == team_id
                 ).delete(synchronize_session=False)
 
-            # 2) Team-level scoped collections.
+
             db.query(TeamMember).filter(
                 TeamMember.team_id == team_id
             ).delete(synchronize_session=False)
@@ -268,9 +268,9 @@ def delete_account(
                 TeamInvite.team_id == team_id
             ).delete(synchronize_session=False)
 
-            # Team-scoped glossary entries (table is raw-SQL backed).
-            # SAVEPOINT keeps a missing table / column from rolling
-            # back the rest of the cleanup.
+
+
+
             try:
                 with db.begin_nested():
                     db.execute(
@@ -280,7 +280,7 @@ def delete_account(
             except Exception as e:
                 logger.info("Optional glossary cleanup skipped: %s", e)
 
-            # 3) Wallet + transactions.
+
             wallet_ids = [
                 row[0]
                 for row in db.query(CreditWallet.id)
@@ -295,20 +295,20 @@ def delete_account(
                     CreditWallet.team_id == team_id
                 ).delete(synchronize_session=False)
 
-            # 4) Finally the team row.
+
             db.execute(
                 text("DELETE FROM teams WHERE id = :tid"),
                 {"tid": str(team_id)},
             )
 
-        # User may also be a MEMBER of other teams — drop those memberships.
+
         db.query(TeamMember).filter(
             TeamMember.user_id == user_id
         ).delete(synchronize_session=False)
 
-        # And any stripe_event rows tied to them, just in case.
-        # SAVEPOINT so a missing column doesn't roll back the user
-        # delete that's about to happen.
+
+
+
         try:
             with db.begin_nested():
                 db.execute(
@@ -321,7 +321,7 @@ def delete_account(
         except Exception as e:
             logger.info("Optional stripe_events cleanup skipped: %s", e)
 
-        # 5) The user row.
+
         db.execute(
             text("DELETE FROM users WHERE id = :uid"),
             {"uid": str(user_id)},
@@ -339,9 +339,9 @@ def delete_account(
     return {"status": "deleted"}
 
 
-# ============================================================
-# REGISTER (rate limited)
-# ============================================================
+
+
+
 @router.post(
     "/register",
     response_model=TokenResponse,
@@ -362,12 +362,12 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     db.add(user)
     db.flush()
 
-    # If this email already has a pending team invite, the user is
-    # joining someone ELSE's team — they don't get their own team or
-    # their own wallet, they inherit the inviter's team's wallet
-    # (which determines their plan tier and credit pool). This is
-    # what makes "invited members are on the same plan as the owner"
-    # work transparently.
+
+
+
+
+
+
     pending_invite = (
         db.query(TeamInvite)
         .filter(
@@ -378,7 +378,7 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     )
 
     if pending_invite is None:
-        # Standalone register: create their own team and a trial wallet.
+
         team = Team(
             name=f"{user.full_name or user.email}'s Team",
             owner_id=user.id,
@@ -386,8 +386,8 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
         db.add(team)
         db.flush()
 
-        # 7-day trial with 1 credit. Download is gated at the route
-        # level (feature_guard's TRIAL config).
+
+
         wallet = CreditWallet(
             team_id=team.id,
             subscription_credits=TRIAL_CREDITS,
@@ -401,10 +401,10 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
         user.subscription_plan = "TRIAL"
         user.subscription_status = "TRIAL"
     else:
-        # Invited user — mirror the owner's plan onto their User row
-        # so /auth/me reflects the right tier. The wallet they share
-        # with the team is the team-scoped CreditWallet, which they
-        # don't get their own copy of.
+
+
+
+
         team_owner = (
             db.query(User)
             .join(Team, Team.owner_id == User.id)
@@ -426,8 +426,8 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     except Exception:
         pass
 
-    # Embed token_version so password changes can revoke older tokens
-    # (audit CRIT-8).
+
+
     token = create_access_token(
         {"sub": str(user.id)},
         token_version=int(getattr(user, "token_version", 0) or 0),
@@ -435,9 +435,9 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     return TokenResponse(access_token=token)
 
 
-# ============================================================
-# LOGIN (rate limited)
-# ============================================================
+
+
+
 @router.post(
     "/login",
     response_model=TokenResponse,

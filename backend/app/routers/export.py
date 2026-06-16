@@ -16,9 +16,9 @@ from app.services.export_service import generate_docx, generate_pdf
 router = APIRouter(prefix="/projects", tags=["Export"])
 
 
-# =========================================
-# EXPORT DOCX (REAL + CERTIFIED, layout-preserving when possible)
-# =========================================
+
+
+
 @router.get(
     "/{project_id}/export",
     dependencies=[Depends(require_feature("download_translation"))],
@@ -28,8 +28,8 @@ def export_docx_route(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Tenant guard — IDOR-safe (CRIT-2): only return projects on the
-    # caller's team, otherwise 404 (don't reveal existence cross-tenant).
+
+
     project = get_user_project_or_404(db, project_id, current_user)
 
     segments = (
@@ -38,9 +38,9 @@ def export_docx_route(
         .order_by(TranslationSegment.segment_index)
         .all()
     )
-    # No gate — Claude-direct flow can export even with empty
-    # segments (the authored DOCX or edited HTML is the source of
-    # truth). generate_docx handles whatever's available.
+
+
+
     valid_segments = [
         s for s in segments
         if s.translated_text and s.translated_text.strip()
@@ -65,9 +65,9 @@ def export_docx_route(
     )
 
 
-# =========================================
-# EXPORT PDF (REAL + CERTIFIED, layout-preserving when possible)
-# =========================================
+
+
+
 @router.get(
     "/{project_id}/export/pdf",
     dependencies=[Depends(require_feature("download_translation"))],
@@ -77,8 +77,8 @@ def export_pdf_route(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Tenant guard — IDOR-safe (CRIT-2): only return projects on the
-    # caller's team, otherwise 404 (don't reveal existence cross-tenant).
+
+
     project = get_user_project_or_404(db, project_id, current_user)
 
     segments = (
@@ -87,7 +87,7 @@ def export_pdf_route(
         .order_by(TranslationSegment.segment_index)
         .all()
     )
-    # No gate — same as DOCX export above.
+
     valid_segments = [
         s for s in segments
         if s.translated_text and s.translated_text.strip()
@@ -112,16 +112,16 @@ def export_pdf_route(
     )
 
 
-# ============================================================
-# BUILD DOCX REBUILD → STORE → RETURN URL
-# ------------------------------------------------------------
-# Powers the editor's Compare view: generates a fresh DOCX
-# rebuild from current approved segments, uploads it to object
-# storage, points project.output_file at it, and returns a signed
-# inline-disposition URL the frontend can render in an iframe via
-# the Office Online viewer. Nothing is streamed to the browser —
-# this never triggers a file download.
-# ============================================================
+
+
+
+
+
+
+
+
+
+
 @router.post("/{project_id}/build-rebuild-docx")
 def build_rebuild_docx(
     project_id: UUID,
@@ -144,8 +144,8 @@ def build_rebuild_docx(
         .order_by(TranslationSegment.segment_index)
         .all()
     )
-    # No gate — Claude-direct flow handles empty segments via the
-    # authored DOCX path.
+
+
     valid_segments = [
         s for s in segments
         if s.translated_text and s.translated_text.strip()
@@ -163,7 +163,7 @@ def build_rebuild_docx(
             status_code=500, detail=f"DOCX build failed: {str(e)}"
         )
 
-    # Persist to a tmp file so we can hand a Path to upload_file_to_s3.
+
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -174,8 +174,8 @@ def build_rebuild_docx(
 
         key = upload_file_to_s3(tmp_path)
 
-        # Point the project at this freshly built rebuild so the
-        # existing /rebuild-url endpoint also reflects it.
+
+
         project.output_file = key
         db.commit()
         db.refresh(project)
@@ -186,8 +186,8 @@ def build_rebuild_docx(
             except OSError:
                 pass
 
-    # inline=True so when the Office Online viewer fetches this URL
-    # it gets the file content directly (not an attachment response).
+
+
     url = generate_presigned_download_url(key, inline=True)
     return {
         "url": url,

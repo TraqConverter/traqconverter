@@ -4,19 +4,6 @@ import { useEffect, useMemo, useState } from "react"
 import { api } from "@/lib/api"
 import ProPaywall from "@/components/ProPaywall"
 
-// ============================================================
-// GLOSSARY — ESPRESSO LOOK
-// Wired to real backend:
-//   GET    /glossary
-//   POST   /glossary  { source_language, target_language, source_term, target_term, notes? }
-//   PATCH  /glossary/{id}  { ...partial }
-//   DELETE /glossary/{id}
-//
-// The Glossary model now stores: id, source/target language, source/target term,
-// notes (free-form), usage_count (auto-incremented when the AI translation
-// service applies the term during a batch).
-// ============================================================
-
 type Term = {
   id: string
   source_language: string
@@ -71,7 +58,6 @@ export default function GlossaryPage() {
   const [activePair, setActivePair] = useState<string>("all")
   const [query, setQuery] = useState("")
 
-  // Add term modal/inline form state
   const [showAdd, setShowAdd] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [sourceTerm, setSourceTerm] = useState("")
@@ -177,7 +163,6 @@ export default function GlossaryPage() {
     }
   }
 
-  // Group by language pair to drive filter pills
   const pairs = useMemo(() => {
     const counts = new Map<string, number>()
     for (const t of terms) {
@@ -227,14 +212,14 @@ export default function GlossaryPage() {
 
   return (
     <div className="space-y-6 pb-16">
-      {/* BREADCRUMB */}
+      {}
       <div className="text-[12px] tracking-wide" style={{ color: "#9a9178" }}>
         TraqConverter <span style={{ color: "#cfc6ad" }}>›</span> Assets{" "}
         <span style={{ color: "#cfc6ad" }}>›</span>{" "}
         <span style={{ color: "#1f2a2e" }}>Glossary</span>
       </div>
 
-      {/* HEADER */}
+      {}
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <div
@@ -328,7 +313,7 @@ export default function GlossaryPage() {
         </div>
       )}
 
-      {/* ADD TERM PANEL */}
+      {}
       {showAdd && (
         <div
           className="rounded-2xl p-5"
@@ -447,7 +432,7 @@ export default function GlossaryPage() {
         </div>
       )}
 
-      {/* LANGUAGE PAIR PILLS */}
+      {}
       {pairs.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap">
           <PairPill
@@ -470,7 +455,7 @@ export default function GlossaryPage() {
         </div>
       )}
 
-      {/* TABLE */}
+      {}
       <div
         className="rounded-2xl overflow-hidden"
         style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
@@ -699,10 +684,6 @@ function RowAction({
     </button>
   )
 }
-
-// ============================================================
-// SUBCOMPONENTS
-// ============================================================
 
 function FieldGroup({
   label,

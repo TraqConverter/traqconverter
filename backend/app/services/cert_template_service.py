@@ -38,9 +38,9 @@ from typing import Any, Iterable
 logger = logging.getLogger(__name__)
 
 
-# Every placeholder we know how to substitute. Order matters for the
-# UI: this controls the order documented to the user when they upload
-# a template.
+
+
+
 SUPPORTED_FIELDS: tuple[tuple[str, str], ...] = (
     ("translator_name",     "Logged-in user's full name (falls back to email username)"),
     ("translator_email",    "Logged-in user's email address"),
@@ -60,15 +60,15 @@ SUPPORTED_FIELDS: tuple[tuple[str, str], ...] = (
 )
 SUPPORTED_FIELD_NAMES: frozenset[str] = frozenset(name for name, _ in SUPPORTED_FIELDS)
 
-# Pattern matches ``{{anything_alpha_or_underscore_or_digit}}`` with
-# optional surrounding spaces inside the braces, e.g. both
-# ``{{date}}`` and ``{{ date }}`` work.
+
+
+
 _PLACEHOLDER_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 
 
-# ============================================================
-# Token discovery
-# ============================================================
+
+
+
 
 
 def scan_docx_for_tokens(docx_bytes: bytes) -> dict[str, Any]:
@@ -88,7 +88,7 @@ def scan_docx_for_tokens(docx_bytes: bytes) -> dict[str, Any]:
     """
     found: list[str] = []
     try:
-        from docx import Document  # python-docx
+        from docx import Document
 
         doc = Document(io.BytesIO(docx_bytes))
         for text in _iter_docx_text(doc):
@@ -135,9 +135,9 @@ def _iter_docx_text(doc) -> Iterable[str]:
                             yield para.text
 
 
-# ============================================================
-# Value building
-# ============================================================
+
+
+
 
 
 def build_substitution_values(
@@ -209,9 +209,9 @@ def _make_certificate_number(project: Any) -> str:
     return f"CERT-{year}-{prefix}"
 
 
-# ============================================================
-# Substitution
-# ============================================================
+
+
+
 
 
 def substitute_in_docx(
@@ -272,7 +272,7 @@ def _substitute_paragraph(paragraph, values: dict[str, str]) -> None:
         token = match.group(1)
         if token in values:
             return values[token]
-        # Leave unknown placeholders untouched so the user can spot them.
+
         return match.group(0)
 
     new_text = _PLACEHOLDER_RE.sub(_replace, full_text)

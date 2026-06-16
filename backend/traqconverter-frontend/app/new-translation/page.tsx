@@ -4,10 +4,6 @@ import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 
-// ============================================================
-// NEW PROJECT — ESPRESSO LOOK
-// ============================================================
-
 type LangOption = {
   code: string
   flag: string
@@ -16,7 +12,7 @@ type LangOption = {
 
 const SOURCE_LANGUAGES: LangOption[] = [
   { code: "auto", flag: "AUTO", name: "Auto-detect" },
-  // Latin-script languages
+
   { code: "en-GB", flag: "GB", name: "English (UK)" },
   { code: "en-US", flag: "US", name: "English (US)" },
   { code: "fr-FR", flag: "FR", name: "French" },
@@ -37,7 +33,7 @@ const SOURCE_LANGUAGES: LangOption[] = [
   { code: "tr-TR", flag: "TR", name: "Turkish" },
   { code: "vi-VN", flag: "VN", name: "Vietnamese" },
   { code: "id-ID", flag: "ID", name: "Indonesian" },
-  // Other scripts
+
   { code: "ja-JP", flag: "JP", name: "Japanese" },
   { code: "zh-CN", flag: "CN", name: "Chinese (Simplified)" },
   { code: "zh-TW", flag: "TW", name: "Chinese (Traditional)" },
@@ -51,14 +47,10 @@ const SOURCE_LANGUAGES: LangOption[] = [
   { code: "th-TH", flag: "TH", name: "Thai" },
 ]
 
-// Target language list excludes Auto-detect — you must pick a real
-// destination language for the output.
 const TARGET_LANGUAGES: LangOption[] = SOURCE_LANGUAGES.filter(
   (l) => l.code !== "auto"
 )
 
-// Combined list used by the dropdown rendering (so swap and label
-// resolution work for both source and target inputs).
 const LANGUAGES: LangOption[] = SOURCE_LANGUAGES
 
 function IconUpload() {
@@ -286,21 +278,13 @@ export default function NewProjectPage() {
   const [source, setSource] = useState("auto")
   const [target, setTarget] = useState("it-IT")
 
-  // TM and Glossary default OFF — users opt in explicitly when they
-  // know they have approved memory / approved terminology to apply.
-  // Defaulting them ON surprised users on first upload by re-using
-  // entries from other projects that hadn't been curated.
   const [useTM, setUseTM] = useState(false)
   const [applyGlossary, setApplyGlossary] = useState(false)
   const [requestCert, setRequestCert] = useState(false)
 
-  // Run Options ── advanced controls (collapsible). All optional —
-  // server defaults kick in when these are left blank.
   const [showRunOptions, setShowRunOptions] = useState(true)
   const [runMode, setRunMode] = useState<"translate" | "dtp">("translate")
-  // Rebuild engine — Claude-direct (Claude authors the whole DOCX
-  // from the PDF, premium quality, slow) vs. Segment-pipeline
-  // (per-segment LLM translation, fast, lets you pick the model).
+
   const [rebuildEngine, setRebuildEngine] = useState<
     "claude-authored" | "segment-pipeline"
   >("claude-authored")
@@ -316,15 +300,13 @@ export default function NewProjectPage() {
   const [instructions, setInstructions] = useState<string>("")
   const [showInstructionsEditor, setShowInstructionsEditor] = useState(false)
 
-  // Populate the model + template dropdowns once on mount.
   useEffect(() => {
     api
       .get("/projects/translation-models")
       .then((res) => {
         const list = res.data?.models || []
         setModels(list)
-        // Default to the first model marked "balanced/recommended"
-        // or just the first available.
+
         if (list.length) setAiModel(list[0].id)
       })
       .catch(() => setModels([]))
@@ -335,10 +317,7 @@ export default function NewProjectPage() {
           res.data?.items ||
           (Array.isArray(res.data) ? res.data : []) ||
           []
-        // Show every uploaded cert in the dropdown. The previous
-        // .docx-only filter hid certs uploaded as .pdf/.doc/etc.
-        // — the export pipeline accepts any cert file and just
-        // appends/converts as needed.
+
         setCertTemplates(
           items.map((c: any) => ({
             id: c.id,
@@ -376,11 +355,7 @@ export default function NewProjectPage() {
       formData.append("use_tm", String(useTM))
       formData.append("apply_glossary", String(applyGlossary))
       formData.append("request_certification", String(requestCert))
-      // The project's "model" field doubles as the run-mode + engine
-      // signal. Values are mutually exclusive:
-      //   "dtp"              → skip translation, just rebuild editable
-      //   "claude-authored"  → Claude authors the whole DOCX (premium)
-      //   <model id>         → segment-pipeline w/ that LLM
+
       if (runMode === "dtp") {
         formData.append("model", "dtp")
       } else if (rebuildEngine === "claude-authored") {
@@ -391,8 +366,7 @@ export default function NewProjectPage() {
       if (certTemplateId) {
         formData.append("certification_template_id", certTemplateId)
       }
-      // Free-text AI instructions — handed to the translator at run
-      // time (lands on project.notes today; future field rename TBD).
+
       if (instructions.trim()) {
         formData.append("notes", instructions.trim())
       }
@@ -423,7 +397,7 @@ export default function NewProjectPage() {
 
   return (
     <div className="max-w-[1200px] mx-auto">
-      {/* BREADCRUMB */}
+      {}
       <div className="mb-3">
         <div className="text-sm" style={{ color: "#8a8270" }}>
           <span>Espresso</span>
@@ -434,7 +408,7 @@ export default function NewProjectPage() {
         </div>
       </div>
 
-      {/* TITLE */}
+      {}
       <h1
         className="text-[34px] font-semibold tracking-tight mb-1"
         style={{ color: "#1f2a2e" }}
@@ -442,7 +416,7 @@ export default function NewProjectPage() {
         New project
       </h1>
 
-      {/* BACK LINK */}
+      {}
       <button
         onClick={() => router.push("/dashboard")}
         className="text-sm mb-5 hover:underline"
@@ -458,7 +432,7 @@ export default function NewProjectPage() {
       </p>
 
       <div className="grid grid-cols-3 gap-6">
-        {/* LEFT — DROPZONE */}
+        {}
         <div className="col-span-2">
           <div
             onDragOver={(e) => {
@@ -532,9 +506,9 @@ export default function NewProjectPage() {
           </div>
         </div>
 
-        {/* RIGHT — SETTINGS */}
+        {}
         <div className="space-y-6">
-          {/* LANGUAGES */}
+          {}
           <div
             className="rounded-2xl p-6"
             style={{
@@ -576,9 +550,7 @@ export default function NewProjectPage() {
             />
           </div>
 
-          {/* RUN MODE — Translate (default) vs DTP (Desktop
-              Publishing: rebuild the editable doc without
-              re-translating). Stored as a string on project.model. */}
+          {}
           <div
             className="rounded-2xl p-6"
             style={{
@@ -655,7 +627,7 @@ export default function NewProjectPage() {
             </div>
           </div>
 
-          {/* RUN OPTIONS — collapsible advanced controls */}
+          {}
           <div
             className="rounded-2xl"
             style={{
@@ -694,7 +666,7 @@ export default function NewProjectPage() {
 
             {showRunOptions && (
               <div className="px-6 py-2">
-                {/* REBUILD ENGINE */}
+                {}
                 <RunOptionRow label="Rebuild engine">
                   <div
                     style={{
@@ -772,7 +744,7 @@ export default function NewProjectPage() {
                   </div>
                 </RunOptionRow>
 
-                {/* AI MODEL — only shown when Segment pipeline is selected. */}
+                {}
                 {rebuildEngine === "segment-pipeline" && (
                   <RunOptionRow
                     label="AI Model"
@@ -804,7 +776,7 @@ export default function NewProjectPage() {
                   </RunOptionRow>
                 )}
 
-                {/* PAGE ORIENTATION */}
+                {}
                 <RunOptionRow
                   label="Page Orientation"
                   helper="Match source orientation automatically, or force one. The rebuild adopts this per page."
@@ -841,7 +813,7 @@ export default function NewProjectPage() {
                   </div>
                 </RunOptionRow>
 
-                {/* CERT TEMPLATE */}
+                {}
                 <RunOptionRow
                   label="Certification template"
                   helper="DOCX template with {{tokens}} from your Certifications library. Auto-filled at export."
@@ -865,7 +837,7 @@ export default function NewProjectPage() {
                   </select>
                 </RunOptionRow>
 
-                {/* INSTRUCTIONS */}
+                {}
                 <RunOptionRow
                   label="Instructions"
                   helper="Free-text guidance handed to the AI (e.g. 'formal register', 'prefer Municipality over City')."
@@ -910,7 +882,7 @@ export default function NewProjectPage() {
               </div>
             )}
           </div>
-          {/* OPTIONS */}
+          {}
           <div
             className="rounded-2xl p-6"
             style={{
@@ -952,7 +924,7 @@ export default function NewProjectPage() {
             />
           </div>
 
-          {/* START CTA */}
+          {}
           <div>
             <button
               onClick={handleStart}
@@ -993,11 +965,6 @@ function IconUploadWhite() {
   )
 }
 
-// Run Options row — single horizontal row: label on the left (fixed
-// width so labels don't get squashed by wide dropdowns), control on
-// the right. Helper text sits BELOW the label so it can wrap freely
-// without pushing the control off-screen. Mirrors the competitor's
-// expandable settings panel layout.
 function RunOptionRow({
   label,
   helper,
@@ -1013,9 +980,7 @@ function RunOptionRow({
     <div
       className="grid items-start gap-4 py-4"
       style={{
-        // Label gets a fixed ~160px so it never wraps to 6 lines just
-        // because the control is wide. Control takes the remaining
-        // space and right-aligns its inner element.
+
         gridTemplateColumns: "160px 1fr",
         borderBottom: last ? "none" : "1px solid #f4ecd6",
       }}
@@ -1042,7 +1007,6 @@ function RunOptionRow({
     </div>
   )
 }
-
 
 function OptionRow({
   icon,

@@ -36,9 +36,9 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-# ============================================================
-# Public segment shape used between extractor and rebuilder.
-# ============================================================
+
+
+
 
 @dataclass
 class ExtractedSegment:
@@ -46,22 +46,22 @@ class ExtractedSegment:
     layout: dict[str, Any] = field(default_factory=dict)
 
 
-# ============================================================
-# Font selection for non-Latin scripts.
-# ----------------------------------------------------------------
-# PyMuPDF's default "helv" font has no glyphs for CJK / Arabic /
-# Cyrillic / Greek scripts — drawing those characters with it
-# produces missing glyphs or a flat-out failure. PyMuPDF ships with
-# CJK reserved font names that work without any file embedding;
-# for other scripts we fall back to "helv" and accept that some
-# characters may be missing until we wire a Noto font in.
-# ============================================================
+
+
+
+
+
+
+
+
+
+
 _CJK_FONTS = {
-    "ja": "japan",       # Japanese sans-serif
+    "ja": "japan",
     "jp": "japan",
-    "ko": "korea",       # Korean sans-serif
+    "ko": "korea",
     "kr": "korea",
-    "zh": "china-s",     # Chinese (Simplified) sans-serif
+    "zh": "china-s",
 }
 
 
@@ -71,7 +71,7 @@ def _pdf_font_for_language(target_lang: str | None) -> str:
     if not target_lang:
         return "helv"
     code = target_lang.lower()
-    # zh-TW / zh-HK should use traditional Chinese
+
     if code.startswith("zh"):
         if "tw" in code or "hk" in code:
             return "china-t"
@@ -80,26 +80,26 @@ def _pdf_font_for_language(target_lang: str | None) -> str:
     return _CJK_FONTS.get(base, "helv")
 
 
-# ============================================================
-# RTL (right-to-left) language support
-# ----------------------------------------------------------------
-# Arabic and Hebrew (plus Farsi, Urdu, Yiddish) read right-to-left.
-# Three things need to happen so PyMuPDF renders them correctly:
-#
-#   1. Arabic letters have positional forms (initial, medial, final,
-#      isolated) — arabic_reshaper converts logical characters into
-#      visually-joined glyphs. Hebrew doesn't need this step.
-#   2. Bidirectional algorithm (UAX #9) reorders the text for visual
-#      display so RTL runs appear right-to-left while embedded LTR runs
-#      (numbers, English words) keep their natural order. python-bidi
-#      implements this.
-#   3. The text-box must be right-aligned (PyMuPDF align=2) so the line
-#      starts at the right edge of the box, where RTL readers expect it.
-#
-# Both libraries are optional — if they're not installed we still apply
-# right-alignment, but Arabic glyphs won't join and bidi runs won't
-# reorder correctly.
-# ============================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 _RTL_LANGS = {"ar", "he", "fa", "ur", "yi", "ji"}
 
 
@@ -124,32 +124,32 @@ def _shape_rtl(text: str, target_lang: str | None) -> str:
             import arabic_reshaper
             shaped = arabic_reshaper.reshape(shaped)
     except Exception:
-        # arabic-reshaper missing — fall through with original text.
+
         pass
 
     try:
         from bidi.algorithm import get_display
         shaped = get_display(shaped)
     except Exception:
-        # python-bidi missing — text will read in logical order.
+
         pass
 
     return shaped
 
 
-# Candidate paths to search for a font that supports the target
-# language's script. PyMuPDF's reserved CJK names work without files
-# but Arabic/Hebrew/Hindi need an actual TTF. We probe common system
-# locations and register the first one we find.
+
+
+
+
 _SCRIPT_FONT_CANDIDATES: dict[str, list[str]] = {
     "ar": [
         "C:/Windows/Fonts/arabtype.ttf",
-        "C:/Windows/Fonts/arial.ttf",  # has basic Arabic glyphs
+        "C:/Windows/Fonts/arial.ttf",
         "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/Library/Fonts/Arial.ttf",
     ],
-    "fa": [  # Persian uses Arabic script
+    "fa": [
         "C:/Windows/Fonts/arabtype.ttf",
         "C:/Windows/Fonts/arial.ttf",
         "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
@@ -202,9 +202,9 @@ def _register_script_font(page, target_lang: str | None) -> str | None:
         return None
 
 
-# ============================================================
-# Source kind detection
-# ============================================================
+
+
+
 
 def detect_source_kind(file_path: str) -> str:
     ext = os.path.splitext(file_path)[1].lower()
@@ -219,9 +219,9 @@ def detect_source_kind(file_path: str) -> str:
     return "UNKNOWN"
 
 
-# ============================================================
-# EXTRACTORS
-# ============================================================
+
+
+
 
 def _is_scanned_pdf(doc) -> bool:
     """Heuristic to detect 'scanned image PDFs' (CamScanner, photocopier
@@ -239,7 +239,7 @@ def _is_scanned_pdf(doc) -> bool:
             data = page.get_text("dict")
             image_area = 0.0
             for block in data.get("blocks", []):
-                # type 1 == image block in PyMuPDF
+
                 if block.get("type") == 1:
                     bbox = block.get("bbox") or [0, 0, 0, 0]
                     w = max(0.0, bbox[2] - bbox[0])
@@ -268,19 +268,19 @@ def _sample_background_color(
     """
     try:
         if pix is None:
-            pix = page.get_pixmap(dpi=72)  # 72dpi → 1pt = 1px
-        n_components = pix.n  # 3 (RGB) or 4 (RGBA)
+            pix = page.get_pixmap(dpi=72)
+        n_components = pix.n
         page_w_px = pix.width
         page_h_px = pix.height
 
-        # Build sample points just OUTSIDE the bbox on each side.
+
         sample_pts = []
-        # Edge points along top and bottom.
+
         for fx in (0.1, 0.3, 0.5, 0.7, 0.9):
             x = int(rect.x0 + fx * (rect.x1 - rect.x0))
             sample_pts.append((x, int(rect.y0 - margin)))
             sample_pts.append((x, int(rect.y1 + margin)))
-        # Edge points along left and right.
+
         for fy in (0.3, 0.5, 0.7):
             y = int(rect.y0 + fy * (rect.y1 - rect.y0))
             sample_pts.append((int(rect.x0 - margin), y))
@@ -298,7 +298,7 @@ def _sample_background_color(
         if not rs:
             return (1.0, 1.0, 1.0)
 
-        # Median is more robust than mean against e.g. nearby ink pixels.
+
         rs.sort(); gs.sort(); bs.sort()
         m = len(rs) // 2
         r = rs[m] / 255.0
@@ -421,7 +421,7 @@ def _map_pdf_font(font_name: str | None, flags: int) -> str:
 
     fn = (font_name or "").lower()
 
-    # Monospaced → Courier family
+
     if is_mono or any(k in fn for k in ("courier", "mono", "consolas")):
         if is_bold and is_italic:
             return "cobi"
@@ -431,7 +431,7 @@ def _map_pdf_font(font_name: str | None, flags: int) -> str:
             return "coit"
         return "cour"
 
-    # Serif → Times family
+
     serif_hits = ("times", "garamond", "georgia", "serif", "roman", "minion", "cambria")
     if is_serif or any(k in fn for k in serif_hits):
         if is_bold and is_italic:
@@ -442,7 +442,7 @@ def _map_pdf_font(font_name: str | None, flags: int) -> str:
             return "tiit"
         return "tiro"
 
-    # Default → Helvetica family
+
     if is_bold and is_italic:
         return "hebi"
     if is_bold:
@@ -482,10 +482,10 @@ def _extract_pdf_via_claude(file_path: str) -> list[ExtractedSegment] | None:
         doc = fitz.open(file_path)
         try:
             for page_index, page in enumerate(doc):
-                # Render at ~200 DPI so fine print is legible. Claude
-                # Vision upscales internally if smaller, but starting
-                # closer to the target gets cleaner reads on stamps,
-                # registration codes, and footer disclaimers.
+
+
+
+
                 pix = page.get_pixmap(dpi=200, alpha=False)
                 page_png = tmp_dir / f"page_{page_index}.png"
                 pix.save(str(page_png))
@@ -499,29 +499,29 @@ def _extract_pdf_via_claude(file_path: str) -> list[ExtractedSegment] | None:
                     )
                     continue
 
-                # Convert Claude's line dicts into ExtractedSegment
-                # the same way _extract_image_via_claude does, but
-                # attach the page index so multi-page rebuilds
-                # preserve page boundaries.
+
+
+
+
                 size_map = {
                     "small": 8.0,
                     "normal": 10.5,
                     "large": 13.0,
                     "xlarge": 16.0,
                 }
-                # Import junk filter from the OCR module so we apply
-                # the same fragment-dropping logic the image path
-                # uses. Without this, partial reads like "( Y CARTA",
-                # "OD", "Ae : ELETTRONICA" leak into the editor.
+
+
+
+
                 try:
                     from app.services.claude_vision_ocr import _looks_like_junk
                 except Exception:
                     _looks_like_junk = lambda t: False  # noqa: E731
 
-                # Page orientation: read from PyMuPDF before we OCR'd.
-                # Landscape pages must produce landscape rebuild pages
-                # — otherwise text from a wide form gets squashed into
-                # a portrait section.
+
+
+
+
                 page_rect = page.rect
                 page_w_pt = float(page_rect.width)
                 page_h_pt = float(page_rect.height)
@@ -536,9 +536,9 @@ def _extract_pdf_via_claude(file_path: str) -> list[ExtractedSegment] | None:
                     if _looks_like_mrz(text):
                         continue
                     kind = line.get("kind") or "text"
-                    # Drop junk fragments — but only for plain text
-                    # blocks. Placeholders like "[Photo]" are allowed
-                    # to be short.
+
+
+
                     if kind == "text" and _looks_like_junk(text):
                         continue
                     bbox = line.get("bbox")
@@ -579,9 +579,9 @@ def _extract_pdf_via_claude(file_path: str) -> list[ExtractedSegment] | None:
                                 "size_hint": rel_size,
                                 "flags": flags,
                                 "font_family": line.get("font_family") or "",
-                                # Orientation metadata used by the
-                                # DOCX renderer to flip section
-                                # orientation per source page.
+
+
+
                                 "page_orientation": page_orientation,
                                 "page_width_pt": page_w_pt,
                                 "page_height_pt": page_h_pt,
@@ -597,7 +597,7 @@ def _extract_pdf_via_claude(file_path: str) -> list[ExtractedSegment] | None:
         logger.warning("Claude Vision PDF OCR raised: %s", e)
         return None
     finally:
-        # Best-effort tmp cleanup.
+
         try:
             import shutil
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -638,7 +638,7 @@ def _extract_pdf(file_path: str) -> list[ExtractedSegment]:
     """
     import fitz
 
-    # 1) Claude Vision path — preferred when configured.
+
     claude_segments = _extract_pdf_via_claude(file_path)
     if claude_segments:
         logger.info(
@@ -666,17 +666,17 @@ def _extract_pdf(file_path: str) -> list[ExtractedSegment]:
             data = page.get_text("dict")
             for block in data.get("blocks", []):
                 if block.get("type") != 0:
-                    continue  # skip image blocks
+                    continue
 
                 for line in block.get("lines", []):
                     spans = line.get("spans", [])
                     if not spans:
                         continue
 
-                    # Concatenate span text in order; pick the
-                    # dominant font properties from the span that
-                    # covers the most characters (so a 1-char span
-                    # in a different font doesn't override the line).
+
+
+
+
                     line_text = ""
                     dominant_span = max(
                         spans,
@@ -722,7 +722,7 @@ def _extract_pdf(file_path: str) -> list[ExtractedSegment]:
         out = _extract_pdf_via_ocr(file_path)
     return out
 
-    # Fallback OCR if nothing extracted at all.
+
     if not out:
         out = _extract_pdf_via_ocr(file_path)
 
@@ -743,10 +743,10 @@ def _extract_pdf_via_ocr(file_path: str) -> list[ExtractedSegment]:
     out: list[ExtractedSegment] = []
     doc = fitz.open(file_path)
     try:
-        # 2x render so OCR can read small print confidently. The bboxes
-        # come back in the *rendered* coordinate space; we convert to the
-        # PDF page's native coordinates so the rebuild draws translations
-        # at the correct positions.
+
+
+
+
         OCR_SCALE = 2.0
         matrix = fitz.Matrix(OCR_SCALE, OCR_SCALE)
         for page_index, page in enumerate(doc):
@@ -762,7 +762,7 @@ def _extract_pdf_via_ocr(file_path: str) -> list[ExtractedSegment]:
                 logger.warning(f"OCR failed on page {page_index}: {e}")
                 continue
 
-            # Group by (block_num, par_num, line_num) → one segment per line
+
             lines: dict[tuple, dict] = {}
             n = len(data.get("text", []))
             for i in range(n):
@@ -798,14 +798,14 @@ def _extract_pdf_via_ocr(file_path: str) -> list[ExtractedSegment]:
                 line_text = " ".join(info["words"]).strip()
                 if not line_text:
                     continue
-                # Convert OCR bbox from rendered coords back to PDF
-                # native coords (so the rebuild draws translations at
-                # the right positions on the same-sized page).
+
+
+
                 inv = 1.0 / OCR_SCALE
-                # Derive a reasonable font size from bbox height. Cap at
-                # 14pt so an unusually tall bbox (caused by ascenders/
-                # descenders, stamps, or noisy OCR grouping) doesn't
-                # render the translation at giant body-paragraph height.
+
+
+
+
                 derived = (info["bottom"] - info["y"]) * inv * 0.6
                 font_size = max(8.0, min(14.0, derived))
                 out.append(
@@ -838,7 +838,7 @@ def _extract_docx(file_path: str) -> list[ExtractedSegment]:
     out: list[ExtractedSegment] = []
     doc = Document(file_path)
 
-    # Top-level paragraphs
+
     for para_idx, para in enumerate(doc.paragraphs):
         text = para.text.strip()
         if not text:
@@ -853,7 +853,7 @@ def _extract_docx(file_path: str) -> list[ExtractedSegment]:
             )
         )
 
-    # Tables — translate every cell, every paragraph inside the cell
+
     for tbl_idx, table in enumerate(doc.tables):
         for row_idx, row in enumerate(table.rows):
             for col_idx, cell in enumerate(row.cells):
@@ -884,7 +884,7 @@ def _looks_like_mrz(text: str) -> bool:
     s = (text or "").strip().replace(" ", "")
     if len(s) < 20:
         return False
-    # MRZ lines use only A-Z, 0-9, and < ; have ≥2 chevron fillers.
+
     if s.count("<") >= 2 and all(c.isalnum() or c == "<" for c in s):
         return True
     return False
@@ -918,9 +918,9 @@ def _extract_image_via_claude(file_path: str) -> list[ExtractedSegment] | None:
             continue
         x0, y0, x1, y1 = bbox
         h = max(1.0, y1 - y0)
-        # Map Claude's relative "size" hint to an approximate point
-        # size so the renderer keeps hierarchy (title vs body vs
-        # footer fine print).
+
+
+
         rel_size = (line.get("size") or "normal").lower()
         size_map = {
             "small": 8.0,
@@ -929,8 +929,8 @@ def _extract_image_via_claude(file_path: str) -> list[ExtractedSegment] | None:
             "xlarge": 16.0,
         }
         font_size = size_map.get(rel_size, max(7.0, min(12.0, h * 0.7)))
-        # Bold/italic via PyMuPDF span-flag bits so the existing
-        # rendering paths read it the same way as PDF segments.
+
+
         flags = 0
         if line.get("bold"):
             flags |= 16
@@ -954,8 +954,8 @@ def _extract_image_via_claude(file_path: str) -> list[ExtractedSegment] | None:
                     "all_caps": bool(line.get("all_caps")),
                     "size_hint": rel_size,
                     "flags": flags,
-                    # Claude's font-family classification used by the
-                    # renderer to pick Times / Helvetica / Courier.
+
+
                     "font_family": line.get("font_family") or "",
                 },
             )
@@ -988,10 +988,10 @@ def _extract_image(file_path: str) -> list[ExtractedSegment]:
     image = Image.open(file_path).convert("RGB")
     orig_w, orig_h = image.size
 
-    # ----------------------------------------------------------------
-    # 1. Upscale for better OCR. Tesseract's accuracy improves
-    # substantially on inputs ≥ 2000px on the long edge.
-    # ----------------------------------------------------------------
+
+
+
+
     long_edge = max(orig_w, orig_h)
     if long_edge < 2400:
         scale = 2400 / long_edge
@@ -1009,14 +1009,14 @@ def _extract_image(file_path: str) -> list[ExtractedSegment]:
     except Exception as e:
         raise Exception(f"OCR failed: {e}")
 
-    inv_scale = 1.0 / scale  # rendered → source coords
+    inv_scale = 1.0 / scale
 
-    # ----------------------------------------------------------------
-    # 2. Group words → lines, applying confidence filter.
-    # ----------------------------------------------------------------
+
+
+
     lines: dict[tuple, dict] = {}
     n = len(data.get("text", []))
-    MIN_CONF = 55  # tesseract returns -1 for "no confidence" entries
+    MIN_CONF = 55
     for i in range(n):
         txt = (data["text"][i] or "").strip()
         if not txt:
@@ -1026,7 +1026,7 @@ def _extract_image(file_path: str) -> list[ExtractedSegment]:
         except Exception:
             conf = -1
         if conf >= 0 and conf < MIN_CONF:
-            continue  # low-confidence noise — drop word
+            continue
         key = (
             data["block_num"][i],
             data["par_num"][i],
@@ -1060,17 +1060,17 @@ def _extract_image(file_path: str) -> list[ExtractedSegment]:
         if not line_text:
             continue
         if _looks_like_mrz(line_text):
-            continue  # MRZ codes are not translatable text
+            continue
 
-        # Convert from upscaled-image coords back to source-image coords.
+
         x0 = info["x"] * inv_scale
         y0 = info["y"] * inv_scale
         x1 = info["right"] * inv_scale
         y1 = info["bottom"] * inv_scale
 
-        # Font size — use median word-height to stay robust against
-        # one tall ascender skewing the bbox. Cap tightly so the
-        # rebuild never paints absurdly-large translations.
+
+
+
         heights = sorted(info["heights"]) or [16]
         med_h = heights[len(heights) // 2] * inv_scale
         font_size = max(7.0, min(12.0, med_h * 0.7))
@@ -1125,17 +1125,17 @@ def extract_segments(file_path: str) -> tuple[str, list[ExtractedSegment]]:
     raise Exception(f"Unsupported file type for {file_path}")
 
 
-# ============================================================
-# REBUILDERS — produce a file that resembles the source.
-# ============================================================
+
+
+
 
 import re as _re_noise
 
-# Common short words across the languages we typically translate. If a block
-# of supposed prose contains zero of these, it's almost certainly OCR noise,
-# microprint, or scrambled security text — not real natural language.
+
+
+
 _REAL_WORDS = {
-    # English
+
     "the", "and", "for", "are", "with", "this", "that", "from", "have", "been",
     "will", "you", "your", "all", "but", "not", "any", "can", "has", "her",
     "him", "his", "may", "new", "now", "one", "out", "see", "two", "way",
@@ -1146,62 +1146,62 @@ _REAL_WORDS = {
     "date", "competent", "competence", "issue", "this", "page", "name",
     "country", "passport", "type", "code", "given", "names", "surname",
     "nationality", "place", "birth", "sex", "authorities", "responsible",
-    # Italian
+
     "che", "per", "non", "una", "del", "della", "con", "questo", "tutto",
     "essere", "sono", "stato", "dal", "delle", "dei", "alla", "anche", "come",
     "ancora", "ogni", "molto", "nella", "tutti", "loro", "ora", "oltre", "il",
     "la", "le", "lo", "gli", "uno", "una", "ed", "ma", "se", "si", "ho",
-    # Spanish
+
     "que", "para", "este", "todo", "ser", "los", "las", "una", "muy", "mas",
     "como", "pero", "sus", "yo", "el", "ella", "nosotros", "su", "y", "es",
     "en", "un", "una", "del", "al", "se", "no", "se", "lo", "le", "me", "te",
-    # French
+
     "pour", "dans", "ses", "des", "les", "elle", "ne", "pas", "ou", "ce",
     "qui", "sur", "avec", "par", "tout", "sans", "tres", "bien", "le", "la",
     "il", "et", "est", "un", "une", "au", "aux", "en", "de", "du", "ces",
-    # German
+
     "der", "die", "das", "und", "ist", "ein", "eine", "nicht", "mit", "auf",
     "von", "im", "zu", "es", "sich", "auch", "wird", "kann", "uber", "muss",
     "den", "dem", "des", "wie", "wo", "wer", "was", "war", "hat", "ich",
-    # Portuguese / Dutch / others — common short words
+
     "para", "como", "mas", "tem", "foi", "voor", "aan", "naar", "een", "het",
     "zijn", "deze", "deze", "voor", "ook", "bij",
 }
 
 
-# Common letter trigrams across the Latin-script languages we translate
-# in/out of. Real natural-language words almost always contain at least
-# one of these. Words that contain ZERO of them (and are >= 5 chars) are
-# almost certainly OCR gibberish — "anauyafe", "eletrale", "statiton",
-# "ceraacennen", "raeewanh" all fail this test.
+
+
+
+
+
 _COMMON_TRIGRAMS = {
-    # English
+
     "the", "ing", "ion", "ent", "ati", "for", "and", "her", "ate", "are",
     "ess", "est", "ist", "men", "tio", "ant", "all", "our", "his", "out",
     "ter", "ers", "res", "con", "pro", "com", "per", "ver", "tra", "ble",
     "ous", "ave", "ive", "ity", "ies", "ome", "ide", "ine", "one", "ore",
-    # Italian
+
     "che", "ato", "are", "del", "ane", "ess", "ali", "ani", "ina", "ito",
     "ari", "ica", "tro", "ggi", "zio", "ttu", "ent", "ust", "età", "ela",
     "ele", "ide", "ola", "olo", "uti", "uto", "ure", "ura", "iva", "ivo",
-    # Spanish
+
     "ado", "iar", "tiv", "ció", "ido", "ada", "ido", "ene", "ido",
     "ría", "ros", "tar", "tor", "ica", "iva",
-    # French
+
     "ant", "tio", "ire", "ies", "eur", "eux", "ene", "ard", "ais",
     "tre", "ous", "que", "lle", "ble", "ité", "ais", "fra",
-    # German
+
     "ich", "ein", "ung", "der", "die", "und", "sch", "ber", "lic",
     "ist", "auf", "vor", "über", "bei", "aus", "ren",
-    # Portuguese / Dutch / generic
+
     "ção", "ade", "ent", "ada", "een", "het", "een", "voor",
 }
 
 
-# Bigrams that essentially never occur in any natural Latin-script
-# language. Their presence in a 5+ char word almost certainly means OCR
-# garbage. "uy" mid-word catches "anauyafe"; "vy" catches OCR'd headers
-# like "vy, Stato. c"; "yj"/"jq" catch random keyboard noise.
+
+
+
+
 _RARE_BIGRAMS = (
     "uy", "yj", "jq", "qx", "xz", "zx", "vp", "pv",
     "wj", "jw", "kx", "xk", "fz", "zf", "fq", "qf",
@@ -1242,22 +1242,22 @@ def _is_noise_text(text: str, font_size: float | None = None) -> bool:
     if len(s) < 2:
         return True
 
-    # Microprint / security text. Body text is almost always >= 8pt.
+
     if font_size is not None and float(font_size) < 7.0:
         return True
 
-    # MRZ filler ("<<<<<<...")
+
     if s.count("<") >= max(3, len(s) // 4):
         return True
 
-    # Mostly identical-character runs ("MMMMMMM", "----")
+
     unique = len(set(s.replace(" ", "")))
     if unique <= 2 and len(s) >= 4:
         return True
 
     raw_words = [w.strip(".,;:!?()[]{}\"'`|/\\-_@") for w in s.split()]
 
-    # 5+ consecutive consonants inside any single word ⇒ gibberish.
+
     for w in raw_words:
         if not w or len(w) < 5 or not all(c.isalpha() for c in w):
             continue
@@ -1269,18 +1269,18 @@ def _is_noise_text(text: str, font_size: float | None = None) -> bool:
         if w and len(w) >= 5 and all(c.isalpha() for c in w)
     ]
 
-    # ANY single word with rare bigrams (uy, yj, qz, etc.) poisons the
-    # block — these patterns essentially never occur in real Latin-
-    # script natural language and almost always come from stylised-text
-    # OCR errors. One "anauyafe" is enough to flag the block.
+
+
+
+
     for w in long_alpha:
         wl = w.lower()
         for rb in _RARE_BIGRAMS:
             if rb in wl:
                 return True
 
-    # Soft linguistic check. If we have 2+ long words and not a single
-    # one looks like real natural-language, treat as gibberish.
+
+
     if len(long_alpha) >= 2:
         if not any(_word_looks_natural(w) for w in long_alpha):
             return True
@@ -1315,24 +1315,24 @@ def _rebuild_pdf(
     logger.info("[pdf-rebuild v6] line-level overlay with font matching")
     import fitz
 
-    # Open the original — we modify a COPY of every page rather than building
-    # a fresh canvas, so watermarks / images / borders / signatures stay.
-    # Pick the font that supports the target language's script. CJK
-    # languages (Japanese, Korean, Chinese) use PyMuPDF's reserved CJK
-    # font names. Other non-Latin scripts (Arabic, Hebrew, Hindi, Thai)
-    # are registered from a system TTF per-page below. Otherwise we
-    # fall back to "helv" which covers Latin/Cyrillic/Greek.
+
+
+
+
+
+
+
     fontname = _pdf_font_for_language(target_lang)
     is_rtl = _is_rtl_language(target_lang)
 
     doc = fitz.open(original_path)
     try:
-        # Register Arabic/Hebrew/Hindi/Thai system fonts once per page
-        # (caching avoids re-registering on every block).
+
+
         registered_fonts: dict[int, str] = {}
 
-        # Pre-render every page once so background sampling reads the
-        # ORIGINAL pixels (before any of our redactions remove text).
+
+
         page_pixmaps = {}
         for idx, p in enumerate(doc):
             try:
@@ -1340,20 +1340,20 @@ def _rebuild_pdf(
             except Exception:
                 page_pixmaps[idx] = None
 
-        # ============================================================
-        # PASS 1 — REDACT the source text for every bbox we plan to
-        # paint over. add_redact_annot physically removes the text from
-        # the PDF stream (not just paints over it) so the output PDF
-        # contains ONLY the translation, not Italian + English overlaid.
-        #
-        # CRITICAL: apply_redactions defaults to removing images and
-        # vector graphics within the rectangle too. For form-heavy
-        # documents (Italian tax forms, certificates) that would strip
-        # the box outlines, dividers and field borders along with the
-        # text — leaving an empty skeleton. We pass IMAGE_NONE +
-        # LINE_ART_NONE so the redaction only touches text and the
-        # form structure is preserved.
-        # ============================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         pages_with_redactions: set[int] = set()
         redact_count = 0
         for translated_text, layout in pairs:
@@ -1363,10 +1363,10 @@ def _rebuild_pdf(
                 continue
             page = doc[page_idx]
             rect = fitz.Rect(*bbox)
-            # Pad by 2pt (was 1pt) so descenders and kerning that fall
-            # just outside the line bbox still get redacted. This is
-            # the difference between a clean rebuild and visible
-            # bilingual residue.
+
+
+
+
             mask_rect = fitz.Rect(
                 rect.x0 - 2, rect.y0 - 2, rect.x1 + 2, rect.y1 + 2
             )
@@ -1385,9 +1385,9 @@ def _rebuild_pdf(
             redact_count, len(pages_with_redactions),
         )
 
-        # Apply queued redactions per page with text-only semantics.
-        # Older PyMuPDF builds may not have these enum constants, so we
-        # fall back to the default if the kwargs are rejected.
+
+
+
         redaction_failures: dict[int, str] = {}
         for page_idx in pages_with_redactions:
             page = doc[page_idx]
@@ -1422,9 +1422,9 @@ def _rebuild_pdf(
             src = (layout or {}).get("source_text", "")
             font_size = float((layout or {}).get("font_size") or 11.0)
 
-            # Noise blocks: redaction already removed the source text;
-            # paint a small bg patch so any antialiased glyph residue
-            # is covered, then move on.
+
+
+
             if _is_noise_text(src, font_size=font_size):
                 bg_noise = _sample_background_color(
                     page, rect, pix=pix_for_page
@@ -1437,11 +1437,11 @@ def _rebuild_pdf(
             if not translated_text:
                 continue
 
-            # Sample the background colour and paint the bbox. If the
-            # redaction for this page failed (some PDFs reject
-            # apply_redactions for various reasons), paint a slightly
-            # larger rectangle to physically hide the original glyphs
-            # even though they're still in the text stream.
+
+
+
+
+
             bg = _sample_background_color(page, rect, pix=pix_for_page)
             if page_idx in redaction_failures:
                 fail_safe = fitz.Rect(
@@ -1456,25 +1456,25 @@ def _rebuild_pdf(
             g = ((color_int >> 8) & 0xFF) / 255.0
             b = (color_int & 0xFF) / 255.0
 
-            # ============================================
-            # FONT SELECTION (style + script aware)
-            # 1. If the target uses CJK, use the reserved CJK name we
-            #    picked up-front (japan/korea/china-*).
-            # 2. If the target uses Arabic / Hebrew / Hindi / Thai,
-            #    register a system TTF for that script.
-            # 3. Otherwise — pick the right Latin-script built-in
-            #    (Times / Helvetica / Courier × Regular/Bold/Italic/
-            #    Bold-Italic) using the ORIGINAL font name + flags so
-            #    the translation visually matches the source.
-            # ============================================
+
+
+
+
+
+
+
+
+
+
+
             flags = int((layout or {}).get("flags") or 0)
             src_font_name = (layout or {}).get("font_name") or ""
 
             if fontname != "helv":
-                # CJK target → keep the CJK font name.
+
                 page_font = fontname
             else:
-                # Try a registered script TTF first.
+
                 if page_idx not in registered_fonts:
                     registered_fonts[page_idx] = (
                         _register_script_font(page, target_lang) or ""
@@ -1483,11 +1483,11 @@ def _rebuild_pdf(
                 if script_font:
                     page_font = script_font
                 else:
-                    # Latin-script fall-through: pick a style-matched
-                    # PyMuPDF built-in so bold/italic/serif survive.
+
+
                     page_font = _map_pdf_font(src_font_name, flags)
 
-            # RTL languages need reshaping + bidi reorder + right-align.
+
             display_text = (
                 _shape_rtl(translated_text, target_lang)
                 if is_rtl
@@ -1495,33 +1495,33 @@ def _rebuild_pdf(
             )
             text_align = 2 if is_rtl else 0
 
-            # ============================================
-            # WIDTH-AWARE FONT SIZING
-            # Measure the translation's rendered width at the source
-            # font size. If it fits the bbox width, use the source
-            # size verbatim — same typographic weight as the original.
-            # If not, scale the size by (width_available / width_needed)
-            # in one calculation rather than guessing through a ladder.
-            # ============================================
+
+
+
+
+
+
+
+
             target_size = font_size
             try:
                 rendered_w = fitz.get_text_length(
                     display_text, fontname=page_font, fontsize=font_size
                 )
-                box_w = max(1.0, rect.width - 2)  # small padding
+                box_w = max(1.0, rect.width - 2)
                 if rendered_w > box_w:
                     scale = box_w / rendered_w
                     target_size = max(6.0, font_size * scale)
             except Exception:
                 pass
 
-            # ============================================
-            # DRAW
-            # Use insert_textbox for proper line-wrapping inside the
-            # bbox. If somehow it still overflows (very long
-            # translation), fall through to a free-position insert_text
-            # at the line's baseline so the segment isn't dropped.
-            # ============================================
+
+
+
+
+
+
+
             drawn = False
             for size in (
                 target_size,
@@ -1544,9 +1544,9 @@ def _rebuild_pdf(
 
             if not drawn:
                 try:
-                    # Anchor at the line's baseline (approx 80% down
-                    # the bbox for typical fonts) so the glyphs sit
-                    # in the same vertical position as the original.
+
+
+
                     asc = float((layout or {}).get("ascender") or 0.8)
                     baseline_y = rect.y0 + asc * font_size
                     px = rect.x1 - 1 if is_rtl else rect.x0 + 1
@@ -1617,11 +1617,11 @@ def _build_bilingual_pdf(
         textColor=colors.HexColor("#1f2a2e"),
     )
 
-    # ------------------------------------------------------------
-    # Build the translation table on its own ReportLab PDF first.
-    # We then merge with the source PDF (or wrap an image into a
-    # PDF page) using PyMuPDF so the source pages stay pixel-perfect.
-    # ------------------------------------------------------------
+
+
+
+
+
     table_buf = io.BytesIO()
     doc = SimpleDocTemplate(
         table_buf,
@@ -1685,25 +1685,25 @@ def _build_bilingual_pdf(
     doc.build(story)
     table_buf.seek(0)
 
-    # ------------------------------------------------------------
-    # Compose the final PDF: source pages first, then the table pdf.
-    # ------------------------------------------------------------
+
+
+
     import fitz
 
     out_pdf = fitz.open()
 
-    # 1) Source page(s)
+
     if source_is_image:
         from PIL import Image
         pil = Image.open(source_pdf_or_image).convert("RGB")
-        # Draw a small "Source document" header above the image.
-        # Keeping it simple: just embed the image full-page.
+
+
         png_buf = io.BytesIO()
         pil.save(png_buf, format="PNG")
         png_buf.seek(0)
         pix = fitz.Pixmap(png_buf.getvalue())
-        # Fit into A4 with a 15mm margin.
-        margin = 15 * 72 / 25.4  # mm → pt
+
+        margin = 15 * 72 / 25.4
         page = out_pdf.new_page(width=page_w, height=page_h)
         avail_w = page_w - 2 * margin
         avail_h = page_h - 2 * margin
@@ -1716,7 +1716,7 @@ def _build_bilingual_pdf(
             fitz.Rect(x, y, x + draw_w, y + draw_h), pixmap=pix
         )
     else:
-        # PDF source — embed every page as-is.
+
         try:
             src_pdf = fitz.open(source_pdf_or_image)
             out_pdf.insert_pdf(src_pdf)
@@ -1724,7 +1724,7 @@ def _build_bilingual_pdf(
         except Exception as e:
             logger.warning(f"Couldn't embed source PDF: {e}")
 
-    # 2) Translation table page(s)
+
     table_pdf = fitz.open(stream=table_buf.getvalue(), filetype="pdf")
     out_pdf.insert_pdf(table_pdf)
     table_pdf.close()
@@ -1747,7 +1747,7 @@ def _rebuild_docx(
 
     doc = Document(original_path)
 
-    # Index the input pairs by their layout so we can look them up cheaply.
+
     by_para: dict[int, str] = {}
     by_cell: dict[tuple[int, int, int, int], str] = {}
     for translated, layout in pairs:
@@ -1838,12 +1838,12 @@ def _rebuild_image(
     if fontname == "helv":
         page_font = _register_script_font(page, target_lang) or "helv"
 
-    # Pixmap of the source image used for both background-colour
-    # sampling AND photo-region detection. We compute a 'colour
-    # variance' for each candidate bbox — text on a flat background
-    # has low variance, while text supposedly inside a holder's
-    # photo or hologram has high variance. High-variance regions
-    # are skipped to avoid painting nonsense over the photo.
+
+
+
+
+
+
     sample_pix = fitz.Pixmap(img_buf.getvalue())
 
     def _bbox_is_photographic(rect) -> bool:
@@ -1878,9 +1878,9 @@ def _rebuild_image(
                 return False
             mean_l = sum(lums) / len(lums)
             var_l = sum((l - mean_l) ** 2 for l in lums) / len(lums)
-            # Wide RGB spread within the bbox (photographs have varied
-            # colour; printed text on white paper is mostly one colour
-            # band). Threshold tuned empirically for ID cards.
+
+
+
             chroma = (max(rs) - min(rs)) + (max(gs) - min(gs)) + (max(bs) - min(bs))
             if var_l > 2000 and chroma > 200:
                 return True
@@ -1897,15 +1897,15 @@ def _rebuild_image(
 
         src_text = (layout or {}).get("source_text", "")
 
-        # Skip OCR boxes that fall in a photo region (holder's face,
-        # hologram, watermark gradient). We'd produce garbage there.
+
+
         if _bbox_is_photographic(rect):
             continue
 
         bg = _sample_background_color(page, rect, pix=sample_pix)
 
-        # Hide gibberish OCR blocks with the sampled background colour
-        # so the patch blends with the document.
+
+
         if _is_noise_text(src_text):
             mask_rect = fitz.Rect(
                 rect.x0 - 1, rect.y0 - 1, rect.x1 + 1, rect.y1 + 1
@@ -1918,20 +1918,20 @@ def _rebuild_image(
         if not translated:
             continue
 
-        # Prefer the font_size the extractor stored (median word
-        # height, capped 7-12pt). Fall back to a bbox-derived
-        # estimate for legacy projects.
+
+
+
         h = max(1.0, y1 - y0)
         font_size = float(
             (layout or {}).get("font_size") or max(6.0, h * 0.6)
         )
         font_size = min(font_size, 12.0)
 
-        # IMAGE rebuild padding: bigger than PDF because OCR bbox
-        # coordinates are inherently fuzzier than PyMuPDF's text-stream
-        # bboxes. Pad horizontally by 25% of the bbox height and
-        # vertically by 35% so the rectangle fully covers any source
-        # glyph extending slightly outside the OCR-detected line.
+
+
+
+
+
         pad_v = max(2.0, h * 0.35)
         pad_h = max(2.0, h * 0.25)
         mask_rect = fitz.Rect(
@@ -1945,7 +1945,7 @@ def _rebuild_image(
         display_text = _shape_rtl(translated, target_lang) if is_rtl else translated
         text_align = 2 if is_rtl else 0
 
-        # 2. Try the derived font size, shrinking until it fits.
+
         drawn = False
         for size in (
             font_size,
@@ -1985,7 +1985,7 @@ def _rebuild_image(
     out_pdf.save(output_path, garbage=4, deflate=True)
     out_pdf.close()
     return
-    # --- side-by-side renderer (kept for reference, unreachable) ---
+
     from PIL import Image
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -2001,7 +2001,7 @@ def _rebuild_image(
     )
     from reportlab.lib import colors
 
-    # --- Page 1: original image, scaled to fit A4 with margins ---
+
     pil = Image.open(original_path).convert("RGB")
     img_buf = io.BytesIO()
     pil.save(img_buf, format="PNG")
@@ -2009,12 +2009,12 @@ def _rebuild_image(
 
     page_w, page_h = A4
     max_w = page_w - 30 * mm
-    max_h = page_h - 60 * mm  # leave space for header
+    max_h = page_h - 60 * mm
     iw, ih = pil.size
     scale = min(max_w / iw, max_h / ih)
     rl_img = RLImage(img_buf, width=iw * scale, height=ih * scale)
 
-    # Build PDF
+
     doc = SimpleDocTemplate(
         output_path,
         pagesize=A4,
@@ -2066,7 +2066,7 @@ def _rebuild_image(
     story.append(rl_img)
     story.append(PageBreak())
 
-    # --- Page 2+: side-by-side translation table ---
+
     story.append(Paragraph("Translation", title_style))
     story.append(
         Paragraph(
@@ -2079,10 +2079,10 @@ def _rebuild_image(
     rows: list = [[Paragraph("<b>Source</b>", cell_style),
                    Paragraph("<b>Translation</b>", cell_style)]]
     for translated, layout in pairs:
-        # We don't have the source text here — pairs is (translated, layout).
-        # The caller (translation_processor) will pass the source text in
-        # layout["source_text"] so we can render it. Fall back to em-dash if
-        # missing so the table still renders.
+
+
+
+
         src = (layout or {}).get("source_text", "—") if layout else "—"
         if not (translated or "").strip() and not (src or "").strip():
             continue
@@ -2092,7 +2092,7 @@ def _rebuild_image(
         ])
 
     if len(rows) == 1:
-        # No translated lines at all — note it instead of an empty table.
+
         story.append(
             Paragraph(
                 "No text was detected in the source image.",
@@ -2165,7 +2165,7 @@ def rebuild_output(
         _rebuild_docx(original_path, output_path, pairs)
         return output_path
     if source_kind == "IMAGE":
-        # Force a .pdf extension since we render the result as a PDF.
+
         new_path = os.path.splitext(output_path)[0] + ".pdf"
         _rebuild_image(original_path, new_path, pairs, target_lang=target_lang)
         return new_path

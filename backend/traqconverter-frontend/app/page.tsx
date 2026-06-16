@@ -5,13 +5,6 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { getToken } from "@/lib/auth"
 
-// ============================================================
-// PUBLIC LANDING PAGE
-// Cream + teal aesthetic, no AppShell. Logged-in visitors get
-// bounced to /dashboard by AppShell so this surface is for
-// unauthenticated visitors who need to be convinced to register.
-// ============================================================
-
 const CREAM = "#faf5ee"
 const CREAM_DARK = "#f3ecdb"
 const CREAM_DEEP = "#ede3cc"
@@ -28,7 +21,6 @@ const ACCENT_RUST = "#b14a3a"
 export default function LandingPage() {
   const router = useRouter()
 
-  // Logged-in visitors don't need the marketing page.
   useEffect(() => {
     if (getToken()) router.replace("/dashboard")
   }, [router])
@@ -49,9 +41,6 @@ export default function LandingPage() {
   )
 }
 
-// ============================================================
-// TOP BAR
-// ============================================================
 function TopBar() {
   return (
     <header
@@ -135,13 +124,10 @@ const navLink = {
   fontWeight: 500,
 }
 
-// ============================================================
-// HERO
-// ============================================================
 function Hero() {
   return (
     <section style={{ position: "relative", overflow: "hidden" }}>
-      {/* Decorative blob */}
+      {}
       <div
         style={{
           position: "absolute",
@@ -265,7 +251,7 @@ function Hero() {
             </div>
           </div>
 
-          {/* HERO VISUAL */}
+          {}
           <HeroVisual />
         </div>
       </div>
@@ -285,14 +271,14 @@ function HeroVisual() {
         position: "relative",
       }}
     >
-      {/* Browser chrome */}
+      {}
       <div className="flex items-center gap-1.5 mb-3">
         <div style={dot("#ffb8a8")} />
         <div style={dot("#ffd98a")} />
         <div style={dot("#a8d9a3")} />
       </div>
       <div className="grid grid-cols-2 gap-3">
-        {/* SOURCE — Italian */}
+        {}
         <div
           style={{
             background: CREAM,
@@ -345,7 +331,7 @@ function HeroVisual() {
           </div>
         </div>
 
-        {/* TARGET — English */}
+        {}
         <div
           style={{
             background: "#ffffff",
@@ -397,7 +383,7 @@ function HeroVisual() {
               </div>
             ))}
           </div>
-          {/* Sparkle */}
+          {}
           <div
             style={{
               position: "absolute",
@@ -440,9 +426,6 @@ const dot = (c: string) => ({
   background: c,
 })
 
-// ============================================================
-// TRUST BAR
-// ============================================================
 function TrustBar() {
   return (
     <section
@@ -483,9 +466,6 @@ function TrustBar() {
   )
 }
 
-// ============================================================
-// VALUE PROPS
-// ============================================================
 function ValueProps() {
   return (
     <section id="features" style={{ padding: "80px 24px" }}>
@@ -573,9 +553,6 @@ function FeatureCard({
   )
 }
 
-// ============================================================
-// HOW IT WORKS
-// ============================================================
 function HowItWorks() {
   return (
     <section
@@ -646,9 +623,6 @@ function HowItWorks() {
   )
 }
 
-// ============================================================
-// DEEP FEATURES — alternating image / text
-// ============================================================
 function DeepFeatures() {
   return (
     <section style={{ padding: "80px 24px" }}>
@@ -853,9 +827,6 @@ function CertMock() {
   )
 }
 
-// ============================================================
-// PRICING
-// ============================================================
 function Pricing() {
   return (
     <section
@@ -929,9 +900,7 @@ function Pricing() {
           />
         </div>
 
-        {/* Credit packs — must mirror the labels and credit counts
-            shown on the in-app billing page so visitors recognise
-            them after sign-up. */}
+        {}
         <div className="mt-12">
           <div
             className="text-center"
@@ -1185,9 +1154,6 @@ function PlanCard({
   )
 }
 
-// ============================================================
-// FAQ
-// ============================================================
 function FAQ() {
   const [open, setOpen] = useState<number | null>(0)
   const items = [
@@ -1285,9 +1251,6 @@ function FAQ() {
   )
 }
 
-// ============================================================
-// FINAL CTA
-// ============================================================
 function FinalCTA() {
   return (
     <section style={{ padding: "0 24px 80px" }}>
@@ -1372,9 +1335,6 @@ function FinalCTA() {
   )
 }
 
-// ============================================================
-// FOOTER
-// ============================================================
 function Footer() {
   return (
     <footer
@@ -1484,9 +1444,6 @@ function FooterCol({
   )
 }
 
-// ============================================================
-// SECTION HEADER
-// ============================================================
 function SectionHeader({
   eyebrow,
   title,
@@ -1528,9 +1485,6 @@ function SectionHeader({
   )
 }
 
-// ============================================================
-// ICONS
-// ============================================================
 function Check() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">

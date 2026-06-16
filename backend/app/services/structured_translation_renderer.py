@@ -44,22 +44,22 @@ from reportlab.platypus import (
 logger = logging.getLogger(__name__)
 
 
-# ============================================================
-# Style palette — minimalist, matches Espresso aesthetic.
-# ============================================================
+
+
+
 _PALETTE = {
     "text": "#1f2a2e",
     "muted": "#6b6558",
     "rule": "#d8cfba",
-    "placeholder": "#8a8270",  # grey for [Coat of Arms] etc.
+    "placeholder": "#8a8270",
     "accent": "#0a7870",
 }
 
 
-# Map "size" hints from Claude → point sizes that match a certified
-# translator's transcription document. Tightened again so one source
-# page maps onto one rebuild page even when the original is dense
-# (typical ID/government forms run 15-25 form rows + tables).
+
+
+
+
 _SIZE_PT = {
     "small": 7.0,
     "normal": 8.0,
@@ -68,9 +68,9 @@ _SIZE_PT = {
 }
 
 
-# PyMuPDF / ReportLab built-in font families. We can't embed arbitrary
-# TTFs without bundling them, so we pick the closest of the three
-# Adobe-14 families. Claude classifies the source as one of these.
+
+
+
 _FONT_TABLE = {
     "serif": {
         (False, False): "Times-Roman",
@@ -161,11 +161,11 @@ def _styles() -> dict[str, ParagraphStyle]:
     }
 
 
-# ============================================================
-# Helpers
-# ============================================================
 
-_BRACKET_PLACEHOLDER_RE = None  # imported lazily below to keep top clean
+
+
+
+_BRACKET_PLACEHOLDER_RE = None
 
 
 def _looks_like_placeholder(text: str) -> bool:
@@ -194,9 +194,9 @@ def _alignment_from_layout(
     right_margin = (page_width - x1) / page_width
     centre_offset = abs(left_margin - right_margin)
     if centre_offset < 0.05 and left_margin > 0.1 and right_margin > 0.1:
-        return 1  # center
+        return 1
     if right_margin > 0.5 and left_margin > 0.4:
-        return 2  # right
+        return 2
     return 0
 
 
@@ -215,10 +215,10 @@ def _style_for_segment(
     """
     body_text = (rendered_text or text or "").strip()
 
-    # Placeholders always render in grey italic. Use the element's
-    # font family if known so the placeholder visually belongs with
-    # the surrounding body text (a sans-serif document gets
-    # Helvetica-Oblique placeholders, etc.).
+
+
+
+
     placeholder_kind = (layout or {}).get("placeholder_kind")
     if placeholder_kind or _looks_like_placeholder(body_text):
         explicit_align = (layout or {}).get("alignment")
@@ -243,7 +243,7 @@ def _style_for_segment(
         )
         return ph_style, safe
 
-    # Explicit structured fields take precedence.
+
     explicit_align = (layout or {}).get("alignment")
     aligned = _ALIGN.get(
         (explicit_align or "").lower(),
@@ -254,31 +254,31 @@ def _style_for_segment(
     is_italic = bool((layout or {}).get("italic"))
     is_all_caps = bool((layout or {}).get("all_caps"))
 
-    # Legacy PDF segments don't have explicit bold/italic — read from
-    # PyMuPDF span-flag bits.
+
+
     flags = int((layout or {}).get("flags") or 0)
     if not is_bold and (flags & 16):
         is_bold = True
     if not is_italic and (flags & 2):
         is_italic = True
 
-    # Treat ALL CAPS source as bold (matches example: "COMUNE DI SAN
-    # BONIFACIO" rendered in bold).
+
+
     src = (text or "").strip()
     if not is_all_caps and len(src) >= 4 and any(c.isalpha() for c in src):
         if src.upper() == src:
             is_all_caps = True
             is_bold = True
 
-    # Claude classifies each element's font as serif / sans-serif /
-    # monospace. The renderer picks the matching Adobe-14 family so
-    # serif source documents render with Times, sans-serif with
-    # Helvetica, and monospace certificate numbers etc. stay
-    # monospaced.
+
+
+
+
+
     family = (layout or {}).get("font_family") or ""
     font_name = _font_name(is_bold, is_italic, family)
 
-    # Size: explicit hint > stored font_size > default normal.
+
     size_hint = ((layout or {}).get("size_hint") or "").lower()
     if size_hint in _SIZE_PT:
         size = _SIZE_PT[size_hint]
@@ -305,9 +305,9 @@ def _style_for_segment(
     return derived, safe
 
 
-# ============================================================
-# Page 1 builder — original source embedded as the cover.
-# ============================================================
+
+
+
 
 def _add_original_pages(
     out_pdf: fitz.Document, original_path: str, source_kind: str
@@ -338,9 +338,9 @@ def _add_original_pages(
             logger.warning("Couldn't embed source image as page 1: %s", e)
 
 
-# ============================================================
-# Pages 2..N — clean structured translation.
-# ============================================================
+
+
+
 
 def _build_translation_pages(
     pairs: list[tuple[str, dict[str, Any]]],
@@ -352,7 +352,7 @@ def _build_translation_pages(
     buf = io.BytesIO()
     styles = _styles()
 
-    # Try to match source page size when available; default to A4.
+
     pw, ph = A4
     if project_meta.get("page_width") and project_meta.get("page_height"):
         try:
@@ -375,26 +375,26 @@ def _build_translation_pages(
     src_lang = project_meta.get("source_language") or ""
     tgt_lang = project_meta.get("target_language") or ""
 
-    # The translated body starts directly here — no "CERTIFIED
-    # TRANSLATION" cover header. The certified-statement block is
-    # rendered on the final page instead.
 
-    # Group pairs by page so the structured rendering visually follows
-    # the original page breaks.
+
+
+
+
+
     last_page = None
     last_y_bottom: float | None = None
     for translated, layout in pairs:
         layout = layout or {}
         page_idx = int(layout.get("page", 0) or 0)
         if last_page is not None and page_idx != last_page:
-            # Mirror source page break.
+
             story.append(PageBreak())
             last_y_bottom = None
         last_page = page_idx
 
-        # Insert spacing that mirrors the gap between this line and the
-        # previous one in the source. Treat vertical gaps > 1.5x line
-        # height as a paragraph break.
+
+
+
         bbox = layout.get("bbox") or []
         gap_pt = 0.0
         if last_y_bottom is not None and len(bbox) == 4:
@@ -419,12 +419,12 @@ def _build_translation_pages(
             except Exception:
                 pass
 
-    # Certification page — last page of the export.
+
     story.append(PageBreak())
     if company_logo_path and os.path.isfile(company_logo_path):
         try:
-            # Keep the logo modestly sized (40mm wide) so it doesn't
-            # dominate the page.
+
+
             img = RLImage(company_logo_path)
             iw, ih = img.imageWidth, img.imageHeight
             max_w = 50 * mm
@@ -461,9 +461,9 @@ def _build_translation_pages(
     return buf.getvalue()
 
 
-# ============================================================
-# Public entry point
-# ============================================================
+
+
+
 
 def render_structured_export(
     *,
@@ -498,14 +498,14 @@ def render_structured_export(
     return out.getvalue()
 
 
-# ============================================================
-# Structured DOCX renderer — same shape as the PDF output:
-#   page 1     : original document (image embedded; PDFs are
-#                rendered as page-sized images so they fit)
-#   pages 2..N : structured translation with preserved alignment,
-#                bold / italic, placeholders in grey italic
-#   final page : certification block with optional company logo
-# ============================================================
+
+
+
+
+
+
+
+
 
 def _docx_alignment(value: int):
     """Map ReportLab alignment ints onto python-docx enum."""
@@ -526,7 +526,7 @@ def _docx_font_name(family: str) -> str:
         return "Arial"
     if fam == "monospace":
         return "Courier New"
-    return "Times New Roman"  # default + serif
+    return "Times New Roman"
 
 
 def _docx_apply_paragraph_style(
@@ -548,9 +548,9 @@ def _docx_apply_paragraph_style(
     )
     para.alignment = _docx_alignment(aligned)
 
-    # Compact spacing so the rebuild fits the same footprint as the
-    # original (the default 8pt-after spacing on every paragraph
-    # stretched the body across two pages).
+
+
+
     pf = para.paragraph_format
     pf.space_before = Pt(0)
     pf.space_after = Pt(2)
@@ -565,7 +565,7 @@ def _docx_apply_paragraph_style(
     if not is_italic and (flags & 2):
         is_italic = True
 
-    # ALL-CAPS source maps to bold for visual hierarchy.
+
     if is_all_caps:
         is_bold = True
 
@@ -580,7 +580,7 @@ def _docx_apply_paragraph_style(
     font_name = _docx_font_name(family)
 
     if is_placeholder:
-        # Force italic, grey colour, regardless of source emphasis.
+
         run = para.add_run(text)
         run.italic = True
         run.font.name = font_name
@@ -637,23 +637,23 @@ def _embed_pdf_pages_as_images(doc, pdf_path: str) -> None:
             p = doc.add_paragraph()
             run = p.add_run()
             run.add_picture(buf, width=Inches(6))
-            # Page break between pages, AND before the structured
-            # translation content. The trailing page break here is
-            # what gives the translation its own clean page start.
+
+
+
             doc.add_page_break()
         src.close()
     except Exception as e:
         logger.warning("DOCX: couldn't embed source PDF pages: %s", e)
 
 
-# ============================================================
-# LAYOUT-AWARE DOCX RENDERER
-# ------------------------------------------------------------
-# Asks Claude to plan a DOCX-shaped JSON tree over the OCR
-# elements, then emits paragraphs / rows / tables that mirror
-# the visual structure of the original document. Falls through
-# to the linear renderer on failure.
-# ============================================================
+
+
+
+
+
+
+
+
 
 
 def _set_cell_text(cell, eid, by_id, alignment_override=None, split_column=None):
@@ -674,11 +674,11 @@ def _set_cell_text(cell, eid, by_id, alignment_override=None, split_column=None)
     if not text:
         return
 
-    # Form-table label/value split. The OCR emits things like
-    # "Comune    SAN BENEDETTO DEL TRONTO" as a single segment; for
-    # a layout-table column we want only the label or the value.
+
+
+
     if split_column in ("label", "value"):
-        # Split on 2+ spaces or a tab — common form-row separator.
+
         import re as _re
         parts = _re.split(r" {2,}|\t+", text, maxsplit=1)
         if len(parts) == 2:
@@ -690,8 +690,8 @@ def _set_cell_text(cell, eid, by_id, alignment_override=None, split_column=None)
     is_placeholder = bool(layout.get("placeholder_kind")) or (
         text.startswith("[") and text.endswith("]")
     )
-    # Reuse the cell's default empty paragraph when it is still
-    # empty; otherwise append a new one.
+
+
     para = None
     if cell.paragraphs and not cell.paragraphs[0].text:
         para = cell.paragraphs[0]
@@ -721,14 +721,14 @@ def _ensure_trailing_paragraph(cell):
 
     tc = cell._element
     children = list(tc)
-    # Find last block-level element (paragraph or table).
+
     for child in reversed(children):
         tag = child.tag
         if tag == qn("w:p"):
-            return  # already ends with a paragraph
+            return
         if tag == qn("w:tbl"):
             break
-        # Skip non-content elements like tcPr
+
     cell.add_paragraph("")
 
 
@@ -763,9 +763,9 @@ def _render_planned_block(
             explicit_align = (block.get("alignment") or "").lower()
             if explicit_align in {"left", "center", "right", "justify"}:
                 layout_for_render["alignment"] = explicit_align
-            # When rendering into a cell, reuse the cell's default
-            # empty paragraph for the FIRST paragraph so we don't end
-            # up with an extra blank line above every cell.
+
+
+
             para = None
             if is_cell and doc_or_cell.paragraphs and not doc_or_cell.paragraphs[0].text:
                 para = doc_or_cell.paragraphs[0]
@@ -794,15 +794,15 @@ def _render_planned_block(
                 cell = tbl.rows[0].cells[idx]
                 col_blocks = col.get("blocks") or []
                 if not col_blocks:
-                    # Leave the cell's default empty paragraph alone.
+
                     continue
-                # First child uses the cell's default paragraph; the
-                # recursion knows to reuse it because is_cell=True.
+
+
                 wrote_any = False
                 for child in col_blocks:
                     if _render_planned_block(cell, child, by_id, is_cell=True):
                         wrote_any = True
-                # Word requires the cell to end with a paragraph.
+
                 _ensure_trailing_paragraph(cell)
             _strip_table_borders(tbl)
             return True
@@ -824,7 +824,7 @@ def _render_planned_block(
                 for ci in range(cols_count):
                     cell = tbl.rows[ri].cells[ci]
                     if ci >= len(row) or not row[ci]:
-                        # Leave the cell's default empty paragraph.
+
                         continue
                     cellspec = row[ci]
                     if "id" in cellspec:
@@ -845,7 +845,7 @@ def _render_planned_block(
                             cellspec.get("text") or "",
                             alignment=(cellspec.get("alignment") or "left").lower(),
                         )
-                    # Ensure cell ends with a paragraph.
+
                     _ensure_trailing_paragraph(cell)
             return True
 
@@ -871,8 +871,8 @@ def _detect_page_orientation(page_pairs) -> str:
         o = (layout or {}).get("page_orientation")
         if o in ("landscape", "portrait"):
             return o
-        # Some sources only have bbox / width / height — fall back
-        # to deriving orientation from the page dimensions.
+
+
         w = (layout or {}).get("page_width_pt")
         h = (layout or {}).get("page_height_pt")
         if w and h:
@@ -898,7 +898,7 @@ def _apply_orientation_to_current_section(doc, orientation: str) -> None:
     if section.orientation == want_orient:
         return
     section.orientation = want_orient
-    # Swap dims so the page is actually the right shape.
+
     section.page_width, section.page_height = (
         section.page_height,
         section.page_width,
@@ -912,7 +912,7 @@ def _start_new_section_with_orientation(doc, orientation: str) -> None:
     the same rebuild file."""
     from docx.enum.section import WD_SECTION
 
-    # add_section gives us a fresh section starting on a new page.
+
     doc.add_section(WD_SECTION.NEW_PAGE)
     _apply_orientation_to_current_section(doc, orientation)
 
@@ -945,13 +945,13 @@ def _append_team_stamp(doc, stamp_path: str, alignment: str) -> None:
 
     para = doc.add_paragraph()
     para.alignment = word_align
-    # Pull spacing in so the stamp hugs the bottom of content.
+
     pf = para.paragraph_format
     pf.space_before = Pt(12)
     pf.space_after = Pt(0)
     run = para.add_run()
     try:
-        # 1.4" wide is a typical office-stamp size on A4.
+
         run.add_picture(stamp_path, width=Inches(1.4))
     except Exception as e:
         logger.warning("Couldn't embed team stamp: %s", e)
@@ -968,7 +968,7 @@ def _strip_table_borders(table) -> None:
     if tblPr is None:
         tblPr = OxmlElement("w:tblPr")
         tbl.insert(0, tblPr)
-    # Replace any existing tblBorders with all-none.
+
     existing = tblPr.find(qn("w:tblBorders"))
     if existing is not None:
         tblPr.remove(existing)
@@ -988,9 +988,9 @@ def _apply_table_borders(table) -> None:
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
 
-    # Prefer the built-in Table Grid style when available — it gives
-    # consistent borders even if the user's Word template overrides
-    # tblBorders elsewhere.
+
+
+
     try:
         table.style = "Table Grid"
     except Exception:
@@ -1008,9 +1008,9 @@ def _apply_table_borders(table) -> None:
     for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
         b = OxmlElement(f"w:{edge}")
         b.set(qn("w:val"), "single")
-        b.set(qn("w:sz"), "6")          # 0.75pt line
+        b.set(qn("w:sz"), "6")
         b.set(qn("w:space"), "0")
-        b.set(qn("w:color"), "1F2A2E")  # dark text color
+        b.set(qn("w:color"), "1F2A2E")
         borders.append(b)
     tblPr.append(borders)
 
@@ -1073,7 +1073,7 @@ def _build_layout_plan_input(
             }
         )
         by_id[idx] = (translated, layout)
-    # Sensible defaults if everything was at 0,0.
+
     if page_w <= 1:
         page_w = 1000.0
     if page_h <= 1:
@@ -1102,10 +1102,10 @@ def render_planned_docx_export(
     if not is_available():
         return None
 
-    # Group segments by their source page so each source page produces
-    # exactly one rebuild page. Previously we planned ALL segments as
-    # one layout, which let the rebuild spill across multiple pages
-    # even for a single-page source.
+
+
+
+
     pages_pairs = _group_pairs_by_page(pairs)
     if not pages_pairs:
         return None
@@ -1116,36 +1116,36 @@ def render_planned_docx_export(
 
     doc = Document()
 
-    # Tighter section margins so the translated content fits the same
-    # footprint as the original document.
+
+
     for section in doc.sections:
         section.top_margin = Cm(1.2)
         section.bottom_margin = Cm(1.2)
         section.left_margin = Cm(1.5)
         section.right_margin = Cm(1.5)
 
-    # ---- Page 1..N : original document ----
-    # In preview mode the Compare view shows the original on its
-    # own pane, so we skip the embed here to make the rebuild PDF
-    # a pure translation document (faster + less visual noise).
+
+
+
+
     if not preview_only:
         if source_kind == "IMAGE":
             _embed_image_full_page(doc, original_path)
         elif source_kind == "PDF":
             _embed_pdf_pages_as_images(doc, original_path)
 
-    # ---- Translated section, ONE rebuild page per source page ----
+
     stamp_path = project_meta.get("stamp_path")
     stamp_alignment = (
         project_meta.get("stamp_alignment") or "right"
     ).lower()
     for i, (page_index, page_pairs) in enumerate(pages_pairs):
-        # Set the section orientation to match this source page. A
-        # landscape source page must produce a landscape rebuild
-        # page so a wide form/table doesn't get squashed into a
-        # portrait section. We use a NEW section per page so each
-        # one can have its own orientation (Word's section model
-        # scopes orientation to a section).
+
+
+
+
+
+
         orientation = _detect_page_orientation(page_pairs)
         if i > 0:
             _start_new_section_with_orientation(doc, orientation)
@@ -1158,8 +1158,8 @@ def render_planned_docx_export(
                 for block in plan.get("blocks") or []:
                     _render_planned_block(doc, block, by_id)
             else:
-                # Per-page fall back: render this page's pairs as
-                # plain paragraphs so the page isn't blank.
+
+
                 for translated, layout in page_pairs:
                     body = (translated or "").strip()
                     if not body:
@@ -1168,16 +1168,16 @@ def render_planned_docx_export(
                     is_placeholder = bool((layout or {}).get("placeholder_kind"))
                     _docx_apply_paragraph_style(para, body, layout, is_placeholder)
 
-        # Company stamp goes at the BOTTOM of this translated page,
-        # before the page break that starts the next page. Not added
-        # to the embedded-original pages — those were rendered above
-        # via _embed_*_full_page / _embed_pdf_pages_as_images.
+
+
+
+
         if stamp_path:
             _append_team_stamp(doc, stamp_path, stamp_alignment)
 
-    # ---- Final page : certification (template or hardcoded) ----
-    # Skip in preview mode — the cert is for the final export, not
-    # for reviewers comparing translations.
+
+
+
     if not preview_only:
         doc.add_page_break()
         _append_certification_page(
@@ -1214,14 +1214,14 @@ def render_structured_docx_export(
 
     doc = Document()
 
-    # ---- Page 1+ : original document ----
+
     if not preview_only:
         if source_kind == "IMAGE":
             _embed_image_full_page(doc, original_path)
         elif source_kind == "PDF":
             _embed_pdf_pages_as_images(doc, original_path)
 
-    # ---- Pages N+ : structured translation ----
+
     src_lang = project_meta.get("source_language") or ""
     tgt_lang = project_meta.get("target_language") or ""
 
@@ -1242,7 +1242,7 @@ def render_structured_docx_export(
             except Exception:
                 gap_pt = 0.0
             if gap_pt > 6:
-                # Empty paragraph mirrors a paragraph-level gap.
+
                 doc.add_paragraph("")
 
         body_text = (translated or "").strip()
@@ -1263,7 +1263,7 @@ def render_structured_docx_export(
             except Exception:
                 pass
 
-    # ---- Final page : certification (template or hardcoded) ----
+
     if not preview_only:
         doc.add_page_break()
         _append_certification_page(doc, project_meta, company_logo_path)
@@ -1274,9 +1274,9 @@ def render_structured_docx_export(
     return buf.getvalue()
 
 
-# ============================================================
-# CERT PAGE — template-aware
-# ============================================================
+
+
+
 
 def _append_certification_page(doc, project_meta, company_logo_path):
     """Append the final certification page to a python-docx Document.
@@ -1298,15 +1298,15 @@ def _append_certification_page(doc, project_meta, company_logo_path):
 
     template_bytes = project_meta.get("certification_template_bytes")
     if template_bytes:
-        # User-provided template path. Walk every body element of the
-        # substituted template and clone it into the rebuild doc so
-        # the user's branding, layout, and inline images come through
-        # intact.
+
+
+
+
         try:
             src_doc = _Doc(_io.BytesIO(template_bytes))
             for element in src_doc.element.body.iterchildren():
-                # Skip the sectPr (section/page settings) — the
-                # rebuild doc already has its own.
+
+
                 if element.tag == qn("w:sectPr"):
                     continue
                 doc.element.body.append(deepcopy(element))
@@ -1318,7 +1318,7 @@ def _append_certification_page(doc, project_meta, company_logo_path):
                 e,
             )
 
-    # Default hardcoded cert page.
+
     if company_logo_path and _os.path.isfile(company_logo_path):
         try:
             p = doc.add_paragraph()

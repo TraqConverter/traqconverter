@@ -31,18 +31,18 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
-# ----------------------------------------------------------------
-# The author prompt. Two design notes:
-#
-#   1. We ask Claude for a *complete, runnable* python-docx script.
-#      Claude.ai already excels at this when users paste a PDF — we
-#      simulate that workflow exactly by sending the PDF as a
-#      `document` content block and asking for code.
-#
-#   2. We enforce the output path so the sandbox knows where to read
-#      the result back from. The model is told this is the *only*
-#      file system path it may write to.
-# ----------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
 _AUTHOR_PROMPT_TEMPLATE = textwrap.dedent("""
 TASK
 ====
@@ -686,11 +686,11 @@ Begin your code block now.
 """).strip()
 
 
-# Modules we let the sandbox script access. python-docx itself
-# imports a handful of stdlib things (io, zipfile, copy, pathlib,
-# etc.) so we don't try to remove those — we only block obvious
-# escape hatches (subprocess, socket, requests, urllib, etc.) by
-# patching them out at the top of the script we execute.
+
+
+
+
+
 _SANDBOX_PREAMBLE = textwrap.dedent('''
     # --- Sandbox preamble (injected by claude_authored_rebuild) ---
     # Strip out network / shell escape modules before user code runs.
@@ -721,7 +721,7 @@ def _strip_code_fence(text: str) -> str:
     m = re.search(r"```(?:python)?\s*\n(.*?)```", text, re.DOTALL)
     if m:
         return m.group(1).strip()
-    # No fence — assume it's raw code.
+
     return text.strip()
 
 
@@ -742,8 +742,8 @@ def _validate_script(script: str, output_path: str) -> None:
         )
     if "doc.save" not in script and ".save(" not in script:
         raise ValueError("Script never calls .save()")
-    # Cheap blocklist — the sandbox preamble also handles these but
-    # rejecting early gives a clearer error.
+
+
     for forbidden in ("subprocess", "socket.", "urllib", "requests.", "os.system"):
         if forbidden in script:
             raise ValueError(f"Script references blocked module: {forbidden}")
@@ -771,7 +771,7 @@ def _extract_pdf_images(pdf_bytes: bytes, dest_dir: Path) -> list:
     Failures are non-fatal — we return whatever we got.
     """
     try:
-        import fitz  # PyMuPDF
+        import fitz
     except Exception:
         logger.warning("PyMuPDF (fitz) not installed — skipping image extraction")
         return []
@@ -790,23 +790,23 @@ def _extract_pdf_images(pdf_bytes: bytes, dest_dir: Path) -> list:
         n_pages = len(doc)
         for page_num, page in enumerate(doc, start=1):
             embedded_count = 0
-            # Strategy 1: embedded XObjects. Skip page-sized
-            # images — those are usually scanned-page bitmaps, not
-            # discrete logos, and Claude inserting them produces the
-            # "screenshot of the whole page" output the user keeps
-            # seeing. Threshold: image must be < 60% of the page
-            # area to be considered a discrete asset.
+
+
+
+
+
+
             page_rect = page.rect
             page_area = max(1.0, page_rect.width * page_rect.height)
             for img_idx, img in enumerate(page.get_images(full=True)):
                 xref = img[0]
                 try:
                     pix = fitz.Pixmap(doc, xref)
-                    if pix.n - pix.alpha >= 4:  # CMYK -> convert to RGB
+                    if pix.n - pix.alpha >= 4:
                         pix = fitz.Pixmap(fitz.csRGB, pix)
-                    # Reject images that are too large (page scans).
-                    img_area_pts = (pix.width * pix.height) / (3 * 3)  # we extract at 3x earlier but get_images is at PDF-native
-                    # Use raw pixmap dims vs page dims (both in pts).
+
+                    img_area_pts = (pix.width * pix.height) / (3 * 3)
+
                     if pix.width >= page_rect.width * 0.85 and pix.height >= page_rect.height * 0.6:
                         logger.info(
                             "Skipping page-sized embedded image p%d idx%d (%dx%d vs page %dx%d)",
@@ -832,26 +832,26 @@ def _extract_pdf_images(pdf_bytes: bytes, dest_dir: Path) -> list:
                         "Skipped image p%d idx%d: %s", page_num, img_idx, e
                     )
 
-            # Strategy 2: flat-scan fallback. If the page has no
-            # embedded images AND the page is large enough to be a
-            # full doc page (not a thumbnail), crop header / footer.
+
+
+
             if embedded_count == 0:
                 try:
                     rect = page.rect
                     page_w, page_h = rect.width, rect.height
                     if page_w < 100 or page_h < 100:
                         continue
-                    # Header crop: top 16% — tight to the actual
-                    # logo area. 28% was too generous and included
-                    # the whole institution-name band, producing
-                    # "looks like a screenshot of the page header"
-                    # output. 16% is just the crest + immediate
-                    # vicinity. Adjust per-document if needed.
+
+
+
+
+
+
                     header_clip = fitz.Rect(
                         0, 0, page_w, page_h * 0.16
                     )
                     pix = page.get_pixmap(
-                        matrix=fitz.Matrix(3, 3),  # 3x for crispness
+                        matrix=fitz.Matrix(3, 3),
                         clip=header_clip,
                         alpha=False,
                     )
@@ -867,8 +867,8 @@ def _extract_pdf_images(pdf_bytes: bytes, dest_dir: Path) -> list:
                     })
                     pix = None
 
-                    # Footer crop: only on the LAST page (signature
-                    # block + stamp typically live there).
+
+
                     if page_num == n_pages:
                         footer_clip = fitz.Rect(
                             0, page_h * 0.62, page_w, page_h * 0.80
@@ -1044,7 +1044,7 @@ def _extract_tables_via_vision(
         if getattr(block, "type", None) == "text":
             raw += getattr(block, "text", "") or ""
 
-    # Pull the JSON out of a fenced block if present.
+
     m = re.search(r"```(?:json)?\s*\n(.*?)```", raw, re.DOTALL)
     payload = m.group(1).strip() if m else raw.strip()
     try:
@@ -1133,9 +1133,9 @@ def _call_claude_to_author(
 
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("ascii")
 
-    # Fallback chain: try Opus 4.6 first, then Sonnet 4.6, then
-    # Sonnet 4.5 (known-good legacy). Each fallback is triggered on
-    # 404 / model-not-found / overloaded / server-error responses.
+
+
+
     model_chain = [model, "claude-sonnet-4-6", "claude-sonnet-4-5-20250929"]
     seen = set()
     model_chain = [m for m in model_chain if m and not (m in seen or seen.add(m))]
@@ -1162,8 +1162,8 @@ def _call_claude_to_author(
             ],
         }
         if use_thinking:
-            # Extended thinking is the same mechanism Claude.ai uses
-            # for hard PDFs. Requires temperature=1.0.
+
+
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": 20000}
             kwargs["temperature"] = 1.0
         else:
@@ -1184,26 +1184,26 @@ def _call_claude_to_author(
             except Exception as e:
                 msg = str(e).lower()
                 last_exc = e
-                # LOG THE FULL ERROR so we can diagnose.
+
                 logger.warning(
                     "Claude API call failed (model=%s, thinking=%s): %s",
                     attempt_model, use_thinking, e,
                 )
-                # Thinking-specific failures → retry without thinking
-                # on the SAME model before moving to the next model.
+
+
                 if use_thinking and any(s in msg for s in (
                     "thinking", "extended_thinking", "budget_tokens",
                     "temperature", "invalid_request", "400",
                 )):
                     logger.info("Retrying without extended thinking…")
                     continue
-                # Model-not-found / overload / 5xx → move to next model.
+
                 if any(s in msg for s in (
                     "404", "not_found", "model_not_found",
                     "overloaded", "rate_limit", "503", "500", "529",
                 )):
-                    break  # next model
-                # Anything else (auth, malformed request) — bubble up.
+                    break
+
                 raise
         if resp is not None:
             break
@@ -1218,8 +1218,8 @@ def _call_claude_to_author(
         used_model, used_thinking,
     )
 
-    # Walk the content blocks. With thinking enabled there may be
-    # "thinking" blocks before the actual "text" output — skip those.
+
+
     text_blocks = []
     for block in resp.content or []:
         if getattr(block, "type", None) == "text":
@@ -1246,9 +1246,9 @@ def _run_script_in_sandbox(
     can find python-docx. stdout/stderr are captured for logging.
     """
     work_dir = Path(tempfile.mkdtemp(prefix="claude_authored_"))
-    # If the caller extracted images into <output_dir>/images, mirror
-    # them into work_dir/images so the script can resolve relative
-    # paths like "images/p1_img0.png" with its cwd set to work_dir.
+
+
+
     try:
         out_dir = Path(output_path).parent
         src_images_dir = out_dir / "images"
@@ -1260,17 +1260,17 @@ def _run_script_in_sandbox(
 
     try:
         script_path = work_dir / "rebuild.py"
-        # Write the preamble + user code.
+
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(_SANDBOX_PREAMBLE)
             f.write(script)
             f.write("\n")
 
         cmd = [sys.executable, str(script_path)]
-        # -I: isolate (ignore PYTHONPATH env, user site-packages)
-        # -S: don't run site.py
-        # We do want python-docx, so we set PYTHONPATH back to the
-        # parent process's sys.path explicitly.
+
+
+
+
         env = {
             "PATH": "/usr/bin:/bin",
             "PYTHONPATH": os.pathsep.join(sys.path),
@@ -1312,8 +1312,8 @@ def _run_script_in_sandbox(
             f"Authored rebuild timed out after {timeout_seconds}s"
         )
     finally:
-        # Clean up the work directory but keep the produced DOCX
-        # since output_path points outside work_dir.
+
+
         try:
             shutil.rmtree(work_dir, ignore_errors=True)
         except Exception:
@@ -1335,7 +1335,7 @@ def _strip_rotation_from_docx(docx_bytes: bytes) -> bytes:
         import zipfile
         from xml.etree import ElementTree as ET
 
-        # Word XML namespaces.
+
         W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         ET.register_namespace("w", W_NS)
         TD_TAG = "{%s}textDirection" % W_NS
@@ -1348,14 +1348,14 @@ def _strip_rotation_from_docx(docx_bytes: bytes) -> bytes:
             with zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as zout:
                 for item in zin.infolist():
                     data = zin.read(item.filename)
-                    # Only patch word/document.xml — sectPr / cells live there.
+
                     if item.filename == "word/document.xml":
                         try:
                             root = ET.fromstring(data)
                             removed = 0
-                            # ElementTree doesn't support arbitrary
-                            # ancestor lookup, so walk all elements and
-                            # remove every textDirection from its parent.
+
+
+
                             parent_map = {c: p for p in root.iter() for c in p}
                             for el in list(root.iter(TD_TAG)):
                                 parent = parent_map.get(el)
@@ -1421,16 +1421,16 @@ def _strip_layout_table_borders(docx_bytes: bytes) -> bytes:
             with zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as zout:
                 for item in zin.infolist():
                     data = zin.read(item.filename)
-                    # Belt-and-braces: patch styles.xml so the
-                    # default "Table Grid" / "TableGrid" style is
-                    # borderless. That way even if document.xml has a
-                    # <w:tblStyle w:val="TableGrid"/> reference we
-                    # missed, the style itself contributes no borders.
+
+
+
+
+
                     if item.filename == "word/styles.xml":
                         try:
                             data_str = data.decode("utf-8")
-                            # Find every <w:style w:type="table">
-                            # block and force its tblBorders to nil.
+
+
                             new_data, n_styles = _force_borderless_table_styles(data_str, W_NS)
                             if n_styles:
                                 data = new_data.encode("utf-8")
@@ -1448,28 +1448,28 @@ def _strip_layout_table_borders(docx_bytes: bytes) -> bytes:
                             root = ET.fromstring(data)
                             stripped = 0
                             for tbl in root.iter("{%s}tbl" % W_NS):
-                                # Strip borders from THREE sources:
-                                #   1. <w:tblStyle> reference (e.g.
-                                #      "Table Grid") — this is what
-                                #      Claude usually emits; without
-                                #      removing it, Word reads the
-                                #      style definition from
-                                #      styles.xml and draws borders
-                                #      regardless of our tblBorders.
-                                #   2. <w:tblBorders> directly on the
-                                #      table — overrides style.
-                                #   3. <w:tcBorders> on each cell —
-                                #      cell-level overrides.
+
+
+
+
+
+
+
+
+
+
+
+
                                 tblPr = tbl.find("{%s}tblPr" % W_NS)
                                 if tblPr is None:
                                     tblPr = ET.SubElement(tbl, "{%s}tblPr" % W_NS)
                                     tbl.insert(0, tblPr)
-                                # 1. Remove style reference so the
-                                #    Table Grid style's borders don't
-                                #    show through.
+
+
+
                                 for s in tblPr.findall("{%s}tblStyle" % W_NS):
                                     tblPr.remove(s)
-                                # 2. Force tblBorders to nil.
+
                                 for b in tblPr.findall("{%s}tblBorders" % W_NS):
                                     tblPr.remove(b)
                                 borders = ET.SubElement(tblPr, "{%s}tblBorders" % W_NS)
@@ -1479,10 +1479,10 @@ def _strip_layout_table_borders(docx_bytes: bytes) -> bytes:
                                 ):
                                     e = ET.SubElement(borders, "{%s}%s" % (W_NS, edge))
                                     e.set("{%s}val" % W_NS, "nil")
-                                # 3. Clear per-cell borders AND add
-                                #    explicit nil tcBorders so cells
-                                #    don't inherit borders from any
-                                #    surviving table style.
+
+
+
+
                                 for tc in tbl.iter("{%s}tc" % W_NS):
                                     tcPr = tc.find("{%s}tcPr" % W_NS)
                                     if tcPr is None:
@@ -1546,12 +1546,12 @@ def _split_crammed_table_rows(docx_bytes: bytes) -> bytes:
         W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         ET.register_namespace("w", W_NS)
 
-        # Patterns we use to detect column boundaries.
+
         TOKEN_RES = [
-            re.compile(r"^\d{8}$"),                  # 8-digit ID
-            re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$"),  # date
-            re.compile(r"^\d{1,3}/\d{1,3}$"),        # grade like 29/30
-            re.compile(r"^[A-Z]{2,5}/\d{1,3}$"),     # sector code IUS/10
+            re.compile(r"^\d{8}$"),
+            re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$"),
+            re.compile(r"^\d{1,3}/\d{1,3}$"),
+            re.compile(r"^[A-Z]{2,5}/\d{1,3}$"),
             re.compile(r"^Passed$|^Failed$|^Approved$", re.I),
         ]
 
@@ -1562,7 +1562,7 @@ def _split_crammed_table_rows(docx_bytes: bytes) -> bytes:
             return row.findall("{%s}tc" % W_NS)
 
         def _set_cell_text(cell, text):
-            # Remove existing <w:p> children and add one fresh.
+
             for p in list(cell.findall("{%s}p" % W_NS)):
                 cell.remove(p)
             new_p = ET.SubElement(cell, "{%s}p" % W_NS)
@@ -1581,27 +1581,27 @@ def _split_crammed_table_rows(docx_bytes: bytes) -> bytes:
             tokens = text.split()
             if len(tokens) < n_cols:
                 return None
-            # Try greedy assignment from the right (the tail is usually
-            # a multi-word field like "10 3061 PDS0-2019"). Use a
-            # 2-pass approach: anchor known regex tokens to their
-            # likely column, then fill the rest.
-            # Simple approach: take first token as col 0, then walk
-            # forward absorbing into the current column until the next
-            # token matches a "boundary" regex.
+
+
+
+
+
+
+
             cols = []
             i = 0
             while i < len(tokens) and len(cols) < n_cols:
-                # If this is the last column slot, absorb everything left.
+
                 if len(cols) == n_cols - 1:
                     cols.append(" ".join(tokens[i:]))
                     break
                 cur = tokens[i]
                 i += 1
-                # If cur matches a token regex it's a single-token column.
+
                 if any(p.match(cur) for p in TOKEN_RES):
                     cols.append(cur)
                     continue
-                # Otherwise absorb following non-boundary tokens.
+
                 while i < len(tokens) and not any(p.match(tokens[i]) for p in TOKEN_RES):
                     cur = cur + " " + tokens[i]
                     i += 1
@@ -1618,16 +1618,16 @@ def _split_crammed_table_rows(docx_bytes: bytes) -> bytes:
             with zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as zout:
                 for item in zin.infolist():
                     data = zin.read(item.filename)
-                    # Belt-and-braces: patch styles.xml so the
-                    # default "Table Grid" / "TableGrid" style is
-                    # borderless. That way even if document.xml has a
-                    # <w:tblStyle w:val="TableGrid"/> reference we
-                    # missed, the style itself contributes no borders.
+
+
+
+
+
                     if item.filename == "word/styles.xml":
                         try:
                             data_str = data.decode("utf-8")
-                            # Find every <w:style w:type="table">
-                            # block and force its tblBorders to nil.
+
+
                             new_data, n_styles = _force_borderless_table_styles(data_str, W_NS)
                             if n_styles:
                                 data = new_data.encode("utf-8")
@@ -1651,37 +1651,37 @@ def _split_crammed_table_rows(docx_bytes: bytes) -> bytes:
                                 header = rows[0]
                                 n_cols = len(_cells(header))
                                 if n_cols < 4:
-                                    continue  # too small to bother
+                                    continue
                                 for row in rows[1:]:
                                     cells = _cells(row)
                                     cell_texts = [_txt(c).strip() for c in cells]
                                     non_empty_indices = [
                                         i for i, t in enumerate(cell_texts) if t
                                     ]
-                                    # Case A: row already has data spread
-                                    # across multiple cells → leave alone.
+
+
                                     if len(non_empty_indices) >= max(2, n_cols // 2):
                                         continue
-                                    # Case B: row has no text anywhere → skip.
+
                                     if not non_empty_indices:
                                         continue
-                                    # Case C: row has text only in cell 0
-                                    # (or one cell), and that cell's text
-                                    # reads like a concatenation of N column
-                                    # values. Split it.
+
+
+
+
                                     text_cell_idx = non_empty_indices[0]
                                     text = cell_texts[text_cell_idx]
                                     parts = _smart_split(text, n_cols)
                                     if not parts:
                                         continue
-                                    # Distribute across cells: write parts[0]
-                                    # into the cell that had the text,
-                                    # parts[1:] into the rest (creating new
-                                    # cells if needed).
+
+
+
+
                                     _set_cell_text(cells[text_cell_idx], parts[0])
                                     rest = parts[1:]
-                                    # Fill any subsequent existing empty cells
-                                    # first, then append new ones.
+
+
                                     next_idx = text_cell_idx + 1
                                     for value in rest:
                                         if next_idx < len(cells):
@@ -1732,14 +1732,14 @@ def _image_is_mostly_uniform(img_path) -> bool:
         im = Image.open(str(img_path)).convert("RGB")
         im = im.resize((32, 32))
         pixels = list(im.getdata())
-        # Bin to 16-unit buckets so near-matches count together.
+
         buckets = [
             ((r // 16) * 16, (g // 16) * 16, (b // 16) * 16)
             for (r, g, b) in pixels
         ]
         counts = Counter(buckets)
         top_color, top_count = counts.most_common(1)[0]
-        # Tight match (+/-12) around top_color.
+
         tr, tg, tb = top_color
         within = 0
         for (r, g, b) in pixels:
@@ -1780,11 +1780,11 @@ def _replace_image_placeholders(docx_bytes: bytes, work_dir: Path) -> bytes:
             return docx_bytes
 
         all_imgs = sorted(images_dir.glob("*.png")) + sorted(images_dir.glob("*.jpg")) + sorted(images_dir.glob("*.jpeg"))
-        # Drop background-only crops up front. Phone-photo PDFs of
-        # paper docs produce rectangles full of desk-wood / paper
-        # background which substitute as wrong-looking solid color
-        # blocks. Better to leave the slot empty -- the wrapper's
-        # source-page embed shows the original at full quality.
+
+
+
+
+
         kept = []
         dropped = 0
         for p in all_imgs:
@@ -1801,7 +1801,7 @@ def _replace_image_placeholders(docx_bytes: bytes, work_dir: Path) -> bytes:
         if not all_imgs:
             return docx_bytes
 
-        # Categorize available images by filename hints.
+
         headers = [p for p in all_imgs if "header" in p.name]
         footers = [p for p in all_imgs if "footer" in p.name]
         embedded = [p for p in all_imgs if "img" in p.name and "header" not in p.name and "footer" not in p.name]
@@ -1816,7 +1816,7 @@ def _replace_image_placeholders(docx_bytes: bytes, work_dir: Path) -> bytes:
                 return (embedded + headers + footers)[0] if (embedded + headers + footers) else None
             return None
 
-        # Size hints in cm.
+
         def _width(placeholder: str) -> float:
             ph = placeholder.lower()
             if any(k in ph for k in ("coat", "logo", "crest", "arms")):
@@ -1849,14 +1849,14 @@ def _replace_image_placeholders(docx_bytes: bytes, work_dir: Path) -> bytes:
             img_path = _pick(placeholder)
             if not img_path:
                 return
-            # Strip the placeholder from the text.
+
             new_text = full_text[:m.start()] + full_text[m.end():]
-            # Clear existing runs.
+
             for r in list(para.runs):
                 r._element.getparent().remove(r._element)
-            # If there was surrounding text, re-add it.
+
             if new_text.strip():
-                # Split around the placeholder spot (if before/after text)
+
                 before = full_text[:m.start()]
                 after = full_text[m.end():]
                 if before:
@@ -1870,16 +1870,16 @@ def _replace_image_placeholders(docx_bytes: bytes, work_dir: Path) -> bytes:
                 run.add_picture(str(img_path), width=Cm(_width(placeholder)))
             replaced += 1
 
-        # Walk body paragraphs.
+
         for para in doc.paragraphs:
             _process_paragraph(para)
-        # Walk tables.
+
         for tbl in doc.tables:
             for row in tbl.rows:
                 for cell in row.cells:
                     for para in cell.paragraphs:
                         _process_paragraph(para)
-        # Walk header / footer of every section.
+
         for section in doc.sections:
             for para in section.header.paragraphs:
                 _process_paragraph(para)
@@ -1947,8 +1947,8 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
             _re.compile(r"^\s*Signature\s*:\s*_+", _re.I),
             _re.compile(r"^\s*Date\s*:\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+UTC", _re.I),
             _re.compile(r"this\s+translation\s+is\s+accurate\s+and\s+complete", _re.I),
-            # User-rejected translator's-note variants. Strip these
-            # if Claude emits them despite the FORBIDDEN STRINGS rule.
+
+
             _re.compile(r"\bNote\s*:\s*This\s+(is|document)\s+(an|a)?\s*\w*\s*translation\b", _re.I),
             _re.compile(r"\bThis\s+document\s+is\s+(an|a)\s+\w+\s+translation\s+of\s+the\s+original\b", _re.I),
             _re.compile(r"\bcrest,?\s+seal\s+and\s+signature\s+are\s+reproduced\s+from\s+the\s+original\b", _re.I),
@@ -1980,12 +1980,12 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
                             root = ET.fromstring(data)
                             removed = 0
 
-                            # Recursive sweep: collect every w:p
-                            # whose extracted text matches a
-                            # forbidden pattern, anywhere in the
-                            # document (top-level body, inside
-                            # tables, inside nested tables — all
-                            # of it).
+
+
+
+
+
+
                             parent_map = _build_parent_map(root)
                             paras_to_remove = []
                             for p in root.iter(P_TAG):
@@ -1995,13 +1995,13 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
                                 if _matches_forbidden(txt):
                                     paras_to_remove.append(p)
 
-                            # Also sweep neighbours of each matched
-                            # paragraph in its parent's child list
-                            # — picks up the "Signature: ___" and
-                            # blank padding paragraphs around a
-                            # matched "CERTIFIED TRANSLATION"
-                            # heading even if the neighbour itself
-                            # only matches a softer rule.
+
+
+
+
+
+
+
                             extra = set()
                             for p in paras_to_remove:
                                 parent = parent_map.get(p)
@@ -2012,7 +2012,7 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
                                     idx = sibs.index(p)
                                 except ValueError:
                                     continue
-                                # Backward sweep.
+
                                 j = idx - 1
                                 while j >= 0 and sibs[j].tag == P_TAG:
                                     t = _para_text(sibs[j])
@@ -2025,7 +2025,7 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
                                         j -= 1
                                     else:
                                         break
-                                # Forward sweep.
+
                                 k = idx + 1
                                 while k < len(sibs) and sibs[k].tag == P_TAG:
                                     t = _para_text(sibs[k])
@@ -2050,18 +2050,18 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
                                 except ValueError:
                                     pass
 
-                            # After paragraph removal, sweep up
-                            # empty containers: a w:tc with no
-                            # remaining w:p — give it one blank
-                            # para (Word requires every cell to
-                            # contain at least one paragraph).
-                            # A w:tr with all empty/cert-only
-                            # cells, and a w:tbl with no rows,
-                            # get removed entirely.
-                            # Rebuild parent map because removals
-                            # may have shifted things.
+
+
+
+
+
+
+
+
+
+
                             parent_map = _build_parent_map(root)
-                            # Drop empty rows.
+
                             for tr in list(root.iter(TR_TAG)):
                                 has_meaningful = False
                                 for tc in tr.iter(TC_TAG):
@@ -2078,7 +2078,7 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
                                             parent.remove(tr)
                                         except ValueError:
                                             pass
-                            # Drop empty tables.
+
                             parent_map = _build_parent_map(root)
                             for tbl in list(root.iter(TBL_TAG)):
                                 rows = list(tbl.iter(TR_TAG))
@@ -2089,8 +2089,8 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
                                             parent.remove(tbl)
                                         except ValueError:
                                             pass
-                            # Ensure every remaining cell has at
-                            # least one w:p (Word requirement).
+
+
                             for tc in root.iter(TC_TAG):
                                 if tc.find(P_TAG) is None:
                                     tc.append(ET.Element(P_TAG))
@@ -2184,7 +2184,7 @@ def _strip_html_and_bracket_artifacts(docx_bytes: bytes) -> bytes:
                             root = ET.fromstring(data)
                             body = root.find("{%s}body" % W_NS)
                             if body is not None:
-                                # Pass 1 \u2014 paragraph-level strip.
+
                                 for p in root.iter(P_TAG):
                                     runs = list(p.findall(R_TAG))
                                     if not runs:
@@ -2201,7 +2201,7 @@ def _strip_html_and_bracket_artifacts(docx_bytes: bytes) -> bytes:
                                         cleaned = TAG_RE.sub(" ", cleaned)
                                     if "[" in cleaned:
                                         cleaned = BRACKET_RE.sub("", cleaned)
-                                    # Drop unterminated openers/dangling closers.
+
                                     if "<" in cleaned or ">" in cleaned:
                                         cleaned = _re2.sub(
                                             r"<\s*/?\s*[a-zA-Z][^<>]*$",
@@ -2240,7 +2240,7 @@ def _strip_html_and_bracket_artifacts(docx_bytes: bytes) -> bytes:
                                         for t in r.findall(T_TAG):
                                             t.text = ""
 
-                                # Pass 2 \u2014 drop now-empty paragraphs.
+
                                 parent_map = {
                                     c: p2 for p2 in body.iter() for c in p2
                                 }
@@ -2364,10 +2364,10 @@ def _merge_adjacent_compatible_tables(docx_bytes: bytes) -> bytes:
                                     if head_cols == 0:
                                         i += 1
                                         continue
-                                    # Try to absorb next tables.
+
                                     while True:
-                                        # Find next non-empty
-                                        # sibling.
+
+
                                         j = i + 1
                                         skipped = []
                                         while j < len(children):
@@ -2396,11 +2396,11 @@ def _merge_adjacent_compatible_tables(docx_bytes: bytes) -> bytes:
                                         nxt = children[j]
                                         if _col_count(nxt) != head_cols:
                                             break
-                                        # Move rows.
+
                                         for tr in list(nxt.findall(TR)):
                                             el.append(tr)
-                                        # Delete absorbed table +
-                                        # any blank paragraphs.
+
+
                                         for idx in sorted(
                                             skipped + [j], reverse=True
                                         ):
@@ -2509,9 +2509,9 @@ def _auto_landscape_wide_tables(docx_bytes: bytes) -> bytes:
                             body = root.find("{%s}body" % W_NS)
                             if body is not None:
                                 children = list(body)
-                                # Walk in order, wrap any wide table
-                                # with landscape boundary above and
-                                # portrait boundary below.
+
+
+
                                 new_kids = []
                                 for el in children:
                                     if el.tag == TBL:
@@ -2522,15 +2522,15 @@ def _auto_landscape_wide_tables(docx_bytes: bytes) -> bytes:
                                             else 0
                                         )
                                         if col_count > WIDE_COL_THRESHOLD:
-                                            # Boundary BEFORE table:
-                                            # paragraph with landscape
-                                            # sectPr (closes the prev
-                                            # section as landscape too,
-                                            # but Word's sectPr applies
-                                            # to the PRECEDING content
-                                            # so we need the boundary
-                                            # marker to apply landscape
-                                            # to the table that follows.
+
+
+
+
+
+
+
+
+
                                             new_kids.append(
                                                 _wrap_paragraph_with_sectpr(
                                                     "portrait"
@@ -2547,7 +2547,7 @@ def _auto_landscape_wide_tables(docx_bytes: bytes) -> bytes:
                                             continue
                                     new_kids.append(el)
                                 if modified:
-                                    # Replace body children.
+
                                     for c in list(body):
                                         body.remove(c)
                                     for c in new_kids:
@@ -2616,7 +2616,7 @@ def _collapse_pre_section_whitespace(docx_bytes: bytes) -> bytes:
                 return False
             if _has_page_break(p):
                 return False
-            # If it carries a sectPr, treat as structural (don't drop).
+
             if p.find("{%s}pPr/%s" % (W_NS, SECTPR_TAG)) is not None:
                 return False
             return True
@@ -2644,12 +2644,12 @@ def _collapse_pre_section_whitespace(docx_bytes: bytes) -> bytes:
                                         and prev_was_break
                                         and _is_empty_p(el)
                                     ):
-                                        # Skip — empty para after a break.
+
                                         dropped += 1
                                         modified = True
                                         continue
                                     kept.append(el)
-                                    # Update prev_was_break.
+
                                     if el.tag == P_TAG and _has_page_break(el):
                                         prev_was_break = True
                                     elif el.tag.endswith("}sectPr"):
@@ -2714,7 +2714,7 @@ def _strip_broken_image_drawings(docx_bytes: bytes) -> bytes:
         in_buf = io.BytesIO(docx_bytes)
         out_buf = io.BytesIO()
 
-        # Pre-read all members.
+
         with zipfile.ZipFile(in_buf, "r") as zin:
             members = {item.filename: zin.read(item.filename) for item in zin.infolist()}
 
@@ -2723,9 +2723,9 @@ def _strip_broken_image_drawings(docx_bytes: bytes) -> bytes:
         if not rels_data or not doc_data:
             return docx_bytes
 
-        # Collect the set of valid rIds (any relationship pointing at
-        # an image — and crucially, an image whose target exists in
-        # the zip).
+
+
+
         valid_rids = set()
         try:
             rels_root = ET.fromstring(rels_data)
@@ -2735,7 +2735,7 @@ def _strip_broken_image_drawings(docx_bytes: bytes) -> bytes:
                 target = r.get("Target") or ""
                 if "image" not in rtype.lower():
                     continue
-                # Resolve target relative to word/
+
                 tpath = target
                 if tpath.startswith("/"):
                     tpath = tpath[1:]
@@ -2749,8 +2749,8 @@ def _strip_broken_image_drawings(docx_bytes: bytes) -> bytes:
             logger.warning("rels parse failed: %s", e)
             return docx_bytes
 
-        # Walk document.xml drawings, remove ones whose r:embed isn't
-        # in valid_rids.
+
+
         try:
             doc_root = ET.fromstring(doc_data)
         except Exception:
@@ -2764,11 +2764,11 @@ def _strip_broken_image_drawings(docx_bytes: bytes) -> bytes:
         DRAWING_TAG = "{%s}drawing" % W_NS
         EMBED_ATTR = "{%s}embed" % R_NS
 
-        # Build a parent map.
+
         parent_map = {c: p for p in doc_root.iter() for c in p}
 
         for drawing in list(doc_root.iter(DRAWING_TAG)):
-            # Find r:embed attribute anywhere inside this drawing.
+
             embed_rid = None
             for el in drawing.iter():
                 rid = el.get(EMBED_ATTR)
@@ -2777,7 +2777,7 @@ def _strip_broken_image_drawings(docx_bytes: bytes) -> bytes:
                     break
             if embed_rid is None or embed_rid in valid_rids:
                 continue
-            # Orphan drawing — remove from its parent.
+
             parent = parent_map.get(drawing)
             if parent is not None:
                 parent.remove(drawing)
@@ -2818,11 +2818,11 @@ def author_rebuild_docx(
     Raises RuntimeError or ValueError if any step fails — the caller
     should fall back to the segment-driven pipeline.
     """
-    # Multi-turn mode: when REBUILD_MULTITURN is enabled (default
-    # on), delegate to the tool-use loop in
-    # claude_multiturn_rebuild — that's the "match claude.ai chat"
-    # path where Claude sees its own output and iterates until it
-    # matches the source. Falls back to single-shot on any failure.
+
+
+
+
+
     use_multiturn = (
         os.getenv("REBUILD_MULTITURN", "1").strip().lower()
         not in ("", "0", "false", "no", "off")
@@ -2847,18 +2847,18 @@ def author_rebuild_docx(
                 "Multi-turn rebuild failed — falling back to single-shot"
             )
 
-    # Use a stable, sandbox-readable path.
+
     out_dir = Path(tempfile.mkdtemp(prefix="claude_authored_out_"))
     output_path = str(out_dir / "rebuild.docx")
 
-    # Extract embedded images so Claude can re-use the real logo /
-    # stamp / signature bitmaps instead of bracketed placeholders.
+
+
     images = _extract_pdf_images(pdf_bytes, out_dir)
 
-    # Vision pre-pass: extract every data table as structured JSON
-    # so the author script can paste cell values verbatim instead of
-    # re-OCR'ing the table from the PDF image (which causes the
-    # crammed-cells regression).
+
+
+
+
     try:
         tables = _extract_tables_via_vision(pdf_bytes)
     except Exception:
@@ -2882,44 +2882,44 @@ def author_rebuild_docx(
             output_path=output_path,
             timeout_seconds=timeout_seconds,
         )
-        # Safety net: strip any vertical-text / rotation that Claude
-        # may have emitted despite the explicit prompt rule.
+
+
         docx_bytes = _strip_rotation_from_docx(docx_bytes)
         docx_bytes = _strip_layout_table_borders(docx_bytes)
         docx_bytes = _split_crammed_table_rows(docx_bytes)
-        # Strip any "CERTIFIED TRANSLATION" affidavit block Claude
-        # left inside the body — the wrapper appends the real cert
-        # AFTER the body, so an inline cert is always a duplicate.
+
+
+
         docx_bytes = _strip_inline_cert_blocks(docx_bytes)
-        # Strip literal HTML tags and bracketed image placeholders
-        # (e.g. '<p style="text-align: center;">FOO</p>' or
-        # '[Coat of Arms]') Claude sometimes leaves in body text
-        # despite the prompt forbidding both.
+
+
+
+
         docx_bytes = _strip_html_and_bracket_artifacts(docx_bytes)
-        # Consolidate adjacent 1-row tables into one multi-row
-        # table -- fixes the "29 separate one-row tables for
-        # RN1..RN29" fragmentation pattern.
+
+
+
         docx_bytes = _merge_adjacent_compatible_tables(docx_bytes)
-        # NOTE: auto-landscape skipped intentionally -- translation
-        # page orientation must match source orientation per-page.
-        # Drop empty paragraphs sitting between a page break and
-        # the next section so new pages start at the top.
+
+
+
+
         docx_bytes = _collapse_pre_section_whitespace(docx_bytes)
-        # If Claude left any bracketed image placeholders despite
-        # the prompt instruction, try to substitute the actual
-        # extracted image. Uses out_dir/images/.
+
+
+
         docx_bytes = _replace_image_placeholders(docx_bytes, out_dir)
-        # Final cleanup: remove any <w:drawing> whose embedded rId
-        # doesn't actually exist in the rels file. This is what
-        # produces the "The picture can't be displayed" red-X in
-        # Word — gone now.
+
+
+
+
         docx_bytes = _strip_broken_image_drawings(docx_bytes)
         logger.info(
             "Authored rebuild OK (%d bytes)", len(docx_bytes)
         )
         return docx_bytes
     finally:
-        # Wipe the output dir — the bytes are already in memory.
+
         try:
             shutil.rmtree(out_dir, ignore_errors=True)
         except Exception:

@@ -4,10 +4,6 @@ import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 
-// ============================================================
-// DASHBOARD — ESPRESSO LOOK
-// ============================================================
-
 type ProjectUser = {
   id: string
   email: string | null
@@ -38,10 +34,6 @@ type Project = {
   owner?: ProjectUser | null
 }
 
-// The user-facing pill is derived from both axes: `status` (worker
-// progress) and `review_status` (human sign-off). When the worker
-// finishes (status==COMPLETED) the project sits in IN_REVIEW until
-// a human certifies it.
 function effectiveStatus(p: { status?: string; review_status?: string }) {
   const s = (p.status || "").toUpperCase()
   if (s === "FAILED" || s === "PENDING" || s === "PROCESSING") return s
@@ -54,8 +46,6 @@ function effectiveStatus(p: { status?: string; review_status?: string }) {
   return s || "DRAFT"
 }
 
-// Derive initials from a real user: prefer full_name's first+last initial,
-// fall back to the first two letters of full_name, then email's local part.
 function initialsFor(u: ProjectUser | null | undefined): string | null {
   if (!u) return null
   const name = (u.full_name || "").trim()
@@ -191,10 +181,9 @@ export default function DashboardPage() {
     }
   }
 
-  // KPIs — computed from the real /projects/ payload
   const kpis = useMemo(() => {
     const isActive = (p: Project) => {
-      // Active = worker still chewing OR waiting on a human reviewer.
+
       const s = effectiveStatus(p)
       return s === "PENDING" || s === "PROCESSING" || s === "IN_REVIEW"
     }
@@ -241,8 +230,7 @@ export default function DashboardPage() {
 
   const filtered = useMemo(() => {
     if (tab === "assigned") {
-      // Real assignment data isn't returned by GET /projects/ yet,
-      // so the "Assigned to me" tab simply shows everything for now.
+
       return projects
     }
     if (tab === "review") {
@@ -251,7 +239,6 @@ export default function DashboardPage() {
     return projects
   }, [projects, tab])
 
-  // Pull the real user name from /auth/me so the greeting isn't hardcoded.
   useEffect(() => {
     let cancelled = false
     api
@@ -264,7 +251,7 @@ export default function DashboardPage() {
         else if (email) setName(email.split("@")[0])
       })
       .catch(() => {
-        /* silent — header just shows "Welcome back" without a name */
+
       })
     return () => {
       cancelled = true
@@ -273,7 +260,7 @@ export default function DashboardPage() {
 
   return (
     <div className="max-w-[1200px] mx-auto">
-      {/* BREADCRUMB + WELCOME */}
+      {}
       <div className="mb-8">
         <div className="text-sm mb-2" style={{ color: "#8a8270" }}>
           <span>TraqConverter</span>
@@ -297,7 +284,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* KPI CARDS — computed from real /projects/ data */}
+      {}
       <div className="grid grid-cols-4 gap-5 mb-10">
         <KpiCard
           label="ACTIVE PROJECTS"
@@ -337,7 +324,7 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* PROJECTS SECTION */}
+      {}
       <section
         className="rounded-2xl"
         style={{
@@ -360,7 +347,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* TABS */}
+            {}
             <div
               className="flex items-center p-1 rounded-full"
               style={{ background: "#f6efe0" }}
@@ -393,7 +380,7 @@ export default function DashboardPage() {
               })}
             </div>
 
-            {/* FILTER */}
+            {}
             <button
               className="flex items-center gap-2 px-4 py-2 rounded-full text-sm"
               style={{
@@ -406,7 +393,7 @@ export default function DashboardPage() {
               Filter
             </button>
 
-            {/* NEW PROJECT */}
+            {}
             <button
               onClick={() => router.push("/new-translation")}
               className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-white transition"
@@ -420,7 +407,7 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        {/* TABLE HEADER */}
+        {}
         <div
           className="grid px-7 py-3 text-[11px] font-semibold tracking-[0.12em]"
           style={{
@@ -438,7 +425,7 @@ export default function DashboardPage() {
           <div />
         </div>
 
-        {/* ROWS */}
+        {}
         <div>
           {loading && (
             <div className="px-7 py-10 text-center" style={{ color: "#8a8270" }}>
@@ -459,9 +446,7 @@ export default function DashboardPage() {
               const tgt = p.target_language || p.target_lang || "en-US"
               const progress = p.progress_percent ?? p.progress ?? 0
               const s = statusStyle(effectiveStatus(p))
-              // Real team: assignee first (active worker), then owner
-              // (creator). Falls through to an em-dash chip rather than
-              // a fake "NL" placeholder when neither is set.
+
               const teamInitials: string[] = []
               const assigneeInitials = initialsFor(p.assignee)
               const ownerInitials = initialsFor(p.owner)
@@ -484,7 +469,7 @@ export default function DashboardPage() {
                   onMouseEnter={(e) => (e.currentTarget.style.background = "#fbf7ee")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                 >
-                  {/* PROJECT */}
+                  {}
                   <div className="flex items-center gap-3 min-w-0">
                     <div
                       className="w-10 h-11 flex items-center justify-center rounded-md shrink-0"
@@ -509,14 +494,14 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  {/* LANGUAGES */}
+                  {}
                   <div className="flex items-center gap-2">
                     <LangChip code={src} />
                     <span style={{ color: "#b9ac8e" }}>→</span>
                     <LangChip code={tgt} />
                   </div>
 
-                  {/* STATUS */}
+                  {}
                   <div>
                     <span
                       className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs"
@@ -530,7 +515,7 @@ export default function DashboardPage() {
                     </span>
                   </div>
 
-                  {/* PROGRESS */}
+                  {}
                   <div className="flex items-center gap-3">
                     <div
                       className="flex-1 h-1.5 rounded-full overflow-hidden max-w-[140px]"
@@ -549,7 +534,7 @@ export default function DashboardPage() {
                     </span>
                   </div>
 
-                  {/* TEAM · DUE */}
+                  {}
                   <div className="flex items-center gap-3">
                     {team.length > 0 ? (
                       <div className="flex -space-x-2">
@@ -582,7 +567,7 @@ export default function DashboardPage() {
                     </span>
                   </div>
 
-                  {/* DOTS */}
+                  {}
                   <div className="flex justify-end">
                     <button
                       onClick={(e) => {

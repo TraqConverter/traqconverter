@@ -18,18 +18,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/stripe", tags=["Stripe"])
 
 stripe.api_key = settings.stripe_secret_key
-# Audit medium fix: enable automatic retry on idempotent calls so a
-# transient blip doesn't drop a webhook event. The Stripe SDK's default
-# socket timeout (80 s) is fine for our use cases.
+
+
+
 stripe.max_network_retries = 3
 
 
-# ============================================================
-# PLAN CONFIG — keys are the real Stripe price IDs (from .env), values
-# describe the wallet update we should apply when an invoice for that
-# price is paid. Credit grants come from a single source of truth in
-# app.core.plan_features.SUBSCRIPTION_GRANTS.
-# ============================================================
+
+
+
+
+
+
 def _build_plan_config():
     cfg = {}
     if getattr(settings, "STRIPE_PRICE_BASIC", None):
@@ -69,9 +69,9 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
     logger.info(f"Stripe event: {event_type}")
 
-    # ============================================================
-    # IDEMPOTENCY
-    # ============================================================
+
+
+
     try:
         db.add(StripeEvent(id=event_id, event_type=event_type))
         db.flush()
@@ -81,9 +81,9 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
     try:
 
-        # ============================================================
-        # ONE-TIME PURCHASE
-        # ============================================================
+
+
+
         if event_type == "checkout.session.completed":
 
             session = event["data"]["object"]
@@ -97,9 +97,9 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             user_id = metadata.get("user_id")
             team_id = metadata.get("team_id")
 
-            # ----------------------------------------------------------------
-            # ONE-TIME CREDIT TOP-UP
-            # ----------------------------------------------------------------
+
+
+
             if metadata.get("type") == "credit_purchase":
                 credits = int(metadata.get("credits", 0))
 
@@ -140,13 +140,13 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 logger.info(f"Added {credits} credits")
                 return {"status": "success"}
 
-            # ----------------------------------------------------------------
-            # SUBSCRIPTION CHECKOUT — flip wallet to BASIC/PRO immediately
-            # using the `plan` metadata we set in create_checkout_session.
-            # This way the upgrade lands as soon as the user pays, without
-            # waiting for invoice.payment_succeeded and without depending
-            # on .env price IDs being correct.
-            # ----------------------------------------------------------------
+
+
+
+
+
+
+
             if mode == "subscription" or metadata.get("plan"):
                 from app.core.plan_features import SUBSCRIPTION_GRANTS
 
@@ -187,10 +187,10 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 wallet.plan_type = plan
                 wallet.subscription_status = "ACTIVE"
                 wallet.subscription_credits = SUBSCRIPTION_GRANTS[plan]
-                # subscription_expires_at gets set precisely by the invoice
-                # event; for now mark it as "no expiry yet" so feature_guard
-                # treats the user as ACTIVE (it doesn't check this for paid
-                # plans, only for trials).
+
+
+
+
                 wallet.subscription_expires_at = None
 
                 user = db.query(User).filter(User.id == user_id).first()
@@ -207,28 +207,28 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             db.commit()
             return {"status": "ignored"}
 
-        # ============================================================
-        # SUBSCRIPTION PAYMENT (FIXED)
-        # ============================================================
+
+
+
         if event_type == "invoice.payment_succeeded":
 
             invoice = event["data"]["object"]
 
-            # PRIMARY SOURCE (NO API CALL)
+
             lines = invoice.get("lines", {}).get("data", [])
 
             price_id = None
             if lines:
                 price_id = lines[0].get("price", {}).get("id")
 
-            # METADATA (BEST SOURCE)
+
             metadata = invoice.get("metadata", {})
             user_id = metadata.get("user_id")
             team_id = metadata.get("team_id")
 
             subscription_id = invoice.get("subscription")
 
-            # FALLBACK ONLY IF NEEDED
+
             if (not user_id or not team_id or not price_id) and subscription_id:
                 try:
                     sub = stripe.Subscription.retrieve(subscription_id)
@@ -287,9 +287,9 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             wallet.subscription_status = "ACTIVE"
             wallet.subscription_credits = plan_config["credits"]
             wallet.subscription_expires_at = expiry_date
-            # IMPORTANT: bump wallet.plan_type too — this is what the
-            # feature_guard reads to resolve the user's effective tier.
-            # Forgetting this leaves the user on TRIAL forever.
+
+
+
             wallet.plan_type = plan_config["plan"]
 
             user.subscription_status = "ACTIVE"
@@ -300,9 +300,9 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             logger.info("Subscription updated")
             return {"status": "success"}
 
-        # ============================================================
-        # SUB CANCELLED
-        # ============================================================
+
+
+
         if event_type == "customer.subscription.deleted":
 
             subscription = event["data"]["object"]
@@ -327,8 +327,8 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 if wallet:
                     wallet.subscription_status = "INACTIVE"
                     wallet.subscription_credits = 0
-                    # Drop the wallet's plan_type back so feature_guard
-                    # treats them as EXPIRED (gates re-engage immediately).
+
+
                     wallet.plan_type = "EXPIRED"
 
             db.commit()
@@ -338,11 +338,11 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         return {"status": "ignored"}
 
     except Exception:
-        # Audit CRIT-5: previously this returned 200 + "error_handled" which
-        # told Stripe everything was fine and the event would never retry,
-        # leaving paying customers stuck on the trial. Roll back the half
-        # write, drop the idempotency row so Stripe's retry can re-process,
-        # and return 500 so Stripe's exponential-backoff retry kicks in.
+
+
+
+
+
         logger.exception("Stripe webhook failed")
         try:
             db.rollback()

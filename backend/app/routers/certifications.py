@@ -28,9 +28,9 @@ ALLOWED_KINDS = {"AFFIDAVIT", "ISO_17100", "SWORN_DECLARATION", "OTHER"}
 BASE_DIR = "uploads/certifications"
 
 
-# ============================================================
-# Helpers
-# ============================================================
+
+
+
 
 def _resolve_team(db: Session, user: User) -> Team:
     team = db.query(Team).filter(Team.owner_id == user.id).first()
@@ -61,9 +61,9 @@ def _serialize(c: Certification, uploader_email: Optional[str] = None) -> dict:
     }
 
 
-# ============================================================
-# LIST
-# ============================================================
+
+
+
 
 @router.get("")
 def list_certifications(
@@ -78,7 +78,7 @@ def list_certifications(
         .all()
     )
 
-    # Pre-fetch uploader emails so the UI can show who uploaded each file.
+
     uploader_ids = {r.uploaded_by for r in rows if r.uploaded_by}
     uploaders: dict[str, str] = {}
     if uploader_ids:
@@ -94,9 +94,9 @@ def list_certifications(
     }
 
 
-# ============================================================
-# UPLOAD
-# ============================================================
+
+
+
 
 @router.post("/upload")
 async def upload_certification(
@@ -133,8 +133,8 @@ async def upload_certification(
     raw = await file.read()
     file_hash = hashlib.sha256(raw).hexdigest()
 
-    # Write to a temp file so we can hand a Path to upload_file_to_s3
-    # (the helper takes Path because the project upload flow uses one).
+
+
     tmp_path: Optional[_Path] = None
     s3_key: Optional[str] = None
     try:
@@ -144,8 +144,8 @@ async def upload_certification(
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp.write(raw)
             tmp_path = _Path(tmp.name)
-        # Give it a friendlier name so the storage key is identifiable.
-        # upload_file_to_s3 uses the input Path's `.name`.
+
+
         renamed = tmp_path.with_name(file.filename or tmp_path.name)
         try:
             tmp_path.rename(renamed)
@@ -182,9 +182,9 @@ async def upload_certification(
     return _serialize(cert, current_user.email)
 
 
-# ============================================================
-# DOWNLOAD
-# ============================================================
+
+
+
 
 @router.get("/{cert_id}/download")
 def download_certification(
@@ -213,8 +213,8 @@ def download_certification(
     if not cert.file_path:
         raise HTTPException(status_code=410, detail="File missing")
 
-    # Legacy local-disk path — keep working for any cert uploaded
-    # before the Supabase migration.
+
+
     if os.path.exists(cert.file_path) and os.path.isfile(cert.file_path):
         return FileResponse(
             cert.file_path,
@@ -222,7 +222,7 @@ def download_certification(
             media_type=cert.mime_type or "application/octet-stream",
         )
 
-    # New Supabase path — file_path holds the storage key.
+
     try:
         url = generate_presigned_download_url(cert.file_path)
     except Exception as e:
@@ -232,10 +232,10 @@ def download_certification(
     return RedirectResponse(url=url, status_code=307)
 
 
-# ============================================================
-# SCAN — detect {{token}} placeholders in a template DOCX so the
-# upload UI can show the user which fields will be auto-filled.
-# ============================================================
+
+
+
+
 
 @router.get("/{cert_id}/scan")
 def scan_certification(
@@ -267,7 +267,7 @@ def scan_certification(
             "supported": [],
         }
 
-    # Two storage paths to support: legacy local disk + new Supabase.
+
     docx_bytes: bytes = b""
     if cert.file_path and os.path.exists(cert.file_path) and os.path.isfile(cert.file_path):
         with open(cert.file_path, "rb") as f:
@@ -293,10 +293,10 @@ def scan_certification(
     return scan
 
 
-# ============================================================
-# PREVIEW SUPPORTED FIELDS — UI can call this on the upload screen
-# (before any cert is saved) to show what tokens are available.
-# ============================================================
+
+
+
+
 
 @router.get("/template-fields")
 def template_fields():
@@ -310,9 +310,9 @@ def template_fields():
     }
 
 
-# ============================================================
-# DELETE
-# ============================================================
+
+
+
 
 @router.delete("/{cert_id}")
 def delete_certification(
@@ -329,7 +329,7 @@ def delete_certification(
     if not cert:
         raise HTTPException(status_code=404, detail="Certification not found")
 
-    # Only the team owner or the uploader can delete
+
     is_owner = team.owner_id == current_user.id
     is_uploader = cert.uploaded_by == current_user.id
     if not (is_owner or is_uploader):
@@ -343,6 +343,6 @@ def delete_certification(
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
     except Exception:
-        pass  # row is gone; orphaned file isn't fatal
+        pass
 
     return {"status": "deleted"}

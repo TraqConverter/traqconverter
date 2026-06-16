@@ -2,10 +2,6 @@
 
 import { useState } from "react"
 
-// ============================================================
-// EDITOR SIDE PANEL — TM · Glossary · Comments · Status
-// ============================================================
-
 export type TmMatch = {
   pct: number
   source: string
@@ -17,8 +13,6 @@ export type TmMatch = {
 
 type Tab = "tm" | "glossary" | "comments" | "status"
 
-// Real TM matches come from the backend — no fake placeholder data here.
-// The panel renders an empty state if `matches` is missing or empty.
 export function EditorSidePanel({
   activeSegment,
   matches = [],
@@ -37,7 +31,7 @@ export function EditorSidePanel({
         boxShadow: "0 1px 2px rgba(30,30,20,0.03)",
       }}
     >
-      {/* TABS */}
+      {}
       <div
         className="grid grid-cols-4 px-3 pt-3 pb-0"
         style={{ borderBottom: "1px solid #f1e8d1" }}
@@ -67,7 +61,7 @@ export function EditorSidePanel({
         />
       </div>
 
-      {/* BODY */}
+      {}
       <div className="p-5 overflow-y-auto flex-1">
         {tab === "tm" && (
           <>

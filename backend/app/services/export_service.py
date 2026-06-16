@@ -19,9 +19,9 @@ from reportlab.lib.styles import getSampleStyleSheet
 logger = logging.getLogger(__name__)
 
 
-# ==============================
-# CERTIFICATION BLOCK
-# ==============================
+
+
+
 
 def build_certification(user_email: str):
     return [
@@ -37,9 +37,9 @@ def build_certification(user_email: str):
     ]
 
 
-# ==============================
-# Try to load the layout-preserving DOCX rebuilt by the worker.
-# ==============================
+
+
+
 
 def _try_layout_docx_from_project(project) -> BytesIO | None:
     """Return the rebuilt DOCX as a BytesIO, prepending the certification
@@ -69,7 +69,7 @@ def _try_layout_docx_from_project(project) -> BytesIO | None:
         return None
 
     out = Document()
-    # Document body first.
+
     for para in rebuilt.paragraphs:
         new_p = out.add_paragraph()
         new_p.style = para.style
@@ -86,7 +86,7 @@ def _try_layout_docx_from_project(project) -> BytesIO | None:
             for ci, cell in enumerate(row.cells):
                 new_table.cell(ri, ci).text = cell.text
 
-    # Certification block appended at the end.
+
     out.add_paragraph("")
     for line in build_certification(getattr(project, "_export_user_email", "")):
         out.add_paragraph(line)
@@ -148,7 +148,7 @@ def _build_layout_pdf_live(segments, project):
         with open(src_path, "wb") as f:
             f.write(r.content)
 
-        # Build (translated, layout) pairs from current segments.
+
         pairs = []
         for s in segments:
             if not s.translated_text or not s.translated_text.strip():
@@ -160,8 +160,8 @@ def _build_layout_pdf_live(segments, project):
         if not pairs:
             return None
 
-        # Resolve a company logo: per-user S3 logo first, then optional
-        # global default from settings.
+
+
         logo_path = None
         user_logo_key = getattr(project, "_export_user_logo_key", None)
         if user_logo_key:
@@ -270,9 +270,9 @@ def _resolve_cert_template(project, tmp_dir):
                     cert.file_name,
                 )
                 return None
-            # File could live on local disk (legacy) or in Supabase
-            # Storage (new). Try local first, then fall back to a
-            # signed URL fetch from object storage.
+
+
+
             import os as _os
             template_bytes: bytes = b""
             if (
@@ -301,22 +301,22 @@ def _resolve_cert_template(project, tmp_dir):
             if not template_bytes:
                 return None
 
-            # Resolve the team for {{team_name}} / {{company_address}}.
+
             from app.models.team import Team
             team = (
                 db.query(Team)
                 .filter(Team.id == project.team_id)
                 .first()
             )
-            # The export pipeline stashes the user email + logo on
-            # the project object as private attrs. Build a fake
-            # "user" with the fields the substitution wants.
+
+
+
             class _U:
                 pass
             fake_user = _U()
             fake_user.email = getattr(project, "_export_user_email", "") or ""
-            fake_user.full_name = ""  # the email username is used as
-                                      # fallback by build_substitution_values
+            fake_user.full_name = ""
+
 
             values = build_substitution_values(
                 user=fake_user,
@@ -447,7 +447,7 @@ def _build_layout_docx_live(segments, project, preview_only: bool = False):
         if not pairs:
             return None
 
-        # Per-user logo first, then optional global fallback.
+
         logo_path = None
         user_logo_key = getattr(project, "_export_user_logo_key", None)
         if user_logo_key:
@@ -489,27 +489,27 @@ def _build_layout_docx_live(segments, project, preview_only: bool = False):
             ),
         }
 
-        # If the project has a cert template selected, fetch + substitute
-        # placeholders so the rebuild renderer can append it instead of
-        # the hardcoded "I hereby certify..." block.
+
+
+
         cert_template_bytes = _resolve_cert_template(project, tmp_dir)
         if cert_template_bytes:
             project_meta["certification_template_bytes"] = cert_template_bytes
 
-        # Resolve the team's company stamp once per export. The
-        # renderer overlays it at the bottom of every translated page
-        # (never on the embedded original pages).
+
+
+
         stamp_path, stamp_alignment = _resolve_team_stamp(project, tmp_dir)
         if stamp_path:
             project_meta["stamp_path"] = stamp_path
             project_meta["stamp_alignment"] = stamp_alignment
 
-        # Layout-aware DOCX export is the DEFAULT. The planner asks
-        # Claude to plan a DOCX skeleton mirroring the original
-        # document's columns / tables / centered titles. On any
-        # exception or empty result we fall through to the linear
-        # renderer so exports never break. To force the linear path
-        # set USE_LAYOUT_PLANNER=0 in the Railway env vars.
+
+
+
+
+
+
         docx_bytes = None
         if os.getenv("USE_LAYOUT_PLANNER", "1") != "0":
             try:
@@ -564,9 +564,9 @@ def generate_docx(segments, user_email, project=None, user=None):
         except Exception:
             pass
 
-        # PRIORITY 1: User-edited HTML from the WYSIWYG Compare pane.
-        # Convert HTML→DOCX via htmldocx so visual edits land in the
-        # exported file. Wrap with source pages + cert + stamp.
+
+
+
         edited_html = getattr(project, "edited_html", None)
         if edited_html and edited_html.strip():
             try:
@@ -592,8 +592,8 @@ def generate_docx(segments, user_email, project=None, user=None):
                     "HTML→DOCX export conversion failed — falling back"
                 )
 
-        # PRIORITY 2: Claude-authored DOCX stored in S3. Wrap with
-        # source pages + cert + stamp.
+
+
         authored_key = getattr(project, "authored_docx_s3_key", None)
         if authored_key:
             try:
@@ -624,25 +624,25 @@ def generate_docx(segments, user_email, project=None, user=None):
                     "Authored DOCX export download failed — falling back"
                 )
 
-        # PRIORITY 3: structured DOCX from segments (legacy path).
+
         structured = _build_layout_docx_live(segments, project)
         if structured is not None:
             return structured
 
-        # Legacy fallback: the worker-written rebuilt DOCX prepended
-        # to the cert block. Only triggers for DOCX source projects
-        # (where the structured renderer can't run from an image-
-        # only source).
+
+
+
+
         layout_doc = _try_layout_docx_from_project(project)
         if layout_doc is not None:
             return layout_doc
 
     doc = Document()
-    # Translated body first…
+
     for seg in segments:
         if seg.translated_text:
             doc.add_paragraph(seg.translated_text)
-    # …then the certification block at the end.
+
     doc.add_paragraph("")
     for line in build_certification(user_email):
         doc.add_paragraph(line)
@@ -669,8 +669,8 @@ def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes | None:
     import tempfile
     from pathlib import Path
 
-    # Locate LibreOffice. Different distros use different binary
-    # names; we try the common ones in order.
+
+
     candidates = ["soffice", "libreoffice"]
     libreoffice_bin = next(
         (shutil.which(c) for c in candidates if shutil.which(c)), None
@@ -689,9 +689,9 @@ def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes | None:
         docx_path.write_bytes(docx_bytes)
 
         try:
-            # `--headless` runs without a UI. We pass an isolated
-            # user-profile dir so concurrent calls don't collide on
-            # the global LibreOffice profile (which would block).
+
+
+
             user_profile = tmp_dir / "lo_profile"
             user_profile.mkdir()
             env_arg = f"-env:UserInstallation=file://{user_profile}"
@@ -753,7 +753,7 @@ def generate_pdf(segments, user_email, project=None, user=None):
     the PDF with ReportLab via the existing _build_layout_pdf_live
     helper, and finally fall back to a flat paragraph stream.
     """
-    # 1) Try the DOCX→LibreOffice→PDF path.
+
     if project is not None:
         try:
             docx_buf = generate_docx(
@@ -769,7 +769,7 @@ def generate_pdf(segments, user_email, project=None, user=None):
             try:
                 docx_bytes = docx_buf.getvalue()
             except AttributeError:
-                # Already raw bytes
+
                 docx_bytes = docx_buf
 
             pdf_bytes = _convert_docx_to_pdf(docx_bytes)
@@ -778,9 +778,9 @@ def generate_pdf(segments, user_email, project=None, user=None):
                 buf.seek(0)
                 return buf
 
-    # 2) Fallback: ReportLab path mirroring the layout plan when we
-    #    can (still tries the structured renderer), otherwise a flat
-    #    paragraph stream.
+
+
+
     if project is not None:
         try:
             project._export_user_email = user_email

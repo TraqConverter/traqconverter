@@ -2,12 +2,6 @@
 
 import { useRouter } from "next/navigation"
 
-// ============================================================
-// Pro paywall — shown on Translation Memory, Glossary and
-// Certifications pages when the backend returns 403 because the
-// caller's plan doesn't include the feature.
-// ============================================================
-
 type Props = {
   feature: "Translation Memory" | "Glossary" | "Certifications"
   description: string

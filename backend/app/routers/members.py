@@ -13,9 +13,9 @@ from app.models.team_member import TeamMember, TeamInvite
 router = APIRouter(prefix="/members", tags=["Members"])
 
 
-# ============================================================
-# Helpers
-# ============================================================
+
+
+
 
 def _get_team_for_user(db: Session, user: User) -> Team:
     """Resolve the team the user owns. Right now every user owns one team."""
@@ -23,7 +23,7 @@ def _get_team_for_user(db: Session, user: User) -> Team:
     if team:
         return team
 
-    # Fallback — user is a *member* of someone else's team.
+
     membership = (
         db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
     )
@@ -59,9 +59,9 @@ def _serialize_invite(invite: TeamInvite) -> dict:
     }
 
 
-# ============================================================
-# Schemas
-# ============================================================
+
+
+
 
 class InvitePayload(BaseModel):
     email: EmailStr
@@ -72,9 +72,9 @@ class RoleUpdate(BaseModel):
     role: str
 
 
-# ============================================================
-# LIST MEMBERS + PENDING INVITES
-# ============================================================
+
+
+
 
 @router.get("")
 def list_members(
@@ -83,7 +83,7 @@ def list_members(
 ):
     team = _get_team_for_user(db, current_user)
 
-    # Owner first
+
     members = []
     owner = db.query(User).filter(User.id == team.owner_id).first()
     if owner:
@@ -97,7 +97,7 @@ def list_members(
         .all()
     )
     for tm, user in rows:
-        # Skip the owner if they were added as a member entry too
+
         if user.id == team.owner_id:
             continue
         members.append(_serialize_member(team, user, tm.role))
@@ -117,14 +117,14 @@ def list_members(
     }
 
 
-# ============================================================
-# INVITE BY EMAIL
-# Behaviour:
-#  - If an active user with this email already exists → add them directly
-#    as a TeamMember and return { added: true }.
-#  - Otherwise → create a PENDING TeamInvite that gets auto-accepted on
-#    register/login of that email (handled in auth.py).
-# ============================================================
+
+
+
+
+
+
+
+
 
 @router.post("/invite")
 def invite_member(
@@ -141,13 +141,13 @@ def invite_member(
     if role not in ("MEMBER", "ADMIN", "REVIEWER", "PM"):
         raise HTTPException(status_code=400, detail="Invalid role")
 
-    # Owner can't invite themselves
+
     if current_user.email and current_user.email.lower() == email:
         raise HTTPException(status_code=400, detail="You're already on this team")
 
     existing_user = db.query(User).filter(User.email == email).first()
     if existing_user:
-        # Already a member?
+
         already = (
             db.query(TeamMember)
             .filter(
@@ -172,7 +172,7 @@ def invite_member(
             "member": _serialize_member(team, existing_user, role),
         }
 
-    # No user yet — create pending invite (or reuse one)
+
     pending = (
         db.query(TeamInvite)
         .filter(
@@ -183,7 +183,7 @@ def invite_member(
         .first()
     )
     if pending:
-        # Just bump the role if changed
+
         pending.role = role
         db.commit()
         db.refresh(pending)
@@ -200,10 +200,10 @@ def invite_member(
     db.commit()
     db.refresh(invite)
 
-    # Fire the invitation email via Resend. Failures don't break the
-    # invite flow (the row is already in the DB and will auto-accept
-    # on register/login), they just surface in the response so the
-    # owner can retry from the UI.
+
+
+
+
     email_delivered = _send_invite_email(team, current_user, email, role)
 
     return {
@@ -232,7 +232,7 @@ def _send_invite_email(
     )
 
     if not is_configured():
-        # Local dev or unconfigured production — be loud about it.
+
         import logging
         logging.getLogger(__name__).info(
             "Invite stored but no email sent (RESEND_API_KEY missing). "
@@ -258,9 +258,9 @@ def _send_invite_email(
     return send_email(to=invitee_email, subject=subject, html=html)
 
 
-# ============================================================
-# CANCEL PENDING INVITE
-# ============================================================
+
+
+
 
 @router.delete("/invites/{invite_id}")
 def cancel_invite(
@@ -285,9 +285,9 @@ def cancel_invite(
     return {"status": "cancelled"}
 
 
-# ============================================================
-# CHANGE ROLE
-# ============================================================
+
+
+
 
 @router.patch("/{user_id}")
 def update_role(
@@ -322,9 +322,9 @@ def update_role(
     return {"member": _serialize_member(team, user, role)} if user else {"status": "ok"}
 
 
-# ============================================================
-# REMOVE MEMBER
-# ============================================================
+
+
+
 
 @router.delete("/{user_id}")
 def remove_member(
@@ -352,10 +352,10 @@ def remove_member(
     return {"status": "removed"}
 
 
-# ============================================================
-# Internal helper used by auth.py during register/login —
-# auto-accepts any pending invites for the user's email.
-# ============================================================
+
+
+
+
 
 def auto_accept_invites(db: Session, user: User) -> int:
     if not user.email:

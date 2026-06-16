@@ -33,8 +33,8 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
-# Prompt revision marker — bump when you change the prompt so the
-# worker log can confirm a code reload happened.
+
+
 _PROMPT_VERSION = "v7-no-logo-hallucination"
 
 
@@ -218,11 +218,11 @@ EXCLUDE only:
 Output ONLY the JSON object. No prose, no markdown fences."""
 
 
-# Patterns that almost always indicate a partial OCR fragment from a
-# stylised header / watermark rather than real readable text. Tuned
-# against the failure mode seen on Italian CIE documents where the
-# CARTA / DI IDENTITÀ / ELETTRONICA header was producing junk like
-# "t", "OD", "( Y CARTA", "Ae : ELETTRONICA".
+
+
+
+
+
 _JUNK_RE = re.compile(
     r"""
     ^                                      # full-string match
@@ -254,32 +254,32 @@ def _looks_like_junk(text: str) -> bool:
     if not s:
         return True
 
-    # 1) Anything 3+ characters made entirely of letters / spaces /
-    #    apostrophes / hyphens is fine (real words and phrases).
+
+
     cleaned = s.replace(" ", "").replace("'", "").replace("-", "")
     if len(s) >= 3 and cleaned.isalpha():
         return False
 
-    # 2) 1-2 character strings — junk UNLESS they're a known short
-    #    form-field value like "F", "M", "1", "A", "B" (all alpha-
-    #    numeric AND uppercase OR digit).
+
+
+
     if len(s) <= 2:
         if s.isalnum() and (s.isdigit() or s.isupper()):
             return False
         return True
 
-    # 3) Strings that start with stray punctuation (e.g. "( Y CARTA",
-    #    ") A", ".X") — almost always partial reads.
+
+
     if s[0] in "()[]{}/\\<>|" and not s.endswith(")"):
-        # Allow normal parens that close, like "(CIE)" or "(GBR)".
+
         return True
 
-    # 4) Two-letter token followed by ": " or "." then more letters —
-    #    classic "Ae : ELETTRONICA" / "X. Y" partial read.
+
+
     if _JUNK_RE.match(s):
         return True
 
-    # 5) Letters < 50% of length and contains stray brackets/punct → junk
+
     letters_or_digits = sum(1 for c in s if c.isalnum())
     if letters_or_digits / max(1, len(s)) < 0.5:
         return True
@@ -309,16 +309,16 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
     import anthropic
     from PIL import Image
 
-    # Read the source dimensions. Claude returns bboxes relative to the
-    # IMAGE IT SAW, so if we upscale before sending we need to remember
-    # the upscaled size and scale bboxes back to the original.
-    #
-    # Claude's hard limit is 5 MB per image. JPEG quality 85 is the
-    # sweet spot — small enough to fit comfortably and still legible
-    # for 8pt text once upscaled. PNG was producing 30 MB+ images on
-    # A4 PDF pages rendered at 200 DPI, which Claude rejected.
+
+
+
+
+
+
+
+
     MAX_LONG_EDGE = 3000
-    MAX_BYTES = 4_500_000  # leave headroom under Claude's 5 MB cap
+    MAX_BYTES = 4_500_000
     try:
         with Image.open(image_path) as pil:
             pil.load()
@@ -326,9 +326,9 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
             mode = pil.mode
 
             long_edge = max(orig_w, orig_h)
-            # Always normalise to ~3000px long edge so Claude gets a
-            # consistent resolution regardless of source DPI. We then
-            # encode as JPEG, which keeps the byte size manageable.
+
+
+
             if long_edge != MAX_LONG_EDGE:
                 scale = MAX_LONG_EDGE / long_edge
                 send_w = max(1, int(orig_w * scale))
@@ -340,9 +340,9 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
                 send_img = pil.convert("RGB")
                 send_w, send_h = orig_w, orig_h
 
-            # Encode as JPEG with progressively lower quality until
-            # we fit under MAX_BYTES. Quality 85 is plenty for OCR;
-            # falling further is a safety net for very dense pages.
+
+
+
             img_bytes = b""
             for quality in (85, 75, 65, 55):
                 buf = io.BytesIO()
@@ -357,8 +357,8 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
                 if len(img_bytes) <= MAX_BYTES:
                     break
 
-            # Last-resort: shrink the image if even quality 55 isn't
-            # small enough.
+
+
             shrink_steps = 0
             while len(img_bytes) > MAX_BYTES and shrink_steps < 3:
                 shrink_steps += 1
@@ -381,7 +381,7 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
         logger.warning("Claude OCR: couldn't open source image: %s", e)
         return None
 
-    src_w, src_h = orig_w, orig_h  # used for bbox rescaling below
+    src_w, src_h = orig_w, orig_h
     b64 = base64.standard_b64encode(img_bytes).decode("ascii")
 
     client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
@@ -389,9 +389,9 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
     try:
         resp = client.messages.create(
             model=settings.ANTHROPIC_VISION_MODEL,
-            # 16K so dense documents (forms, certificates with footer
-            # disclaimers, multi-paragraph notices) fit without
-            # truncating the JSON mid-line.
+
+
+
             max_tokens=16384,
             system=_SYSTEM_PROMPT,
             messages=[
@@ -427,14 +427,14 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
         logger.warning("Claude OCR API call failed: %s", e)
         return None
 
-    # The response should be a single text block containing the JSON.
+
     try:
         raw = ""
         for block in resp.content:
             if getattr(block, "type", None) == "text":
                 raw += block.text
         raw = raw.strip()
-        # Strip accidental markdown fences if any.
+
         if raw.startswith("```"):
             raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw)
         data = json.loads(raw)
@@ -447,8 +447,8 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
     sx = src_w / max(1, declared_w)
     sy = src_h / max(1, declared_h)
 
-    # New v4 shape uses "elements"; fall back to old "lines" for
-    # backwards compatibility if the model returns the older format.
+
+
     raw_elements = data.get("elements") or data.get("lines") or []
 
     out: list[dict[str, Any]] = []
@@ -470,26 +470,26 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
         y1 = max(0.0, min(src_h, y1 * sy))
         if x1 <= x0 + 1 or y1 <= y0 + 1:
             continue
-        # Safety net: drop obvious OCR-junk fragments even though the
-        # prompt forbids them. These come up most often on stylised
-        # header text and watermarks where the model produces things
-        # like "t", "Ae", "OD", "( Y CARTA". Placeholders (kind=
-        # "placeholder") are exempt because they intentionally have
-        # short labels like "[Photo]" / "[QR Code]".
+
+
+
+
+
+
         kind = el.get("kind") or "text"
         if kind == "text" and _looks_like_junk(text):
             dropped_junk += 1
             continue
-        # Per-element font family with a document-level fallback so we
-        # always have a value to render with.
+
+
         doc_family = (data.get("document_font_family") or "").lower()
         family = (el.get("font_family") or doc_family or "").lower()
-        # Normalise common variants the model might emit.
+
         family = family.replace("-", "_").replace(" ", "_")
         if family in ("sansserif", "sans"):
             family = "sans_serif"
         if family not in ("serif", "sans_serif", "monospace"):
-            family = ""  # downstream will pick a default
+            family = ""
         out.append(
             {
                 "text": text,

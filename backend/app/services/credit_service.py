@@ -5,9 +5,9 @@ from datetime import datetime
 from app.models.credit import CreditWallet, CreditTransaction
 
 
-# ============================================================
-# DOMAIN EXCEPTIONS (NO HTTP HERE)
-# ============================================================
+
+
+
 
 class WalletNotFoundError(Exception):
     pass
@@ -21,9 +21,9 @@ class DuplicateTransactionError(Exception):
     pass
 
 
-# ============================================================
-# CREDIT SERVICE (DUAL BUCKET)
-# ============================================================
+
+
+
 
 class CreditService:
 
@@ -56,9 +56,9 @@ class CreditService:
         if not wallet:
             raise WalletNotFoundError("Credit wallet not found")
 
-        # ====================================================
-        # HANDLE SUBSCRIPTION EXPIRY (MOVED HERE)
-        # ====================================================
+
+
+
         now = datetime.utcnow()
 
         if (
@@ -69,9 +69,9 @@ class CreditService:
             wallet.subscription_status = "EXPIRED"
             wallet.subscription_credits = 0
 
-        # ====================================================
-        # IDEMPOTENCY CHECK
-        # ====================================================
+
+
+
         if reference_id:
             existing = (
                 db.query(CreditTransaction)
@@ -82,9 +82,9 @@ class CreditService:
             if existing:
                 raise DuplicateTransactionError("Duplicate credit transaction")
 
-        # ====================================================
-        # CHECK BALANCE
-        # ====================================================
+
+
+
         total_available = wallet.subscription_credits + wallet.purchased_credits
 
         if total_available < amount:
@@ -92,14 +92,14 @@ class CreditService:
 
         remaining = amount
 
-        # ====================================================
-        # DEDUCT SUBSCRIPTION FIRST (ACTIVE *or* TRIAL).
-        # The expiry handler above already zeroes subscription_credits
-        # for expired subs, so any positive balance here is spendable.
-        # Previously this only matched "ACTIVE", which crashed TRIAL
-        # users with "Credit integrity violation" because the deduction
-        # fell through to purchased_credits (which is 0).
-        # ====================================================
+
+
+
+
+
+
+
+
         if wallet.subscription_status in ("ACTIVE", "TRIAL"):
             if wallet.subscription_credits >= remaining:
                 wallet.subscription_credits -= remaining
@@ -108,21 +108,21 @@ class CreditService:
                 remaining -= wallet.subscription_credits
                 wallet.subscription_credits = 0
 
-        # ====================================================
-        # DEDUCT PURCHASED
-        # ====================================================
+
+
+
         if remaining > 0:
             wallet.purchased_credits -= remaining
 
-        # ====================================================
-        # SAFETY CHECK
-        # ====================================================
+
+
+
         if wallet.subscription_credits < 0 or wallet.purchased_credits < 0:
             raise Exception("Credit integrity violation")
 
-        # ====================================================
-        # 🧾 LOG TRANSACTION
-        # ====================================================
+
+
+
         transaction = CreditTransaction(
             wallet_id=wallet.id,
             type="USAGE",
@@ -134,9 +134,9 @@ class CreditService:
 
         return wallet.subscription_credits + wallet.purchased_credits
 
-    # ========================================================
-    # MONTHLY GRANT
-    # ========================================================
+
+
+
 
     @staticmethod
     def grant_subscription_credits(
@@ -165,9 +165,9 @@ class CreditService:
 
         db.add(transaction)
 
-    # ========================================================
-    # ONE-TIME PURCHASE
-    # ========================================================
+
+
+
 
     @staticmethod
     def grant_purchased_credits(
