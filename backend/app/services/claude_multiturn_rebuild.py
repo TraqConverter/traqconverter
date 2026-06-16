@@ -488,7 +488,7 @@ def _extract_form_fields_via_vision(pdf_bytes: bytes) -> list:
     if not api_key:
         return []
 
-    model = os.getenv("REBUILD_FORM_DUMP_MODEL", "claude-opus-4-6")
+    model = os.getenv("REBUILD_FORM_DUMP_MODEL", "claude-opus-4-8")
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     except Exception:
@@ -1221,7 +1221,7 @@ def _author_rebuild_docx_multiturn_core(
     chosen_model = (
         model
         or os.getenv("REBUILD_DEFAULT_MODEL")
-        or "claude-fable-5"
+        or "claude-opus-4-8"
     )
     last_good_docx: bytes = b""
     last_good_inspection: dict = {}
