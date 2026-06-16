@@ -24,7 +24,7 @@ import logging
 import sys
 from pathlib import Path
 
-# Make `app...` imports work when run via `python -m scripts.bootstrap_db`.
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 logging.basicConfig(level=logging.INFO)
@@ -36,9 +36,9 @@ def main() -> int:
 
     from app.database import Base, engine
 
-    # Import every model module so SQLAlchemy registers them on
-    # Base.metadata. Without these imports `create_all` would only
-    # touch the tables already loaded via other imports.
+
+
+
     from app.models import (  # noqa: F401
         user,
         team,
@@ -58,8 +58,8 @@ def main() -> int:
     Base.metadata.create_all(bind=engine)
     logger.info("✅ Base.metadata.create_all complete")
 
-    # translation_jobs has no SQLAlchemy model — it's pure migration
-    # SQL. Create it here so the bootstrap is one-shot.
+
+
     logger.info("Creating translation_jobs queue table …")
     with engine.connect() as conn:
         conn.execute(
@@ -101,9 +101,9 @@ def main() -> int:
         conn.commit()
     logger.info("✅ translation_jobs table ready")
 
-    # Stamp alembic at HEAD so any future migration deltas (added
-    # after this bootstrap) will run cleanly without trying to
-    # re-create what's already here.
+
+
+
     logger.info("Stamping alembic at HEAD …")
     try:
         import alembic.config

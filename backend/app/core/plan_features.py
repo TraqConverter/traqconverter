@@ -14,8 +14,8 @@ PRO    — €29 / 29 credits / month. Everything in Basic plus Translation
 
 PLAN_FEATURES = {
     "TRIAL": {
-        # The trial intentionally blocks delivery so users have to subscribe
-        # before they can ship the translated file.
+
+
         "download_translation": False,
         "team_collaboration": False,
         "terminology_memory": False,
@@ -39,14 +39,14 @@ PLAN_FEATURES = {
 }
 
 
-# What each plan grants on the wallet when the Stripe webhook processes a
-# successful subscription invoice. Looked up by plan name.
+
+
 SUBSCRIPTION_GRANTS = {
     "BASIC": 19,
     "PRO": 29,
 }
 
 
-# Days the registration-time trial lasts.
+
 TRIAL_DAYS = 7
 TRIAL_CREDITS = 1

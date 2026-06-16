@@ -26,7 +26,7 @@ def create_translation_job(
     """
 
     try:
-        # CENTRALIZED CREDIT DEDUCTION
+
         CreditService.deduct_credits(
             db=db,
             team_id=team_id,
@@ -40,9 +40,9 @@ def create_translation_job(
     except InsufficientCreditsError:
         raise HTTPException(status_code=400, detail="Insufficient credits")
 
-    # ============================================================
-    # CREATE JOB
-    # ============================================================
+
+
+
     job = Job(
         team_id=team_id,
         created_by=user_id,
@@ -55,7 +55,7 @@ def create_translation_job(
 
     db.add(job)
 
-    # COMMIT ONCE (important)
+
     db.commit()
     db.refresh(job)
 

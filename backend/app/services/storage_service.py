@@ -12,9 +12,9 @@ import uuid
 
 BASE_UPLOAD_DIR = "uploads"
 
-# Conservative allow-list for filenames after sanitisation.
+
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
-# Windows reserved device names — never allow as a bare filename.
+
 _WIN_RESERVED = {
     "CON", "PRN", "AUX", "NUL",
     *(f"COM{i}" for i in range(1, 10)),
@@ -33,18 +33,18 @@ def safe_filename(filename: str | None, fallback: str = "upload") -> str:
     """
     if not filename:
         return fallback
-    # Drop everything before the last `/` or `\` so attackers can't pass
-    # `../../foo`.
+
+
     base = os.path.basename(filename.replace("\\", "/")).strip()
     if not base or base in (".", ".."):
         return fallback
-    # Replace anything outside the allow list with `_`.
+
     cleaned = _SAFE_NAME_RE.sub("_", base)
-    # Strip leading dots so we don't produce hidden files.
+
     cleaned = cleaned.lstrip(".") or fallback
-    # Cap length (Windows max path component is 255; be conservative).
+
     cleaned = cleaned[:200]
-    # Reject Windows reserved names case-insensitively.
+
     stem = cleaned.split(".", 1)[0].upper()
     if stem in _WIN_RESERVED:
         cleaned = f"_{cleaned}"

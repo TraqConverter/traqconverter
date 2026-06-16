@@ -5,15 +5,6 @@ import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 import { clearToken, setToken, getRemembered } from "@/lib/auth"
 
-// ============================================================
-// SETTINGS · ACCOUNT — espresso look
-// Wired to:
-//   GET    /auth/me                    → load current profile
-//   PATCH  /auth/me                    → update full_name
-//   POST   /auth/change-password       → change password
-//   POST   /auth/delete-account        → delete account (typed confirm)
-// ============================================================
-
 type Me = {
   id: string
   email: string
@@ -43,25 +34,20 @@ export default function AccountSettingsPage() {
   const [flash, setFlash] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
 
-  // Profile form
   const [fullName, setFullName] = useState("")
 
-  // Password form
   const [currentPwd, setCurrentPwd] = useState("")
   const [newPwd, setNewPwd] = useState("")
   const [confirmPwd, setConfirmPwd] = useState("")
   const [showPwd, setShowPwd] = useState(false)
 
-  // Delete account form
   const [showDelete, setShowDelete] = useState(false)
   const [deletePwd, setDeletePwd] = useState("")
   const [deleteConfirm, setDeleteConfirm] = useState("")
 
-  // Logo upload
   const [logoFile, setLogoFile] = useState<File | null>(null)
   const [logoPreview, setLogoPreview] = useState<string | null>(null)
 
-  // Company stamp — team-scoped, overlaid on every translated rebuild page.
   type StampInfo = {
     has_stamp: boolean
     url: string | null
@@ -242,8 +228,7 @@ export default function AccountSettingsPage() {
       setError("Fill in both your current and new password.")
       return
     }
-    // Backend enforces 8+; mirror it here so users get an instant
-    // message instead of a server round-trip.
+
     if (newPwd.length < 8) {
       setError("New password must be at least 8 characters.")
       return
@@ -262,11 +247,7 @@ export default function AccountSettingsPage() {
         current_password: currentPwd,
         new_password: newPwd,
       })
-      // The backend bumps token_version, invalidating EVERY previously
-      // issued JWT. It returns a fresh access_token so the device that
-      // initiated the change stays signed in — we have to persist it
-      // or the next request hits 401 and the interceptor punts to
-      // /login. Preserve the user's "remember me" choice.
+
       const fresh = res.data?.access_token
       if (fresh) setToken(fresh, getRemembered())
       setCurrentPwd("")
@@ -337,14 +318,14 @@ export default function AccountSettingsPage() {
 
   return (
     <div className="space-y-8 pb-16 max-w-3xl">
-      {/* BREADCRUMB */}
+      {}
       <div className="text-[12px] tracking-wide" style={{ color: "#9a9178" }}>
         TraqConverter <span style={{ color: "#cfc6ad" }}>›</span> Account{" "}
         <span style={{ color: "#cfc6ad" }}>›</span>{" "}
         <span style={{ color: "#1f2a2e" }}>Settings</span>
       </div>
 
-      {/* HEADER */}
+      {}
       <div>
         <div
           className="text-[11px] font-semibold tracking-[0.18em] mb-1"
@@ -380,7 +361,7 @@ export default function AccountSettingsPage() {
         </div>
       )}
 
-      {/* PROFILE */}
+      {}
       <section
         className="rounded-2xl p-6"
         style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
@@ -457,7 +438,7 @@ export default function AccountSettingsPage() {
         </div>
       </section>
 
-      {/* COMPANY LOGO */}
+      {}
       <section
         className="rounded-2xl p-6"
         style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
@@ -575,7 +556,7 @@ export default function AccountSettingsPage() {
         </div>
       </section>
 
-      {/* COMPANY STAMP */}
+      {}
       <section
         className="rounded-2xl p-6"
         style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
@@ -679,8 +660,7 @@ export default function AccountSettingsPage() {
               )}
             </div>
 
-            {/* Alignment picker — only shown once a stamp exists, since
-                there's no point picking alignment for nothing. */}
+            {}
             {stamp?.has_stamp && (
               <div className="mt-4">
                 <div
@@ -736,7 +716,7 @@ export default function AccountSettingsPage() {
         </div>
       </section>
 
-      {/* PASSWORD */}
+      {}
       <section
         className="rounded-2xl p-6"
         style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
@@ -811,7 +791,7 @@ export default function AccountSettingsPage() {
         </div>
       </section>
 
-      {/* SESSION */}
+      {}
       <section
         className="rounded-2xl p-6 flex items-center justify-between flex-wrap gap-4"
         style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
@@ -846,7 +826,7 @@ export default function AccountSettingsPage() {
         </button>
       </section>
 
-      {/* DANGER ZONE */}
+      {}
       <section
         className="rounded-2xl p-6"
         style={{
@@ -971,10 +951,6 @@ export default function AccountSettingsPage() {
   )
 }
 
-// ============================================================
-// Subcomponents
-// ============================================================
-
 function SectionHeader({
   eyebrow,
   title,
@@ -1029,7 +1005,6 @@ function AlignRightIcon() {
     </svg>
   )
 }
-
 
 function FieldGroup({
   label,

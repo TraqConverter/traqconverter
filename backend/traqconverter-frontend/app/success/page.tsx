@@ -4,19 +4,8 @@ import { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { api } from "@/lib/api"
 
-// ============================================================
-// Stripe redirects here after a successful checkout. Flow:
-//
-// 1. Read ?session_id=... from the URL (added to success_url server-side).
-// 2. POST /subscription/sync-session — applies the upgrade directly so
-//    we don't have to wait for the Stripe webhook. Idempotent.
-// 3. Poll /billing/wallet a few times in case the user is on a slow
-//    network and the sync hasn't propagated yet.
-// 4. Once tier === BASIC or PRO, route them to /billing.
-// ============================================================
-
 const POLL_INTERVAL_MS = 1500
-const MAX_POLLS = 20 // ~30s total
+const MAX_POLLS = 20
 
 export default function CheckoutSuccessPage() {
   const router = useRouter()
@@ -41,12 +30,7 @@ export default function CheckoutSuccessPage() {
     }
 
     const apply = async () => {
-      // Step 1 — sync the session with the backend (fast path, no webhook).
-      // Two purchase shapes come back:
-      //   - { status: "success", tier: "PRO"|"BASIC" }     (subscription)
-      //   - { status: "success", kind: "credits",          (credit pack)
-      //       credits_added: N, purchased_credits: total }
-      // Either is a success — route to /billing.
+
       if (sessionId) {
         try {
           const res = await api.post(
@@ -61,7 +45,7 @@ export default function CheckoutSuccessPage() {
             return
           }
           if (data.kind === "credits" || data.status === "success") {
-            // Credit pack landed — show a credit-flavoured confirmation.
+
             setTier("CREDITS")
             setTimeout(() => router.push("/billing"), 800)
             return
@@ -71,8 +55,6 @@ export default function CheckoutSuccessPage() {
         }
       }
 
-      // Step 2 — poll the wallet for either tier upgrade OR an
-      // increase in total credits compared to the initial reading.
       let initialCredits: number | null = null
       const poll = async () => {
         try {
@@ -84,8 +66,7 @@ export default function CheckoutSuccessPage() {
             setTimeout(() => router.push("/billing"), 800)
             return
           }
-          // Credit-pack detection: total_credits jumped after we landed
-          // on /success → assume the webhook processed the purchase.
+
           const tot = Number(res.data?.total_credits ?? 0)
           if (initialCredits === null) {
             initialCredits = tot
@@ -96,7 +77,7 @@ export default function CheckoutSuccessPage() {
           }
           setTries((n) => n + 1)
         } catch {
-          /* try again */
+
         }
         if (!cancelled) {
           timer = setTimeout(poll, POLL_INTERVAL_MS)

@@ -1,9 +1,4 @@
-// ============================================================
-// AUTH TOKEN STORAGE
-// - Remember me  → localStorage (survives browser restart)
-// - Otherwise    → sessionStorage (cleared when tab closes)
-// All reads check both stores so existing tokens keep working.
-// ============================================================
+
 
 const KEY = "token"
 const REMEMBER_KEY = "remember"
@@ -11,7 +6,6 @@ const REMEMBER_KEY = "remember"
 export function setToken(token: string, remember: boolean) {
   if (typeof window === "undefined") return
 
-  // Always clear the other store so we don't leave stale tokens
   try {
     localStorage.removeItem(KEY)
     sessionStorage.removeItem(KEY)

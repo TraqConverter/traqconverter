@@ -43,7 +43,7 @@ def _build_s3_client():
         retries={"max_attempts": 3, "mode": "adaptive"},
         connect_timeout=10,
         read_timeout=60,
-        # Supabase requires path-style addressing; AWS supports both.
+
         s3={"addressing_style": "path"},
         signature_version="s3v4",
     )
@@ -63,9 +63,9 @@ def _build_s3_client():
             config=cfg,
         )
 
-    # Fall back to real AWS S3. Credentials come from the default
-    # boto3 chain (env vars → ~/.aws/credentials → IAM role) unless
-    # explicit keys are configured.
+
+
+
     logger.info("Storage backend: AWS S3")
     kwargs = {"config": cfg}
     if settings.AWS_ACCESS_KEY_ID and settings.AWS_SECRET_ACCESS_KEY:
@@ -79,17 +79,17 @@ s3_client = _build_s3_client()
 BUCKET_NAME = settings.S3_BUCKET_NAME
 
 
-# ============================================================
-# Upload File
-# ============================================================
+
+
+
 
 def upload_file_to_s3(file_path: Path) -> str:
     """Upload a file and return the object key."""
     key = f"uploads/{uuid.uuid4()}_{file_path.name}"
 
     try:
-        # Supabase doesn't accept ServerSideEncryption headers, so we
-        # only send them when we're actually talking to real AWS S3.
+
+
         extra_args: dict = {}
         if not getattr(settings, "SUPABASE_S3_ENDPOINT", None):
             extra_args["ServerSideEncryption"] = "AES256"
@@ -107,9 +107,9 @@ def upload_file_to_s3(file_path: Path) -> str:
         raise
 
 
-# ============================================================
-# Download File
-# ============================================================
+
+
+
 
 def download_file_from_s3(key: str, destination: Path):
     """Download an object to local filesystem."""
@@ -121,9 +121,9 @@ def download_file_from_s3(key: str, destination: Path):
         raise
 
 
-# ============================================================
-# Generate Signed Download URL
-# ============================================================
+
+
+
 
 def generate_presigned_download_url(
     key: str,
@@ -145,10 +145,10 @@ def generate_presigned_download_url(
     """
     params: dict = {"Bucket": BUCKET_NAME, "Key": key}
     if inline:
-        # boto3 maps ResponseContentDisposition onto the
-        # ?response-content-disposition= query parameter on the
-        # signed URL. Setting it to "inline" tells the browser to
-        # render the file directly instead of downloading.
+
+
+
+
         params["ResponseContentDisposition"] = "inline"
 
     try:

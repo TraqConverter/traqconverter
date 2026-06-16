@@ -5,10 +5,6 @@ import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 import { setToken } from "@/lib/auth"
 
-// ============================================================
-// REGISTER — ESPRESSO LOOK (matches login)
-// ============================================================
-
 function IconUser() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9a9178" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -80,7 +76,7 @@ export default function RegisterPage() {
       })
       const { access_token } = res.data
       if (!access_token) throw new Error("No token returned")
-      // New accounts default to "remember me"
+
       setToken(access_token, true)
       router.push("/dashboard")
     } catch (err: any) {
@@ -94,7 +90,7 @@ export default function RegisterPage() {
 
   return (
     <div className="min-h-screen flex" style={{ background: "#faf5ee", color: "#1f2a2e" }}>
-      {/* LEFT — BRAND PANEL */}
+      {}
       <div
         className="hidden md:flex flex-col justify-between p-10 flex-1 max-w-[520px]"
         style={{ background: "#f3ecdb", borderRight: "1px solid #e7ddc5" }}
@@ -122,7 +118,7 @@ export default function RegisterPage() {
         </div>
       </div>
 
-      {/* RIGHT — FORM */}
+      {}
       <div className="flex-1 flex items-center justify-center p-6">
         <div
           className="w-full max-w-md rounded-2xl p-8"

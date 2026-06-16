@@ -16,9 +16,9 @@ class CommentCreate(BaseModel):
     text: str
 
 
-# =========================================
-# GET COMMENTS (WITH USER DATA + RESOLVED)
-# =========================================
+
+
+
 @router.get("/{segment_id}/comments")
 def get_comments(
     segment_id: UUID,
@@ -38,7 +38,7 @@ def get_comments(
             "id": c.id,
             "text": c.text,
             "created_at": c.created_at,
-            "resolved": c.resolved,  # 🔥 IMPORTANT FIX
+            "resolved": c.resolved,
             "user": {
                 "id": u.id if u else None,
                 "email": u.email if u else "Unknown",
@@ -48,9 +48,9 @@ def get_comments(
     ]
 
 
-# =========================================
-# CREATE COMMENT
-# =========================================
+
+
+
 @router.post("/{segment_id}/comments")
 def create_comment(
     segment_id: UUID,
@@ -80,7 +80,7 @@ def create_comment(
         "id": comment.id,
         "text": comment.text,
         "created_at": comment.created_at,
-        "resolved": comment.resolved,  # 🔥 IMPORTANT
+        "resolved": comment.resolved,
         "user": {
             "id": current_user.id,
             "email": current_user.email,
@@ -88,9 +88,9 @@ def create_comment(
     }
 
 
-# =========================================
-# RESOLVE COMMENT
-# =========================================
+
+
+
 @router.patch("/{comment_id}/resolve")
 def resolve_comment(
     comment_id: UUID,
@@ -110,11 +110,11 @@ def resolve_comment(
     return {"status": "resolved"}
 
 
-# =========================================
-# EDIT COMMENT — author can change text anytime, even after it's
-# been marked resolved. Path is /segments/comments/{id} so it
-# doesn't collide with the segment update at /segments/{id}.
-# =========================================
+
+
+
+
+
 
 class CommentEdit(BaseModel):
     text: str
@@ -134,7 +134,7 @@ def edit_comment(
     )
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
-    # Only the author can edit their own comment.
+
     if str(comment.user_id) != str(current_user.id):
         raise HTTPException(
             status_code=403, detail="Only the author can edit this comment"
@@ -153,10 +153,10 @@ def edit_comment(
     }
 
 
-# =========================================
-# DELETE COMMENT — author OR project member; deletes work even on
-# resolved comments. Lets reviewers clean up the discussion log.
-# =========================================
+
+
+
+
 
 @router.delete("/comments/{comment_id}")
 def delete_comment(
@@ -171,8 +171,8 @@ def delete_comment(
     )
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
-    # Only the author can delete their own comment for now. (Owners
-    # can take this further later if it becomes a need.)
+
+
     if str(comment.user_id) != str(current_user.id):
         raise HTTPException(
             status_code=403,
@@ -183,10 +183,10 @@ def delete_comment(
     return {"status": "deleted"}
 
 
-# =========================================
-# REOPEN COMMENT — flip resolved back to false. Lets reviewers
-# revisit a discussion they prematurely marked resolved.
-# =========================================
+
+
+
+
 
 @router.patch("/comments/{comment_id}/reopen")
 def reopen_comment(

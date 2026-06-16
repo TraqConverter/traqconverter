@@ -36,9 +36,9 @@ router = APIRouter(
 )
 
 
-# =========================================
-# GET WALLET
-# =========================================
+
+
+
 
 @router.get("/wallet")
 def get_wallet(
@@ -46,10 +46,10 @@ def get_wallet(
     current_user: User = Depends(get_current_user)
 ):
 
-    # Owner-or-member team lookup (Audit P1 #5).
+
     team = _resolve_user_team(db, current_user)
 
-    # Find wallet for the team
+
     wallet = (
         db.query(CreditWallet)
         .filter(CreditWallet.team_id == team.id)
@@ -77,19 +77,19 @@ def get_wallet(
         "plan_type": wallet.plan_type,
         "subscription_status": wallet.subscription_status,
         "subscription_expires_at": wallet.subscription_expires_at,
-        # Resolved tier the rest of the app should gate on. TRIAL/BASIC/PRO/EXPIRED.
+
         "tier": tier,
-        # Per-feature flags so the frontend can show or hide nav entries / CTAs
-        # without re-implementing the rules.
+
+
         "features": features,
-        # When on TRIAL, how many whole days are left before the wallet expires.
+
         "trial_days_left": trial_days_left,
     }
 
 
-# =========================================
-# CREDIT TRANSACTION HISTORY
-# =========================================
+
+
+
 
 @router.get("/transactions")
 def get_transactions(
@@ -97,7 +97,7 @@ def get_transactions(
     current_user: User = Depends(get_current_user)
 ):
 
-    # Owner-or-member team lookup (Audit P1 #5).
+
     team = _resolve_user_team(db, current_user)
 
     transactions = (

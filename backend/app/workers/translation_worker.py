@@ -18,18 +18,18 @@ from app.services.pdf_merge_service import PdfMergeService
 logger = logging.getLogger(__name__)
 
 
-# ============================================================
-# PUBLIC ENTRYPOINT (DEV MODE)
-# ============================================================
+
+
+
 
 def enqueue_translation_job(project_id: uuid.UUID):
     logger.info(f"Queue received translation job for project {project_id}")
     process_translation_job(project_id)
 
 
-# ============================================================
-# CORE WORKER
-# ============================================================
+
+
+
 
 def process_translation_job(project_id: uuid.UUID) -> None:
 
@@ -50,9 +50,9 @@ def process_translation_job(project_id: uuid.UUID) -> None:
             logger.warning("Worker could not find project")
             return
 
-        # ----------------------------------------------------
-        # Retry / Status Logic
-        # ----------------------------------------------------
+
+
+
         if project.status == ProjectStatus.COMPLETED:
             logger.info("Worker detected project already completed")
             return
@@ -63,7 +63,7 @@ def process_translation_job(project_id: uuid.UUID) -> None:
             db.commit()
             return
 
-        # Increment retry
+
         project.retry_count += 1
         project.last_heartbeat = datetime.utcnow()
         project.status = ProjectStatus.PROCESSING
@@ -73,17 +73,17 @@ def process_translation_job(project_id: uuid.UUID) -> None:
 
         logger.info(f"Worker attempt #{project.retry_count}")
 
-        # ----------------------------------------------------
-        # Generate translated output
-        # ----------------------------------------------------
+
+
+
         project.last_heartbeat = datetime.utcnow()
         db.commit()
 
         output_path = _generate_translation_output(project)
 
-        # ----------------------------------------------------
-        # Certification Injection
-        # ----------------------------------------------------
+
+
+
         if project.add_certification:
             logger.info("Running certification injection")
 
@@ -92,9 +92,9 @@ def process_translation_job(project_id: uuid.UUID) -> None:
 
             _inject_certification(project, output_path)
 
-        # ----------------------------------------------------
-        # Finalize
-        # ----------------------------------------------------
+
+
+
         project.output_file = str(output_path)
         project.status = ProjectStatus.COMPLETED
         project.last_heartbeat = datetime.utcnow()
@@ -132,9 +132,9 @@ def process_translation_job(project_id: uuid.UUID) -> None:
         db.close()
 
 
-# ============================================================
-# TRANSLATION GENERATION (SIMULATION)
-# ============================================================
+
+
+
 
 def _generate_translation_output(project: TranslationProject) -> Path:
 
@@ -153,9 +153,9 @@ def _generate_translation_output(project: TranslationProject) -> Path:
     return output_path
 
 
-# ============================================================
-# CERTIFICATION INJECTION
-# ============================================================
+
+
+
 
 def _inject_certification(project: TranslationProject, output_path: Path) -> None:
 

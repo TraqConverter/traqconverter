@@ -80,7 +80,7 @@ def send_email(
     if text_fallback:
         payload["text"] = text_fallback
     else:
-        # Cheap text fallback: strip tags + collapse whitespace.
+
         import re as _re
         no_tags = _re.sub(r"<[^>]+>", " ", html)
         payload["text"] = _re.sub(r"\s+", " ", no_tags).strip()
@@ -113,9 +113,9 @@ def send_email(
     return True
 
 
-# ============================================================
-# Templates
-# ============================================================
+
+
+
 
 
 def render_invite_email(

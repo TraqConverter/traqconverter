@@ -4,16 +4,6 @@ import { useEffect, useMemo, useState } from "react"
 import { api } from "@/lib/api"
 import ProPaywall from "@/components/ProPaywall"
 
-// ============================================================
-// TRANSLATION MEMORY — ESPRESSO LOOK
-// Wired to real backend:
-//   GET /tm/summary  → { total_units, language_pairs[], source_words_indexed }
-//   GET /tm/?source=&target=&q=&limit=  → [ { id, source_language, target_language, source_text, translated_text } ]
-//
-// The TranslationMemory table doesn't track contributors, dates or use counts,
-// so this page only renders fields that actually exist. No placeholder columns.
-// ============================================================
-
 type TmEntry = {
   id: string
   source_language: string
@@ -45,7 +35,6 @@ function formatK(n: number) {
   return String(n)
 }
 
-// "English" / "en" / "en-GB" → tidy chip text
 function toLangCode(raw?: string) {
   if (!raw) return "—"
   const s = raw.trim()
@@ -82,13 +71,11 @@ export default function TranslationMemoryPage() {
     fetchAll()
   }, [])
 
-  // Debounce search
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(query), 250)
     return () => clearTimeout(t)
   }, [query])
 
-  // Re-fetch when filters change
   useEffect(() => {
     if (loading) return
     fetchEntries(debouncedQuery, activePair)
@@ -106,7 +93,7 @@ export default function TranslationMemoryPage() {
       setEntries(listRes.data || [])
     } catch (err: any) {
       console.error("TM ERROR:", err)
-      // 403 = plan doesn't include this feature → render the paywall.
+
       if (err?.response?.status === 403) {
         setGated(true)
       } else {
@@ -163,14 +150,14 @@ export default function TranslationMemoryPage() {
 
   return (
     <div className="space-y-6 pb-16">
-      {/* BREADCRUMB */}
+      {}
       <div className="text-[12px] tracking-wide" style={{ color: "#9a9178" }}>
         TraqConverter <span style={{ color: "#cfc6ad" }}>›</span> Assets{" "}
         <span style={{ color: "#cfc6ad" }}>›</span>{" "}
         <span style={{ color: "#1f2a2e" }}>Translation Memory</span>
       </div>
 
-      {/* HEADER */}
+      {}
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <div
@@ -233,7 +220,7 @@ export default function TranslationMemoryPage() {
         </div>
       )}
 
-      {/* KPI CARDS — only fields that actually exist on the model */}
+      {}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <KpiCard
           label="TRANSLATION UNITS"
@@ -272,7 +259,7 @@ export default function TranslationMemoryPage() {
         />
       </div>
 
-      {/* LANGUAGE PAIR FILTER PILLS */}
+      {}
       {pairs.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap">
           <PairPill
@@ -298,7 +285,7 @@ export default function TranslationMemoryPage() {
         </div>
       )}
 
-      {/* TABLE */}
+      {}
       <div
         className="rounded-2xl overflow-hidden"
         style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
@@ -402,10 +389,6 @@ export default function TranslationMemoryPage() {
     </div>
   )
 }
-
-// ============================================================
-// SUBCOMPONENTS
-// ============================================================
 
 function KpiCard({
   label,

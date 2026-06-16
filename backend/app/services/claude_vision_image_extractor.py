@@ -36,9 +36,9 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-# Suggested DOCX widths per kind (used by the prompt + as a hint
-# in the returned list so the rebuild loop can size the picture
-# consistently).
+
+
+
 _SUGGESTED_CM = {
     "crest": 2.5,
     "coat_of_arms": 2.5,
@@ -53,9 +53,9 @@ _SUGGESTED_CM = {
     "barcode": 4.0,
 }
 
-# Render DPI for the page rasterization that we crop from. 300 is
-# the sweet spot — sharp enough that 200x200 px crops still look
-# good in Word, small enough that bytes don't explode.
+
+
+
 _RENDER_DPI = 300
 
 
@@ -63,7 +63,7 @@ def _render_pdf_pages_at_dpi(pdf_bytes: bytes, dpi: int = _RENDER_DPI) -> list:
     """Return a list of PIL Image objects, one per page, at the
     requested DPI. Empty list on failure."""
     try:
-        import fitz  # PyMuPDF
+        import fitz
         from PIL import Image
     except Exception as e:
         logger.warning("Vision image extractor: missing dep %s", e)
@@ -161,20 +161,20 @@ def _ask_vision_for_regions(pages, model: str) -> list:
     if not api_key:
         return []
 
-    # Build content blocks: one image per page + the prompt last.
+
     valid_pages = [(i + 1, p) for i, p in enumerate(pages) if p is not None]
     if not valid_pages:
         return []
 
-    # Compute the effective image dimensions that the vision call
-    # actually sees (after our downscale). Coordinates Claude
-    # returns are in THIS coordinate space, not the original.
+
+
+
     sent_dims = {}
     content = []
     for page_num, img in valid_pages:
         from PIL import Image
         w0, h0 = img.size
-        # Mirror the downscale logic from _b64_encode_for_vision
+
         max_dim = 1568
         if max(w0, h0) > max_dim:
             scale = max_dim / max(w0, h0)
@@ -220,8 +220,8 @@ def _ask_vision_for_regions(pages, model: str) -> list:
         return []
 
     regions = data.get("regions", []) if isinstance(data, dict) else []
-    # Attach the sent_w/sent_h so the caller can rescale to the
-    # original render coordinates.
+
+
     for r in regions:
         if not isinstance(r, dict):
             continue
@@ -257,7 +257,7 @@ def _crop_and_save(pages, regions, dest_dir: Path) -> list:
 
         if not kind_raw or w <= 0 or h <= 0:
             continue
-        # Normalize unknown kinds.
+
         kind = kind_raw
         if kind in ("coat_of_arms", "national_emblem", "republic_crest"):
             kind = "crest"
@@ -267,8 +267,8 @@ def _crop_and_save(pages, regions, dest_dir: Path) -> list:
         page_img = pages[page_num - 1]
         orig_w, orig_h = page_img.size
 
-        # Rescale coords from the (possibly downscaled) image we
-        # sent to Vision back to the full-res render.
+
+
         sent_w = r.get("_sent_w") or orig_w
         sent_h = r.get("_sent_h") or orig_h
         sx = orig_w / sent_w
@@ -278,8 +278,8 @@ def _crop_and_save(pages, regions, dest_dir: Path) -> list:
         rw = max(1, int(w * sx))
         rh = max(1, int(h * sy))
 
-        # Pad a tiny margin so we don't cut the very edges of the
-        # crest / signature. ~1% of the page width.
+
+
         pad = max(2, int(orig_w * 0.01))
         rx = max(0, rx - pad)
         ry = max(0, ry - pad)

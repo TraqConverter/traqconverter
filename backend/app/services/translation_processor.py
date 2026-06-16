@@ -7,9 +7,9 @@ import asyncio
 
 import pytesseract
 
-# ============================================================
-# CROSS-PLATFORM TESSERACT CONFIG (FIXED)
-# ============================================================
+
+
+
 TESSERACT_PATH = os.getenv("TESSERACT_CMD")
 
 if TESSERACT_PATH:
@@ -22,7 +22,7 @@ else:
 
     detected = system_shutil.which("tesseract")
 
-    # Windows fallback
+
     if not detected and os.name == "nt":
         default_windows_path = (
             r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -73,9 +73,9 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 20
 
 
-# ============================================================
-# SAFE PROGRESS BROADCAST
-# ============================================================
+
+
+
 def safe_broadcast(project_id: str, progress: int, status: str):
     try:
         try:
@@ -103,15 +103,15 @@ def safe_broadcast(project_id: str, progress: int, status: str):
         logger.warning(f"WebSocket broadcast failed: {e}")
 
 
-# ============================================================
-# TEXT EXTRACTION
-# ============================================================
+
+
+
 def extract_file_text(file_path: str):
     ext = os.path.splitext(file_path)[1].lower()
 
-    # ========================================================
-    # PDF
-    # ========================================================
+
+
+
     if ext == ".pdf":
         text = ""
         doc = fitz.open(file_path)
@@ -121,7 +121,7 @@ def extract_file_text(file_path: str):
 
         doc.close()
 
-        # OCR fallback
+
         if not text.strip():
             logger.warning("PDF empty → OCR fallback")
 
@@ -146,9 +146,9 @@ def extract_file_text(file_path: str):
 
         return text
 
-    # ========================================================
-    # DOCX
-    # ========================================================
+
+
+
     elif ext == ".docx":
         doc = Document(file_path)
 
@@ -156,21 +156,21 @@ def extract_file_text(file_path: str):
             [p.text for p in doc.paragraphs if p.text.strip()]
         )
 
-    # ========================================================
-    # TXT
-    # ========================================================
+
+
+
     elif ext == ".txt":
         with open(file_path, "r", encoding="utf-8") as f:
             return f.read()
 
-    # ========================================================
-    # IMAGE
-    # ========================================================
+
+
+
     elif ext in [".jpg", ".jpeg", ".png"]:
         try:
             image = Image.open(file_path)
 
-            # Normalize image for OCR
+
             image = image.convert("RGB")
 
             return pytesseract.image_to_string(image)
@@ -183,9 +183,9 @@ def extract_file_text(file_path: str):
         raise Exception(f"Unsupported file type: {ext}")
 
 
-# ============================================================
-# MAIN WORKER
-# ============================================================
+
+
+
 def process_translation_job(project_id: str):
     logger.info(f"Worker starting processing for {project_id}")
 
@@ -203,9 +203,9 @@ def process_translation_job(project_id: str):
         if not project:
             raise Exception("Project not found")
 
-        # ====================================================
-        # START PROCESSING
-        # ====================================================
+
+
+
         project.status = ProjectStatus.PROCESSING
         project.progress_percent = 0
         project.translated_segments = 0
@@ -215,9 +215,9 @@ def process_translation_job(project_id: str):
 
         safe_broadcast(project_id, 0, "PROCESSING")
 
-        # ====================================================
-        # TEMP FILES
-        # ====================================================
+
+
+
         temp_dir = Path(tempfile.mkdtemp())
 
         input_file = temp_dir / project.file_name
@@ -227,9 +227,9 @@ def process_translation_job(project_id: str):
             input_file
         )
 
-        # ====================================================
-        # EXTRACT — block/paragraph aware so we can rebuild later.
-        # ====================================================
+
+
+
         source_kind, extracted = extract_segments(str(input_file))
 
         if not extracted:
@@ -238,18 +238,18 @@ def process_translation_job(project_id: str):
         project.source_kind = source_kind
         db.commit()
 
-        # ====================================================
-        # RESET SEGMENTS
-        # ====================================================
+
+
+
         db.query(TranslationSegment).filter(
             TranslationSegment.project_id == project_uuid
         ).delete()
 
         db.commit()
 
-        # ====================================================
-        # CREATE SEGMENTS — preserve layout metadata.
-        # ====================================================
+
+
+
         segments = []
 
         for i, item in enumerate(extracted):
@@ -272,20 +272,20 @@ def process_translation_job(project_id: str):
 
         logger.info(f"{len(segments)} segments created (kind={source_kind})")
 
-        # ====================================================
-        # TRANSLATE
-        # ====================================================
+
+
+
         source_lang = project.source_language or "English"
         target_lang = project.target_language or "Spanish"
 
-        # ====================================================
-        # TRANSLATION MEMORY FAST PATH
-        # ----------------------------------------------------
-        # Only runs when project.use_tm is True (toggle on the new-
-        # project page). When the user opts out we don't bulk-load
-        # entries and we don't apply hits — every segment goes to the
-        # LLM. We also skip storing fresh TM entries below.
-        # ====================================================
+
+
+
+
+
+
+
+
         use_tm = bool(getattr(project, "use_tm", True))
         apply_glossary = bool(getattr(project, "apply_glossary", True))
         logger.info(
@@ -338,8 +338,8 @@ def process_translation_job(project_id: str):
                 miss_texts.append(seg.source_text)
 
         if tm_hit_count:
-            # Commit TM hits immediately so progress is durable even if
-            # a later LLM batch crashes.
+
+
             db.commit()
             progress = int(
                 (
@@ -359,9 +359,9 @@ def process_translation_job(project_id: str):
             )
             safe_broadcast(project_id, progress, "PROCESSING")
 
-        # `texts` is now the list of MISS texts we still need the LLM
-        # for. We also keep `miss_indices` so we can route translations
-        # back to the correct segment when results come back.
+
+
+
         texts = miss_texts
 
         def _translate_resilient(batch_texts, depth=0):
@@ -427,22 +427,22 @@ def process_translation_job(project_id: str):
             batch = texts[i:i + BATCH_SIZE]
             translations = _translate_resilient(batch)
 
-            # _translate_resilient always returns a list of the right
-            # length (empty strings for failed segments).
+
+
             if len(translations) != len(batch):
-                # Defensive shim — should never trip given the recursive
-                # fallback above, but pad/truncate just in case.
+
+
                 translations = (translations + [""] * len(batch))[: len(batch)]
 
-            # =================================================
-            # STORE
-            # =================================================
-            # ============================================
-            # PHASE 1 — write segment translations and COMMIT.
-            # Map LLM batch results back to the ORIGINAL segment indices
-            # via miss_indices (texts/batch only contains TM-miss texts,
-            # so segments[i + j] would point at the wrong segment).
-            # ============================================
+
+
+
+
+
+
+
+
+
             tm_candidates: list[tuple[str, str]] = []
             for j, translated in enumerate(translations):
                 seg_idx = miss_indices[i + j]
@@ -451,18 +451,18 @@ def process_translation_job(project_id: str):
                 if not clean:
                     continue
                 seg.translated_text = clean
-                seg.tm_pct = 0  # not a TM hit
+                seg.tm_pct = 0
                 project.translated_segments += 1
                 tm_candidates.append((seg.source_text, clean))
 
             db.commit()
 
-            # ============================================
-            # PHASE 2 — best-effort Translation Memory.
-            # Skipped entirely when project.use_tm is False so the user's
-            # opt-out is respected (translations made now won't seed
-            # future projects' fast path).
-            # ============================================
+
+
+
+
+
+
             if use_tm:
                 for src_text, tgt_text in tm_candidates:
                     try:
@@ -485,9 +485,9 @@ def process_translation_job(project_id: str):
                         except Exception:
                             pass
 
-            # =================================================
-            # PROGRESS
-            # =================================================
+
+
+
             progress = int(
                 (
                     project.translated_segments /
@@ -506,22 +506,22 @@ def process_translation_job(project_id: str):
                 "PROCESSING"
             )
 
-        # ====================================================
-        # COMPLETE
-        # ----------------------------------------------------
-        # `status` records that the worker finished — pipeline-wise
-        # we're done.  But `review_status` is the human-facing axis:
-        # a fresh translation must sit in IN_REVIEW until a person
-        # signs off (manually via /review-status or /certify).  This
-        # is what powers the "Awaiting review" tab on the dashboard
-        # and Projects pages; previously we left review_status at
-        # the DRAFT default, so projects skipped review entirely and
-        # showed up as Delivered immediately.
-        # ====================================================
+
+
+
+
+
+
+
+
+
+
+
+
         project.progress_percent = 100
         project.status = ProjectStatus.COMPLETED
-        # Don't downgrade if someone has already certified it (e.g.
-        # a manual flip while the job was running).
+
+
         if (project.review_status or "DRAFT") == "DRAFT":
             project.review_status = "IN_REVIEW"
 
@@ -533,18 +533,18 @@ def process_translation_job(project_id: str):
             "IN_REVIEW",
         )
 
-        # ====================================================
-        # OUTPUT FILE — rebuild a layout-preserving copy with the
-        # translated text in place of the source.
-        # ====================================================
+
+
+
+
         output_file = temp_dir / f"translated_{project.file_name}"
 
         try:
             pairs = []
             for s in segments:
-                # Carry source_text into layout so rebuilders that produce
-                # a side-by-side view (e.g. the IMAGE rebuild for ID/passport
-                # translations) can render both columns.
+
+
+
                 meta = dict(s.layout_meta or {})
                 meta["source_text"] = s.source_text
                 pairs.append((s.translated_text or s.source_text, meta))
@@ -557,8 +557,8 @@ def process_translation_job(project_id: str):
             )
             output_to_upload = Path(written_path)
         except Exception as e:
-            # Fall back to the original file so the user still gets a
-            # download — but log loudly so this gets fixed.
+
+
             logger.exception(f"Layout-preserving rebuild failed: {e}")
             shutil.copyfile(input_file, output_file)
             output_to_upload = output_file
@@ -569,19 +569,19 @@ def process_translation_job(project_id: str):
 
         db.commit()
 
-        # ====================================================
-        # CLAUDE-AUTHORED REBUILD (premium path)
-        # ----------------------------------------------------
-        # Gated on project.model == "claude-authored", which is set
-        # by the Rebuild engine toggle on the new-translation page.
-        # When active, we hand the original PDF straight to Claude
-        # Sonnet (same workflow as uploading into Claude.ai) and
-        # store the result in `authored_docx_s3_key`. Preview +
-        # export endpoints prefer it over the segment-driven build.
-        #
-        # Failures here are non-fatal — the segment-driven output is
-        # still available as a fallback.
-        # ====================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
         wants_authored = (
             source_kind == "PDF"
             and (getattr(project, "model", "") or "") == "claude-authored"
@@ -621,9 +621,9 @@ def process_translation_job(project_id: str):
                     project_id,
                 )
 
-        # ====================================================
-        # CERTIFICATION
-        # ====================================================
+
+
+
         try:
             cert_file = (
                 temp_dir /
@@ -671,7 +671,7 @@ def process_translation_job(project_id: str):
                     "Failed marking project as FAILED"
                 )
 
-        # Re-raise so SQS worker knows this failed
+
         raise
 
     finally:

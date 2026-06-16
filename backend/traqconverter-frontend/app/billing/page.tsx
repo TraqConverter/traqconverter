@@ -3,24 +3,11 @@
 import { useEffect, useMemo, useState } from "react"
 import { api } from "@/lib/api"
 
-// Backend serialises created_at as naive UTC (no timezone marker).
-// Without this guard the browser reads it as LOCAL time and dates
-// can shift by a day around midnight.
 function formatDate(iso?: string | null) {
   if (!iso) return "—"
   const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(iso)
   return new Date(hasTz ? iso : iso + "Z").toLocaleDateString()
 }
-
-// ============================================================
-// BILLING — ESPRESSO LOOK
-// Wired to:
-//   GET  /billing/wallet
-//   GET  /billing/transactions
-//   POST /subscription/create-checkout-session?plan=BASIC|PRO
-//   POST /subscription/purchase-credits?amount=N
-// Webhook handler is at backend POST /stripe/webhook
-// ============================================================
 
 type Wallet = {
   total_credits: number
@@ -29,8 +16,7 @@ type Wallet = {
   plan_type: string
   subscription_status: string
   subscription_expires_at: string | null
-  // Resolved tier the backend tells us to gate on:
-  //   "TRIAL" | "BASIC" | "PRO" | "EXPIRED"
+
   tier?: string
   trial_days_left?: number | null
   features?: Record<string, boolean>
@@ -201,14 +187,14 @@ export default function BillingPage() {
 
   return (
     <div className="space-y-8 pb-16">
-      {/* BREADCRUMB */}
+      {}
       <div className="text-[12px] tracking-wide" style={{ color: "#9a9178" }}>
         TraqConverter <span style={{ color: "#cfc6ad" }}>›</span> Account{" "}
         <span style={{ color: "#cfc6ad" }}>›</span>{" "}
         <span style={{ color: "#1f2a2e" }}>Billing</span>
       </div>
 
-      {/* HEADER */}
+      {}
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-[28px] font-semibold tracking-tight" style={{ color: "#1f2a2e" }}>
@@ -226,7 +212,7 @@ export default function BillingPage() {
         </div>
       </div>
 
-      {/* TRIAL / EXPIRED BANNER */}
+      {}
       {onTrial && (
         <div
           className="rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4"
@@ -321,7 +307,7 @@ export default function BillingPage() {
         </div>
       )}
 
-      {/* WALLET KPI CARDS */}
+      {}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <KpiCard
           label="Total credits"
@@ -345,7 +331,7 @@ export default function BillingPage() {
         />
       </div>
 
-      {/* PLAN TIERS */}
+      {}
       <section>
         <SectionHeader
           eyebrow="SUBSCRIPTION"
@@ -354,8 +340,7 @@ export default function BillingPage() {
         />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {PLANS.map((p) => {
-            // The card is "current" only when the resolved tier matches it.
-            // TRIAL/EXPIRED never show CURRENT — they see Subscribe CTAs.
+
             const isCurrent = tier === p.code
             return (
               <PlanCard
@@ -371,7 +356,7 @@ export default function BillingPage() {
         </div>
       </section>
 
-      {/* CREDIT PACKS */}
+      {}
       <section>
         <SectionHeader
           eyebrow="ONE-TIME"
@@ -394,7 +379,7 @@ export default function BillingPage() {
         </div>
       </section>
 
-      {/* TRANSACTIONS */}
+      {}
       <section>
         <SectionHeader
           eyebrow="HISTORY"
@@ -462,10 +447,6 @@ export default function BillingPage() {
     </div>
   )
 }
-
-// ============================================================
-// SUBCOMPONENTS
-// ============================================================
 
 function StatusPill({ active, label }: { active: boolean; label: string }) {
   return (

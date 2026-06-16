@@ -5,9 +5,9 @@ from fastapi import HTTPException
 import os
 
 
-# ---------------------------------------------------
-# PDF
-# ---------------------------------------------------
+
+
+
 def count_pdf_pages(file_path: str) -> int:
     try:
         reader = PdfReader(file_path)
@@ -37,9 +37,9 @@ def count_pdf_pages(file_path: str) -> int:
         )
 
 
-# ---------------------------------------------------
-# DOCX (Word count approximation)
-# ---------------------------------------------------
+
+
+
 def count_docx_pages(file_path: str) -> int:
     try:
         doc = Document(file_path)
@@ -59,9 +59,9 @@ def count_docx_pages(file_path: str) -> int:
         )
 
 
-# ---------------------------------------------------
-# Image
-# ---------------------------------------------------
+
+
+
 def count_image_pages(file_path: str) -> int:
     try:
         with Image.open(file_path) as img:
@@ -74,9 +74,9 @@ def count_image_pages(file_path: str) -> int:
         )
 
 
-# ---------------------------------------------------
-# Dispatcher
-# ---------------------------------------------------
+
+
+
 def get_page_count(file_path: str) -> int:
     ext = os.path.splitext(file_path)[1].lower()
 

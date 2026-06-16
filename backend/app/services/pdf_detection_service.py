@@ -16,5 +16,5 @@ def pdf_has_text(pdf_path: str) -> bool:
         return False
 
     except Exception:
-        # If parsing fails assume scanned
+
         return False

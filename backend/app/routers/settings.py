@@ -45,11 +45,11 @@ async def upload_certification(
         )
 
 
-# ============================================================
-# Company logo upload — appears at the top of the certification page
-# on every exported translation. Each user has their own logo. PNG or
-# JPG, max ~2MB.
-# ============================================================
+
+
+
+
+
 @router.post("/upload-logo")
 async def upload_logo(
     file: UploadFile = File(...),
@@ -66,8 +66,8 @@ async def upload_logo(
             status_code=400, detail="Logo must be a PNG or JPG file."
         )
 
-    # Save to a temp file then push to S3 using the same path as
-    # uploaded project files. ~2MB cap so users can't push huge images.
+
+
     data = await file.read()
     if len(data) > 2 * 1024 * 1024:
         raise HTTPException(
@@ -107,12 +107,12 @@ def delete_logo(
     return {"message": "Logo removed"}
 
 
-# ============================================================
-# COMPANY STAMP — team-scoped image overlaid at the bottom of every
-# translated rebuild page (NOT on the embedded original pages).
-# Each team picks alignment (left / center / right) to match their
-# letterhead style.
-# ============================================================
+
+
+
+
+
+
 
 def _resolve_team(db: Session, user: User):
     """Look up the team this user owns or is a member of."""

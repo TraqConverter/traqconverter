@@ -4,18 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { api } from "@/lib/api"
 import ProPaywall from "@/components/ProPaywall"
 
-// ============================================================
-// CERTIFICATIONS LIBRARY — ESPRESSO LOOK
-// Wired to real backend:
-//   GET    /certifications                 → { team_id, items[] }
-//   POST   /certifications/upload          (multipart: file, kind, notes)
-//   GET    /certifications/{id}/download   (auth-scoped binary stream)
-//   DELETE /certifications/{id}
-//
-// Each upload's bytes are SHA-256 hashed server-side and the digest is
-// surfaced here as the "tamper-evident hash" the empty-state copy mentions.
-// ============================================================
-
 type Cert = {
   id: string
   file_name: string
@@ -70,9 +58,7 @@ function formatBytes(n: number) {
 
 function relativeTime(iso?: string | null) {
   if (!iso) return "—"
-  // Backend returns naive UTC ISO strings without timezone markers.
-  // Without this, the browser parses them as local time and entries
-  // appear hours older than they actually are.
+
   const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(iso)
   const safe = hasTz ? iso : iso + "Z"
   const t = new Date(safe).getTime()
@@ -98,7 +84,6 @@ export default function CertificationsPage() {
   const [kindFilter, setKindFilter] = useState<KindFilter>("all")
   const [query, setQuery] = useState("")
 
-  // Upload-form state
   const [showUpload, setShowUpload] = useState(false)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [uploadKind, setUploadKind] = useState<string>("AFFIDAVIT")
@@ -260,14 +245,14 @@ export default function CertificationsPage() {
 
   return (
     <div className="space-y-6 pb-16">
-      {/* BREADCRUMB */}
+      {}
       <div className="text-[12px] tracking-wide" style={{ color: "#9a9178" }}>
         TraqConverter <span style={{ color: "#cfc6ad" }}>›</span> Assets{" "}
         <span style={{ color: "#cfc6ad" }}>›</span>{" "}
         <span style={{ color: "#1f2a2e" }}>Certifications</span>
       </div>
 
-      {/* HEADER */}
+      {}
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <div
@@ -339,7 +324,7 @@ export default function CertificationsPage() {
         </div>
       </div>
 
-      {/* Hidden picker — feeds onPickFile */}
+      {}
       <input
         ref={fileInputRef}
         type="file"
@@ -348,7 +333,7 @@ export default function CertificationsPage() {
         onChange={(e) => {
           const f = e.target.files?.[0]
           if (f) onPickFile(f)
-          // Reset so the same file can be re-picked later
+
           e.target.value = ""
         }}
       />
@@ -370,7 +355,7 @@ export default function CertificationsPage() {
         </div>
       )}
 
-      {/* UPLOAD METADATA PANEL */}
+      {}
       {showUpload && pendingFile && (
         <div
           className="rounded-2xl p-5"
@@ -502,12 +487,10 @@ export default function CertificationsPage() {
         </div>
       )}
 
-      {/* TOKEN LIBRARY — click any token to copy {{token}} to your
-          clipboard, then paste it into your DOCX template anywhere
-          you want that value substituted at export time. */}
+      {}
       <TokenLibrary />
 
-      {/* DROPZONE — only when there are no items so it doesn't crowd the page */}
+      {}
       {!loading && items.length === 0 && !showUpload && (
         <div
           onDragOver={(e) => {
@@ -575,7 +558,7 @@ export default function CertificationsPage() {
         </div>
       )}
 
-      {/* KIND FILTER PILLS */}
+      {}
       {items.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap">
           <KindPill
@@ -596,7 +579,7 @@ export default function CertificationsPage() {
         </div>
       )}
 
-      {/* TABLE */}
+      {}
       {items.length > 0 && (
         <div
           className="rounded-2xl overflow-hidden"
@@ -784,10 +767,6 @@ export default function CertificationsPage() {
   )
 }
 
-// ============================================================
-// TokenLibrary — click any token to copy {{token}} to clipboard so
-// users can paste it into their cert template DOCX without typing.
-// ============================================================
 const TEMPLATE_TOKENS: { name: string; description: string }[] = [
   { name: "translator_name", description: "Logged-in user's full name" },
   { name: "translator_email", description: "Logged-in user's email" },
@@ -815,7 +794,7 @@ function TokenLibrary() {
     try {
       await navigator.clipboard.writeText(text)
     } catch {
-      // Fallback for older browsers — create a hidden input.
+
       const ta = document.createElement("textarea")
       ta.value = text
       document.body.appendChild(ta)
@@ -878,8 +857,7 @@ function TokenLibrary() {
       </header>
       {!collapsed && (
         <div className="px-6 py-5">
-          {/* HOW IT WORKS — step-by-step so a first-time user can
-              build a working template without trial and error. */}
+          {}
           <div
             className="rounded-xl p-4 mb-5"
             style={{
@@ -1037,7 +1015,6 @@ function TokenLibrary() {
     </section>
   )
 }
-
 
 function KindPill({
   label,

@@ -36,7 +36,7 @@ def effective_plan(db: Session, user: User) -> str:
     always treated as PRO regardless of their wallet state, so the
     operator account never runs out of credits or features.
     """
-    # Staff-style accounts get unlimited Pro access.
+
     if (user.role or "").upper() in ("SUPERUSER", "SUPER_ADMIN", "ADMIN"):
         return "PRO"
 
@@ -64,10 +64,10 @@ def effective_plan(db: Session, user: User) -> str:
     if plan in ("BASIC", "PRO"):
         if status == "ACTIVE":
             return plan
-        # Subscription cancelled / inactive → treat as expired
+
         return "EXPIRED"
 
-    # Legacy "STARTER" or anything else falls through as expired (no features).
+
     return "EXPIRED"
 
 
@@ -80,7 +80,7 @@ def require_feature(feature_name: str):
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db),
     ):
-        # Admin / Super Admin bypass kept from the previous implementation.
+
         if current_user.role in ("ADMIN", "SUPER_ADMIN"):
             return True
 

@@ -59,9 +59,9 @@ class GlossaryUpdate(BaseModel):
     notes: Optional[str] = None
 
 
-# =========================================
-# GET ALL TERMS — every team the caller belongs to
-# =========================================
+
+
+
 @router.get("")
 def get_terms(
     db: Session = Depends(get_db),
@@ -79,9 +79,9 @@ def get_terms(
     return [_serialize(t) for t in terms]
 
 
-# =========================================
-# CREATE TERM
-# =========================================
+
+
+
 @router.post("")
 def create_term(
     data: GlossaryCreate,
@@ -107,9 +107,9 @@ def create_term(
     return _serialize(term)
 
 
-# =========================================
-# UPDATE TERM
-# =========================================
+
+
+
 @router.patch("/{term_id}")
 def update_term(
     term_id: str,
@@ -136,9 +136,9 @@ def update_term(
     return _serialize(term)
 
 
-# =========================================
-# DELETE TERM
-# =========================================
+
+
+
 @router.delete("/{term_id}")
 def delete_term(
     term_id: str,

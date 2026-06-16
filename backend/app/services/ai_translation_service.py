@@ -13,48 +13,48 @@ from app.models.glossary import Glossary
 
 logger = logging.getLogger(__name__)
 
-# ============================================================
-# MODEL CATALOG
-# ============================================================
-# Each entry maps a logical model id (the value stored on the
-# project) to (provider, real_model_name, marketing_label). The
-# frontend new-project page lists these so users pick by speed /
-# quality / cost. Add new entries here when supporting a new model —
-# nothing else in the pipeline needs to change.
+
+
+
+
+
+
+
+
 MODEL_OPTIONS: dict[str, dict] = {
-    # Anthropic — top tier. Best quality available, slowest.
+
     "claude-opus-4-6": {
         "provider": "anthropic",
         "model": "claude-opus-4-6",
         "label": "Claude Opus 4.6 (highest quality)",
     },
-    # Anthropic — balanced. Premium quality at faster speed.
+
     "claude-sonnet-4-6": {
         "provider": "anthropic",
         "model": "claude-sonnet-4-6",
         "label": "Claude Sonnet 4.6 (premium quality)",
     },
-    # Anthropic — fastest / cheapest Claude.
+
     "claude-haiku-4-5": {
         "provider": "anthropic",
         "model": "claude-haiku-4-5-20251001",
         "label": "Claude Haiku 4.5 (fast, low cost)",
     },
-    # OpenAI — quality tier.
+
     "gpt-4.1": {
         "provider": "openai",
         "model": "gpt-4.1",
         "label": "GPT-4.1 (OpenAI, high quality)",
     },
-    # OpenAI — fast tier, good default for everyday docs.
+
     "gpt-4.1-mini": {
         "provider": "openai",
         "model": "gpt-4.1-mini",
         "label": "GPT-4.1 Mini (OpenAI, fast)",
     },
-    # Legacy alias used by older projects ("balanced" was the default
-    # field value before per-model selection landed). Now points at
-    # Sonnet 4.6 — the best general-purpose choice for translation.
+
+
+
     "balanced": {
         "provider": "anthropic",
         "model": "claude-sonnet-4-6",
@@ -70,7 +70,7 @@ def _resolve_model(model_key: str | None) -> dict:
     return MODEL_OPTIONS.get(key, MODEL_OPTIONS["balanced"])
 
 
-# Lazy clients — only instantiated when their provider is first used.
+
 _openai_client: OpenAI | None = None
 _anthropic_client: anthropic.Anthropic | None = None
 
@@ -146,17 +146,17 @@ def _call_model(
     raise ValueError(f"Unknown model provider: {provider}")
 
 
-# ============================================================
-# LANGUAGE CODE → HUMAN-READABLE NAME
-# ----------------------------------------------------------------
-# The frontend sends BCP-47 codes (de-DE, it-IT, en-GB). Passing those
-# raw to the LLM produced inconsistent output — the model would
-# sometimes ignore them. Mapping to plain names ("German", "Italian")
-# makes the prompt unambiguous and dramatically improves accuracy.
-# ============================================================
+
+
+
+
+
+
+
+
 LANGUAGE_NAMES = {
     "auto": "the document's source language (auto-detect)",
-    # Latin-script
+
     "en": "English",
     "en-GB": "English (UK)",
     "en-US": "English (US)",
@@ -178,7 +178,7 @@ LANGUAGE_NAMES = {
     "tr": "Turkish", "tr-TR": "Turkish",
     "vi": "Vietnamese", "vi-VN": "Vietnamese",
     "id": "Indonesian", "id-ID": "Indonesian",
-    # Other scripts
+
     "ja": "Japanese", "ja-JP": "Japanese",
     "zh": "Chinese (Simplified)",
     "zh-CN": "Chinese (Simplified)",
@@ -210,11 +210,11 @@ def humanize_lang(code: str | None) -> str:
     return code
 
 
-# ============================================================
-# GLOSSARY PRE-REPLACEMENT (HARD ENFORCEMENT)
-# Counts matches per glossary entry id and returns the updated text
-# alongside a {entry_id: matches_in_this_text} dict.
-# ============================================================
+
+
+
+
+
 def apply_glossary_pre_replace(text, glossary_map):
     """Backwards-compatible string-only replacement.
 
@@ -272,9 +272,9 @@ def flush_glossary_usage(db, counts: dict[str, int]) -> None:
             pass
 
 
-# ============================================================
-# SAFE TEAM RESOLUTION
-# ============================================================
+
+
+
 def get_project_scope(project):
     """
     Standardize glossary + TM scope.
@@ -283,13 +283,13 @@ def get_project_scope(project):
     if hasattr(project, "team_id") and project.team_id:
         return project.team_id
 
-    # fallback (should never happen ideally)
+
     return getattr(project, "user_id", None)
 
 
-# ============================================================
-# SINGLE TRANSLATION
-# ============================================================
+
+
+
 def translate_text(
     text: str,
     source_lang: str,
@@ -311,7 +311,7 @@ def translate_text(
 
             glossary_entries = get_glossary(
                 db,
-                scope_id,  # ✅ FIXED
+                scope_id,
                 source_lang,
                 target_lang
             )
@@ -323,7 +323,7 @@ def translate_text(
                 for g in glossary_entries
             }
 
-            # Replace + count matches so usage_count auto-updates.
+
             text, usage_counts = apply_glossary_with_counts(text, glossary_entries)
             flush_glossary_usage(db, usage_counts)
 
@@ -356,9 +356,9 @@ Return ONLY the translated text — no preamble, no quotes, no commentary."""
     )
 
 
-# ============================================================
-# BATCH TRANSLATION (FIXED)
-# ============================================================
+
+
+
 def translate_batch(
     texts: list[str],
     source_lang: str,
@@ -371,18 +371,18 @@ def translate_batch(
     glossary_prompt = ""
     glossary_map = {}
 
-    # 🔧 STANDARDIZED SCOPE
+
     scope_id = get_project_scope(project) if project else None
 
-    # Per-project opt-out flags from the new-project page toggles.
+
     project_use_tm = bool(getattr(project, "use_tm", True)) if project else True
     project_apply_glossary = (
         bool(getattr(project, "apply_glossary", True)) if project else True
     )
 
-    # ========================================================
-    # LOAD TM (TEAM SCOPED) — skipped when project opted out.
-    # ========================================================
+
+
+
     if db and project and scope_id and project_use_tm:
         try:
             tm_entries = []
@@ -390,7 +390,7 @@ def translate_batch(
             for t in texts:
                 entries = get_tm_entries(
                     db=db,
-                    team_id=scope_id,  # ✅ FIXED
+                    team_id=scope_id,
                     source_language=source_lang,
                     target_language=target_lang,
                     source_text=t
@@ -410,14 +410,14 @@ def translate_batch(
         except Exception as e:
             print("TM ERROR:", e)
 
-    # ========================================================
-    # LOAD GLOSSARY (TEAM SCOPED) — skipped when project opted out.
-    # ========================================================
+
+
+
     if db and project and scope_id and project_apply_glossary:
         try:
             glossary_entries = get_glossary(
                 db,
-                scope_id,  # ✅ FIXED
+                scope_id,
                 source_lang,
                 target_lang
             )
@@ -432,12 +432,12 @@ def translate_batch(
         except Exception as e:
             print("GLOSSARY ERROR:", e)
 
-    # ========================================================
-    # APPLY GLOSSARY BEFORE AI (and roll up usage counts)
-    # ========================================================
+
+
+
     if glossary_map:
-        # Use the counting variant so we can credit the underlying glossary
-        # rows. Sum counts across the whole batch and write once at the end.
+
+
         glossary_entries = locals().get("glossary_entries", [])
         batch_counts: dict[str, int] = {}
         rewritten: list[str] = []
@@ -449,11 +449,11 @@ def translate_batch(
         texts = rewritten
         flush_glossary_usage(db, batch_counts)
 
-    # ========================================================
-    # PROMPT — uses an unambiguous delimiter so segments containing
-    # newlines (PDF blocks, multi-line OCR) align correctly with the
-    # model's response.
-    # ========================================================
+
+
+
+
+
     DELIM = "<<<SEG>>>"
 
     src_name = humanize_lang(source_lang)
@@ -493,8 +493,8 @@ ABSOLUTE RULES — these are non-negotiable for legal and identity documents:
 
     prompt = rules + "\nINPUT:\n" + ("\n" + DELIM + "\n").join(texts)
 
-    # Pull the chosen model off the project; falls back to 'balanced'
-    # (gpt-4.1-mini) when the project has no preference.
+
+
     output = _call_model(
         model_key=getattr(project, "model", None) if project else None,
         system="You translate certified-quality documents. Return ONLY the translated segments separated by the configured delimiter — no commentary.",

@@ -2,11 +2,11 @@ from sqlalchemy.orm import Session
 from app.models.glossary import Glossary
 
 
-# ============================================================
-# Fetch glossary by team (audit HIGH-2: column was misnamed
-# `user_id` while actually FK'ing teams.id).
-# Callers may still pass a positional `team_id` value.
-# ============================================================
+
+
+
+
+
 
 def get_glossary(
     db: Session,

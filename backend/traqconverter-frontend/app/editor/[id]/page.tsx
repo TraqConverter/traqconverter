@@ -4,23 +4,6 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 
-// ============================================================
-// EDITOR — wired to real backend, no demo data.
-//
-// Endpoints used:
-//   GET    /projects/{id}                            project + stats + assignee
-//   GET    /projects/{id}/segments                   segments (id, source, target, approved, tm_pct)
-//   GET    /segments/{seg_id}/comments               comments per segment
-//   POST   /segments/{seg_id}/comments               add comment
-//   PATCH  /segments/{comment_id}/resolve            mark comment resolved
-//   PATCH  /projects/{id}/segments/{seg_id}/approve  toggle approve
-//   PATCH  /projects/{id}/review-status              DRAFT / IN_REVIEW / CERTIFIED
-//   POST   /projects/{id}/certify                    certify (Pro-only)
-//   GET    /projects/{id}/export                     DOCX (Basic+Pro)
-//   GET    /projects/{id}/export/pdf                 PDF  (Basic+Pro)
-//   GET    /glossary                                 list, used to count terms
-// ============================================================
-
 type Segment = {
   id: string
   segment_index: number
@@ -44,8 +27,7 @@ type ProjectInfo = {
   file_name: string
   source_language: string
   target_language: string
-  // AI model identifier (e.g. "claude-sonnet-4-6", "gpt-4.1-mini",
-  // or "balanced" / "dtp"). Surfaced in the Compare RE-RUN picker.
+
   model?: string | null
   stats: {
     total_segments: number
@@ -103,9 +85,7 @@ function initialsFor(p: { full_name: string | null; email: string }) {
 }
 
 function relativeTime(iso: string) {
-  // Backend returns naive UTC ISO strings without timezone markers.
-  // Without this, the browser parses them as local time and comments
-  // appear hours older than they actually are.
+
   const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(iso)
   const safe = hasTz ? iso : iso + "Z"
   const t = new Date(safe).getTime()
@@ -133,7 +113,6 @@ export default function EditorPage() {
   const [tab, setTab] = useState<Tab>("comments")
   const [compareReloadKey, setCompareReloadKey] = useState(0)
 
-  // Comments per segment (cache so flipping segments doesn't refetch instantly)
   const [comments, setComments] = useState<Record<string, Comment[]>>({})
   const [newComment, setNewComment] = useState("")
   const [busy, setBusy] = useState<string | null>(null)
@@ -146,15 +125,6 @@ export default function EditorPage() {
     total: number
   } | null>(null)
 
-  // COMPARE MODE — shows the original document next to the rebuilt
-  // output PDF so a reviewer can verify the rebuild visually. When
-  // active, the segments table is replaced with these two panes
-  // (the right-side sidebar stays).
-  //
-  // Compare mode is now the DEFAULT view — opening a project drops
-  // the user straight into the source-vs-WYSIWYG side-by-side. A
-  // "Segments" pill in the toolbar reveals the per-row table for
-  // power users who want to drop into segment-level editing.
   const [compareMode, setCompareMode] = useState(true)
   const [sourcePreview, setSourcePreview] = useState<{
     url: string
@@ -169,18 +139,13 @@ export default function EditorPage() {
   const [compareLoading, setCompareLoading] = useState(false)
 
   const loadCompare = async () => {
-    // FAST PATH — point both panes at our streaming preview
-    // endpoints. They convert DOCX → PDF on the server and stream
-    // back with Content-Disposition: inline so the browser's native
-    // PDF viewer takes over (~1s rendering vs 5-15s with Google /
-    // Office viewers). Auth rides in the URL via access_token.
+
     setCompareLoading(true)
     const token =
       (typeof window !== "undefined" &&
         (localStorage.getItem("token") || sessionStorage.getItem("token"))) ||
       ""
 
-    // Cache-bust on each open so the rebuild reflects fresh edits.
     const v = Date.now()
     setSourcePreview({
       url: `${process.env.NEXT_PUBLIC_API_URL || ""}/projects/${id}/preview/source?access_token=${encodeURIComponent(token)}&v=${v}`,
@@ -198,22 +163,13 @@ export default function EditorPage() {
   const toggleCompareMode = () => {
     const next = !compareMode
     setCompareMode(next)
-    // Always re-build on open so the user gets the freshest rebuild
-    // (in case they've edited segments since the last Compare).
+
     if (next) {
       setRebuildPreview(null)
       loadCompare()
     }
   }
 
-  // Compare mode actions — EDIT toggles an inline segments panel in
-  // the right pane, REQUEST REVISION fires an AI revision pass over
-  // every translated segment, RE-RUN re-translates the entire
-  // project from source. Both POST endpoints run synchronously.
-  //
-  // Default to EDIT on so the right pane is the editable segment
-  // list when Compare opens — that's the primary working surface.
-  // Reviewers who want the rendered PDF view can toggle off.
   const [compareEdit, setCompareEdit] = useState(true)
   const [compareActionBusy, setCompareActionBusy] = useState<
     null | "revise" | "rerun"
@@ -224,17 +180,13 @@ export default function EditorPage() {
   >([])
 
   useEffect(() => {
-    // Populate the model picker once per editor open.
+
     api
       .get("/projects/translation-models")
       .then((res) => setTranslationModels(res.data?.models || []))
       .catch(() => setTranslationModels([]))
   }, [])
 
-  // Request Revision modal — replaces the old window.prompt. Lets
-  // the user pick which AI engine reviews the translation and add
-  // optional instructions. The backend /revise endpoint already
-  // accepts a `model` field.
   const [revisionModal, setRevisionModal] = useState<{
     open: boolean
     instructions: string
@@ -258,8 +210,7 @@ export default function EditorPage() {
         instructions: revisionModal.instructions.trim() || null,
         model: revisionModal.model || null,
       })
-      // Refresh segments + rebuild + bump compareReloadKey so
-      // the iframe re-fetches the freshly-authored DOCX bytes.
+
       await fetchProject()
       await loadCompare()
       setCompareReloadKey((k) => k + 1)
@@ -286,13 +237,8 @@ export default function EditorPage() {
     }
   }
 
-  // Kept for the toolbar button — opens the modal instead of doing
-  // the work directly.
   const requestRevision = openRevisionModal
 
-  // Glossary-from-Compare flow — small modal pre-filled with the
-  // segment's source + translated text. User trims to the actual
-  // term and saves. Saves via the existing POST /glossary endpoint.
   const [glossaryDraft, setGlossaryDraft] = useState<{
     open: boolean
     sourceTerm: string
@@ -343,8 +289,6 @@ export default function EditorPage() {
     }
   }
 
-  // AI glossary suggestions — pulls 5-20 proposals from the project's
-  // translated segments. User can accept each one with one click.
   const [glossarySuggestions, setGlossarySuggestions] = useState<{
     open: boolean
     loading: boolean
@@ -402,7 +346,7 @@ export default function EditorPage() {
         target_term: p.target_term,
         notes: null,
       })
-      // Mark accepted by removing from proposals list.
+
       setGlossarySuggestions((s) => ({
         ...s,
         proposals: s.proposals.filter((_, i) => i !== idx),
@@ -452,7 +396,6 @@ export default function EditorPage() {
     }
   }
 
-  // Rename + delete state for the title chrome.
   const [renameOpen, setRenameOpen] = useState(false)
   const [renamingDraft, setRenamingDraft] = useState("")
   const [renameBusy, setRenameBusy] = useState(false)
@@ -502,7 +445,7 @@ export default function EditorPage() {
       ])
       setProject(projRes.data)
       const segs = (segRes.data || []) as Segment[]
-      // Defensive sort by index in case the backend ever changes ordering.
+
       segs.sort((a, b) => a.segment_index - b.segment_index)
       setSegments(segs)
     } catch (err: any) {
@@ -523,9 +466,6 @@ export default function EditorPage() {
     fetchProject()
   }, [id, fetchProject])
 
-  // Compare mode is the default view — auto-prime the source +
-  // rebuild URLs as soon as we have a project, so the two panes
-  // render immediately without the user clicking anything.
   useEffect(() => {
     if (project && compareMode && !sourcePreview) {
       loadCompare()
@@ -533,7 +473,6 @@ export default function EditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, compareMode])
 
-  // Poll for translation completion when the project is still processing.
   useEffect(() => {
     if (!project) return
     if (project.status === "COMPLETED" || project.status === "FAILED") return
@@ -541,8 +480,6 @@ export default function EditorPage() {
     return () => clearInterval(t)
   }, [project, fetchProject])
 
-  // Glossary count for the side-panel tab badge. Silently 0 on Trial/Basic
-  // (the route is gated and 403s — the editor doesn't need the actual data).
   useEffect(() => {
     api
       .get("/glossary")
@@ -552,7 +489,6 @@ export default function EditorPage() {
 
   const activeSegment = segments[activeIdx]
 
-  // Fetch comments when the active segment changes
   useEffect(() => {
     if (!activeSegment) return
     if (comments[activeSegment.id]) return
@@ -572,7 +508,7 @@ export default function EditorPage() {
       const res = await api.get(`/segments/${activeSegment.id}/comments`)
       setComments((c) => ({ ...c, [activeSegment.id]: res.data || [] }))
     } catch {
-      /* ignore */
+
     }
   }, [activeSegment])
 
@@ -604,8 +540,6 @@ export default function EditorPage() {
     }
   }
 
-  // Reopen — flip resolved back to false so the discussion is live
-  // again. Useful when a reviewer was hasty marking it "Revised".
   const reopenComment = async (commentId: string) => {
     try {
       setBusy(`reopen:${commentId}`)
@@ -618,8 +552,6 @@ export default function EditorPage() {
     }
   }
 
-  // Edit — author-only. Backend rejects non-authors with 403, which
-  // we surface in the error banner.
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
   const [editingCommentDraft, setEditingCommentDraft] = useState("")
 
@@ -664,10 +596,6 @@ export default function EditorPage() {
     }
   }
 
-  // AI retranslate a single segment. Optional instructions are
-  // collected via a prompt() so the user can nudge the model
-  // (e.g. "more formal", "use 'Municipality of'") for that one
-  // segment without touching the project glossary.
   const retranslateSegment = async (seg: Segment) => {
     const instructions = window.prompt(
       "Optional instructions for the AI (e.g. 'more formal', " +
@@ -675,7 +603,7 @@ export default function EditorPage() {
         "clean re-translation.",
       "",
     )
-    if (instructions === null) return  // user cancelled
+    if (instructions === null) return
     try {
       setBusy(`retranslate:${seg.id}`)
       const res = await api.post(`/segments/${seg.id}/retranslate`, {
@@ -709,8 +637,7 @@ export default function EditorPage() {
       setSegments((xs) =>
         xs.map((x) => (x.id === seg.id ? { ...x, approved } : x))
       )
-      // Bump approved count on the cached project so the toolbar stat updates
-      // without a round-trip.
+
       setProject((p) =>
         p
           ? {
@@ -731,10 +658,7 @@ export default function EditorPage() {
   }
 
   const approveAllTranslated = async () => {
-    // Approve every segment that has translated text and isn't already
-    // approved. We hit the existing per-segment endpoint in small
-    // concurrent batches so a multi-thousand-segment project doesn't
-    // serialise into a multi-minute wall.
+
     const candidates = segments.filter(
       (s) => !s.approved && s.translated_text && s.translated_text.trim()
     )
@@ -767,7 +691,7 @@ export default function EditorPage() {
           )
           approvedIds.add(seg.id)
         } catch {
-          /* skip; user can retry the segment manually */
+
         }
         done += 1
         setApproveAllProgress({ done, total: candidates.length })
@@ -827,7 +751,7 @@ export default function EditorPage() {
       await api.post(`/projects/${id}/certify`)
       setProject((p) => (p ? { ...p, review_status: "CERTIFIED" } : p))
     } catch (err: any) {
-      // 403 → trial / basic don't have certifications, send to billing.
+
       if (err?.response?.status === 403) {
         setError("Certification is a Pro feature. Upgrade in Billing to unlock.")
       } else {
@@ -853,10 +777,7 @@ export default function EditorPage() {
       a.remove()
       window.URL.revokeObjectURL(dl)
     } catch (err: any) {
-      // When responseType is "blob", axios wraps the JSON error body
-      // in a Blob — so err.response.data is a Blob, not the parsed
-      // {detail: "..."} object. Read it as text and parse it to surface
-      // the backend's real message (e.g. "No approved segments yet.").
+
       let detail: string | undefined
       const raw = err?.response?.data
       if (raw instanceof Blob) {
@@ -868,7 +789,7 @@ export default function EditorPage() {
             detail = txt || undefined
           }
         } catch {
-          /* leave detail undefined */
+
         }
       } else if (typeof raw === "object" && raw !== null) {
         detail = (raw as { detail?: string }).detail
@@ -892,10 +813,6 @@ export default function EditorPage() {
     }
   }
 
-  // Audit HIGH-1 fix: previously this only updated local state, so
-  // reviewers' edits were silently thrown away. Now we save with a
-  // 700ms debounce per segment via PATCH /segments/{id}; the backend
-  // also adds the (source → target) pair to the team's TM.
   const updateTargetText = (segId: string, value: string) => {
     setSegments((xs) =>
       xs.map((x) => (x.id === segId ? { ...x, translated_text: value } : x))
@@ -999,7 +916,7 @@ export default function EditorPage() {
 
   return (
     <div className="max-w-[1400px] mx-auto pb-12" onClick={() => setShowStatusMenu(false)}>
-      {/* TOP META ROW */}
+      {}
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-start gap-6">
           <button
@@ -1063,7 +980,7 @@ export default function EditorPage() {
           className="flex items-center gap-3 mt-2"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* DELETE — opens the confirm modal. */}
+          {}
           <button
             type="button"
             onClick={() => setDeleteOpen(true)}
@@ -1099,10 +1016,7 @@ export default function EditorPage() {
             Delete
           </button>
 
-          {/* SEGMENTS — inverse of Compare. Compare is the default
-              view; this pill toggles into the per-row segment
-              editor for power users who want to drop down to
-              segment-level editing, TM matches, glossary, etc. */}
+          {}
           <button
             type="button"
             onClick={toggleCompareMode}
@@ -1133,7 +1047,7 @@ export default function EditorPage() {
             {compareMode ? "Segments" : "Back to compare"}
           </button>
 
-          {/* STATUS PILL with dropdown */}
+          {}
           <div className="relative">
             <button
               type="button"
@@ -1224,7 +1138,7 @@ export default function EditorPage() {
         </div>
       )}
 
-      {/* TOOLBAR */}
+      {}
       <div
         className="flex items-center gap-4 px-5 py-3 rounded-2xl mb-4 flex-wrap"
         style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
@@ -1244,7 +1158,7 @@ export default function EditorPage() {
         <Stat label="TM" value={`${stats.tmAvg}%`} accent />
         <div className="flex-1" />
 
-        {/* Team avatars (real assignee + uploader) */}
+        {}
         <div className="flex items-center -space-x-1">
           {teamAvatars.map((u) => (
             <div
@@ -1258,8 +1172,7 @@ export default function EditorPage() {
           ))}
         </div>
 
-        {/* Action buttons — segment-level approve removed; the
-            Claude-direct WYSIWYG flow doesn't need it. */}
+        {}
         <button
           type="button"
           onClick={() => exportFile("docx")}
@@ -1331,18 +1244,11 @@ export default function EditorPage() {
         </button>
       </div>
 
-      {/* MAIN AREA + SIDEBAR
-          When Compare mode is OFF: segments table on the left, side
-          panel on the right.
-          When Compare mode is ON: the segments table is replaced by
-          two side-by-side preview panes — original on the left and
-          rebuilt output on the right. */}
+      {}
       <div
         className="grid grid-cols-1 gap-4"
         style={{
-          // In compare mode we hide the right-hand sidebar so the
-          // two preview panes get the full content width — without
-          // this the source + rebuild were cramped at ~45% width each.
+
           gridTemplateColumns: compareMode
             ? "minmax(0, 1fr)"
             : "minmax(0, 1fr) 360px",
@@ -1350,10 +1256,7 @@ export default function EditorPage() {
       >
         {compareMode ? (
           <div className="flex flex-col" style={{ minHeight: 0 }}>
-            {/* Compare actions toolbar — EDIT toggles inline segment
-                editing, REQUEST REVISION fires AI revision over every
-                translated segment, RE-RUN re-translates the whole
-                project with a chosen model. */}
+            {}
             <div
               className="flex items-center justify-between gap-3 mb-3 px-4 py-3 rounded-2xl"
               style={{
@@ -1373,13 +1276,7 @@ export default function EditorPage() {
                   onClick={() => {
                     setCompareEdit((v) => {
                       const next = !v
-                      // Switching FROM edit TO preview: make sure the
-                      // PDF rebuild has been loaded. loadCompare() only
-                      // runs when Compare mode first opens, so if the
-                      // user lands directly in Compare and toggles to
-                      // preview, rebuildPreview would still be null and
-                      // the right pane would show "Loading rebuild…"
-                      // forever.
+
                       if (!next && (!rebuildPreview || !rebuildPreview.url)) {
                         loadCompare()
                       }
@@ -1447,7 +1344,7 @@ export default function EditorPage() {
                       setCompareActionBusy("rerun")
                       await api.post(`/projects/${id}/rebuild-with-claude`)
                       await loadCompare()
-                      // Force the WYSIWYG pane to re-fetch.
+
                       window.alert("Claude rebuild complete. The right pane has refreshed.")
                     } catch (err: any) {
                       setError(
@@ -1546,24 +1443,15 @@ export default function EditorPage() {
                 minHeight: 0,
               }}
             >
-            {/* LEFT — ORIGINAL (read-only PDF view of the source) */}
+            {}
             <ComparePane
               label="ORIGINAL"
               data={sourcePreview}
               loading={compareLoading}
               emptyHint="The source file isn't available."
             />
-            {/* RIGHT — EDITABLE TRANSLATION (default) or RENDERED PDF
-                (when EDIT toggle is off). The editor is the primary
-                working surface; the PDF view is for visual review. */}
-            {/* Both modes now render CompareEditPanel (docx-preview).
-                The previous "Show preview" path went through a backend
-                LibreOffice DOCX -> PDF conversion which fails on the
-                heavy authored DOCX (thousands of paragraphs) and the
-                browser PDF viewer rendered a black background. We
-                already have a working DOCX renderer in CompareEditPanel,
-                so reuse it for both modes — the toggle now just
-                controls editing affordances. */}
+            {}
+            {}
             {compareEdit ? (
               <CompareEditPanel
                 projectId={String(id)}
@@ -1582,9 +1470,9 @@ export default function EditorPage() {
         ) : null}
 
         {!compareMode && (
-        /* SEGMENTS TABLE */
+
         <div className="contents">
-        {/* SEGMENTS TABLE */}
+        {}
         <div
           className="rounded-2xl overflow-hidden"
           style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
@@ -1700,7 +1588,7 @@ export default function EditorPage() {
                         strokeLinecap="round"
                         strokeLinejoin="round"
                       >
-                        {/* Sparkle / "regenerate" icon */}
+                        {}
                         <path d="M21 12a9 9 0 1 1-3-6.7" />
                         <path d="M21 4v5h-5" />
                       </svg>
@@ -1747,8 +1635,7 @@ export default function EditorPage() {
         </div>
         )}
 
-        {/* SIDEBAR — hidden in compare mode so the side-by-side panes
-            get the full content width. */}
+        {}
         {!compareMode && (
         <aside
           className="rounded-2xl overflow-hidden flex flex-col h-fit sticky top-4"
@@ -1898,10 +1785,7 @@ export default function EditorPage() {
                             {c.text}
                           </div>
                         )}
-                        {/* Action row: resolve / reopen + edit + delete.
-                            Edit + delete remain available even after a
-                            comment is resolved so reviewers can clean up
-                            the discussion log retroactively. */}
+                        {}
                         <div className="flex items-center gap-2 flex-wrap">
                         {!c.resolved ? (
                           <button
@@ -1954,10 +1838,7 @@ export default function EditorPage() {
                           </button>
                           </>
                         )}
-                        {/* Edit + delete are always available — even
-                            on resolved comments — so reviewers can
-                            clean up the discussion log retroactively.
-                            Backend enforces author-only access. */}
+                        {}
                         {editingCommentId !== c.id && (
                           <>
                             <button
@@ -1993,7 +1874,7 @@ export default function EditorPage() {
                   </div>
                 )}
 
-                {/* New comment box */}
+                {}
                 <div
                   className="rounded-xl p-3"
                   style={{
@@ -2081,9 +1962,7 @@ export default function EditorPage() {
         )}
       </div>
 
-      {/* AI GLOSSARY SUGGESTIONS — Claude scans translated segments
-          and proposes recurring terms. User accepts each with one
-          click; rejected ones just stay unaccepted. */}
+      {}
       {glossarySuggestions.open && (
         <div
           onClick={() =>
@@ -2222,11 +2101,8 @@ export default function EditorPage() {
         </div>
       )}
 
-      {/* GLOSSARY-FROM-COMPARE MODAL — pre-filled with the segment's
-          source + translated text. User trims to the actual term and
-          saves via POST /glossary. Source + target languages come
-          from the project. */}
-      {/* REQUEST REVISION modal — choose model + add instructions. */}
+      {}
+      {}
       {revisionModal.open && (
         <div
           onClick={() =>
@@ -2520,7 +2396,7 @@ export default function EditorPage() {
         </div>
       )}
 
-      {/* RENAME MODAL */}
+      {}
       {renameOpen && (
         <div
           onClick={() => !renameBusy && setRenameOpen(false)}
@@ -2597,7 +2473,7 @@ export default function EditorPage() {
         </div>
       )}
 
-      {/* DELETE MODAL */}
+      {}
       {deleteOpen && (
         <div
           onClick={() => !deleteBusy && setDeleteOpen(false)}
@@ -2665,43 +2541,14 @@ export default function EditorPage() {
   )
 }
 
-// ============================================================
-// Local subcomponents
-// ============================================================
-
-// Microsoft Office Online viewer renders DOCX / XLSX / PPTX inline by
-// fetching the signed URL on their servers and returning a rendered
-// HTML viewer — so Word files never trigger a browser download.
 function officeViewerUrl(srcUrl: string) {
   return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(srcUrl)}`
 }
 
-// Google Docs viewer renders PDFs inline by fetching the URL on
-// Google's servers. We use this for PDF sources because some object
-// stores (Supabase) don't honor the inline content-disposition
-// query param, which causes the browser to download instead of
-// preview when the PDF URL is loaded directly in an iframe.
 function gdocsViewerUrl(srcUrl: string) {
   return `https://docs.google.com/viewer?url=${encodeURIComponent(srcUrl)}&embedded=true`
 }
 
-// ============================================================
-// CompareEditPanel — scrollable list of editable segments shown in
-// a 3rd column next to the rebuild preview when the user toggles
-// EDIT on the Compare view. Each row is a textarea pre-populated
-// with the translated text; changes save on blur. A small AI
-// retranslate button per row triggers the existing handler.
-// ============================================================
-// CompareEditPanel — the right pane in Compare view.
-//
-// Fetches the rebuilt translation DOCX converted to HTML (via the
-// backend's mammoth-powered /preview/rebuild-html endpoint) and
-// renders it inside a Word-style page (white A4-ish sheet, drop
-// shadow, serif font, real margins). The page wrapper is
-// contentEditable so the user can click anywhere in the document and
-// edit in place — exactly how they'd see it when they export — with
-// the document's actual layout (tables, headers, paragraphs)
-// preserved from the export pipeline.
 function CompareEditPanel({
   projectId,
   compareOpen,
@@ -2713,27 +2560,17 @@ function CompareEditPanel({
 }) {
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string>("")
-  // Bump to force a re-fetch (e.g. after the user clicks "Reload").
+
   const [reloadKey, setReloadKey] = useState(0)
-  // Save status indicator. "idle" = no pending edits. "dirty" =
-  // edits pending but the debounce hasn't fired yet. "saving" = in
-  // flight. "saved" = the last save just landed.
+
   const [saveState, setSaveState] = useState<
     "idle" | "dirty" | "saving" | "saved"
   >("idle")
-  // docx-preview renders into this container ref (much higher
-  // fidelity than mammoth — preserves tab stops, alignment, column
-  // widths, page layout, fonts).
+
   const docContainerRef = useRef<HTMLDivElement | null>(null)
-  // scheduleSave is declared later in this component. The iframe input
-  // handler — which fires earlier — needs to call the latest version,
-  // so we route through this ref. Updated each render.
+
   const scheduleSaveRef = useRef<((html: string) => void) | null>(null)
-  // Stash the fetched DOCX bytes so the render effect can pick
-  // them up AFTER the container DOM node has mounted (the
-  // container is conditionally rendered when loading=false, so
-  // doing it inline with the fetch loses the render — the
-  // container ref is still null at fetch-resolve time).
+
   const [docxBuffer, setDocxBuffer] = useState<ArrayBuffer | null>(null)
 
   useEffect(() => {
@@ -2757,8 +2594,7 @@ function CompareEditPanel({
       })
       .then((buffer) => {
         if (cancelled) return
-        // Store the bytes — the render effect below picks them up
-        // once the container has actually mounted.
+
         setDocxBuffer(buffer)
       })
       .catch((e: any) => {
@@ -2778,11 +2614,6 @@ function CompareEditPanel({
     }
   }, [projectId, compareOpen, reloadKey, externalReloadKey])
 
-  // Render the DOCX into the container once BOTH the buffer is
-  // available AND the container DOM node has been mounted. This
-  // runs after loading flips to false so docContainerRef.current
-  // is no longer null. Re-runs on buffer change (e.g. after a
-  // Reload click).
   useEffect(() => {
     if (!docxBuffer || loading) return
     let cancelled = false
@@ -2792,13 +2623,7 @@ function CompareEditPanel({
       try {
         const { renderAsync } = await import("docx-preview")
         if (cancelled) return
-        // IFRAME RENDER. The previous staging-div approach kept
-        // leaking docx-preview's <style> CSS into the editable
-        // pane as raw text — contentEditable interacts oddly with
-        // injected <style> blocks across React renders. The
-        // iframe is a fully isolated document, so the rendered
-        // DOCX (and its CSS) lives in a tree the parent's
-        // contentEditable behavior cannot touch.
+
         container.innerHTML = ""
         const iframe = document.createElement("iframe")
         iframe.style.width = "100%"
@@ -2807,13 +2632,11 @@ function CompareEditPanel({
         iframe.style.display = "block"
         iframe.setAttribute("title", "Document preview")
         container.appendChild(iframe)
-        // Wait for iframe document to be ready.
+
         await new Promise<void>((resolve) => {
           const onLoad = () => resolve()
           iframe.addEventListener("load", onLoad, { once: true })
-          // about:blank docs load synchronously in most browsers
-          // — kick the load event manually if it's already
-          // ready.
+
           if (iframe.contentDocument?.readyState === "complete") {
             resolve()
           }
@@ -2823,9 +2646,7 @@ function CompareEditPanel({
         if (!idoc) {
           throw new Error("Iframe document inaccessible")
         }
-        // Inject the host page styling so the iframe inherits
-        // the cream/teal aesthetic + scaling. The transform
-        // scale here mirrors the parent's CSS variable.
+
         idoc.open()
         idoc.write(
           `<!doctype html><html><head>
@@ -2864,7 +2685,7 @@ function CompareEditPanel({
           </head><body></body></html>`,
         )
         idoc.close()
-        // Render docx-preview into the iframe body.
+
         await renderAsync(docxBuffer, idoc.body, undefined, {
           inWrapper: true,
           ignoreWidth: false,
@@ -2881,19 +2702,14 @@ function CompareEditPanel({
           renderEndnotes: true,
         })
         if (cancelled) return
-        // Mark every rendered page section editable inside the
-        // iframe. ContentEditable applies only within the iframe
-        // document — no leakage to the parent.
+
         idoc
           .querySelectorAll<HTMLElement>("section.docx, .docx")
           .forEach((el) => {
             el.contentEditable = "true"
             el.spellcheck = true
           })
-        // Compute the zoom that fits the rendered page width
-        // into the iframe (and so the right pane). The .docx
-        // section renders at its true A4 width (~794px at 96
-        // DPI); we shrink it so it always fits the pane.
+
         const applyZoom = () => {
           if (cancelled || !iframe.contentDocument) return
           const docEl = iframe.contentDocument.documentElement
@@ -2903,19 +2719,18 @@ function CompareEditPanel({
           const paneWidth = iframe.clientWidth
           let pageWidth = 794
           if (page) {
-            // Use the page's intrinsic width if available.
+
             const rect = page.getBoundingClientRect()
             if (rect.width > 100) pageWidth = rect.width
           }
-          // Leave ~24px of breathing room on the sides.
+
           const z = Math.min(1, (paneWidth - 24) / pageWidth)
           if (Number.isFinite(z) && z > 0) {
             docEl.style.setProperty("--docx-zoom", String(z))
           }
         }
         applyZoom()
-        // Resize iframe to fit content height. Re-check on each
-        // mutation so it grows with edits.
+
         const resize = () => {
           if (cancelled || !iframe.contentDocument) return
           const body = iframe.contentDocument.body
@@ -2929,8 +2744,7 @@ function CompareEditPanel({
           iframe.style.height = `${h + 24}px`
         }
         resize()
-        // Re-apply zoom on container resize so it stays fitted
-        // if the user resizes the window.
+
         const onWinResize = () => {
           applyZoom()
           resize()
@@ -2943,13 +2757,11 @@ function CompareEditPanel({
           subtree: true,
           characterData: true,
         })
-        // Wire input events from the iframe back to the parent
-        // autosave handler. We pass the full body innerHTML so
-        // /edited-html stores the latest state.
+
         idoc.body.addEventListener("input", () => {
           scheduleSaveRef.current && scheduleSaveRef.current(idoc.body.innerHTML)
         })
-        // Clean up the observer on next render or unmount.
+
         ;(iframe as any).__docxObserver = obs
       } catch (e: any) {
         if (!cancelled) {
@@ -2963,8 +2775,7 @@ function CompareEditPanel({
     })()
     return () => {
       cancelled = true
-      // Tear down the mutation observer if the iframe still
-      // exists.
+
       const c = docContainerRef.current
       if (c) {
         const iframe = c.querySelector("iframe") as any
@@ -2985,9 +2796,6 @@ function CompareEditPanel({
     }
   }, [docxBuffer, loading])
 
-  // Debounced auto-save: every time the user edits, wait 1.5s of
-  // inactivity then PATCH /projects/{id}/edited-html with the current
-  // innerHTML so it persists. Cancel + reschedule on every input.
   const saveTimerRef = useRef<number | null>(null)
 
   const scheduleSave = (currentHtml: string) => {
@@ -3002,17 +2810,15 @@ function CompareEditPanel({
           html: currentHtml,
         })
         setSaveState("saved")
-        // Drop back to idle after a short visual flash.
+
         window.setTimeout(() => setSaveState("idle"), 1200)
       } catch {
         setSaveState("idle")
-        // We don't surface this to the user — autosave failures are
-        // soft. The Refresh button will re-render from the server
-        // copy if anything diverges.
+
       }
     }, 1500) as unknown as number
   }
-  // Keep ref synced with the latest scheduleSave closure.
+
   scheduleSaveRef.current = scheduleSave
 
   return (
@@ -3061,9 +2867,7 @@ function CompareEditPanel({
                 setLoading(true)
                 setError("")
                 await api.delete(`/projects/${projectId}/edited-html`)
-                // Force a fresh Claude rebuild — uses the latest
-                // prompt rules (no rotation, no over-tabling, real
-                // logos via doc.add_picture).
+
                 await api.post(`/projects/${projectId}/rebuild-with-claude`)
               } catch (e: any) {
                 setError(
@@ -3188,17 +2992,12 @@ function CompareEditPanel({
               className="docx-preview-host"
               suppressContentEditableWarning
               onInput={(e) => {
-                // contentEditable is set on the rendered .docx
-                // pages, not the host — but onInput bubbles up
-                // so we still see every keystroke here for
-                // autosave.
+
                 const target = e.currentTarget as HTMLDivElement
                 scheduleSave(target.innerHTML)
               }}
               onBlur={(e) => {
-                // Force-save on blur even if the debounce hasn't
-                // fired — gives a stronger guarantee that leaving
-                // the page captures the user's work.
+
                 const target = e.currentTarget as HTMLDivElement
                 if (saveTimerRef.current) {
                   window.clearTimeout(saveTimerRef.current)
@@ -3237,7 +3036,6 @@ function CompareEditPanel({
   )
 }
 
-
 function ComparePane({
   label,
   data,
@@ -3251,18 +3049,7 @@ function ComparePane({
   emptyHint: string
   docxFallback?: string | null
 }) {
-  // Pick the iframe source URL based on file kind. PDFs and DOCXs
-  // both come through our backend's preview endpoint pre-converted
-  // to PDF with Content-Disposition: inline, so the browser's
-  // native PDF viewer renders them within a second. No Google /
-  // Office viewer round-trip.
-  //
-  // PDF viewer hash params:
-  //   #toolbar=0   — hide the floating toolbar
-  //   #navpanes=0  — hide the thumbnail / bookmarks sidebar
-  //   #view=FitH   — fit document to width on open (no zoomed crop)
-  // Browsers vary on support; Chrome/Edge honour the full set,
-  // Firefox honours `view=`. We append them to whatever URL we have.
+
   const PDF_VIEWER_HASH = "#toolbar=0&navpanes=0&view=FitH"
   const iframeSrc =
     data?.kind === "pdf"
@@ -3321,8 +3108,7 @@ function ComparePane({
             title={data?.filename || ""}
             className="w-full h-full"
             style={{ border: 0, background: "#fff", minHeight: 500 }}
-            // sandbox is omitted on purpose — Office Online viewer
-            // needs to run scripts to render the document.
+
           />
         )}
         {data?.kind === "image" && (
@@ -3352,7 +3138,6 @@ function ComparePane({
     </div>
   )
 }
-
 
 function LangChip({ text }: { text: string }) {
   return (
@@ -3392,7 +3177,8 @@ function Stat({
     </div>
   )
 }
-function SideTab({
+
+function SideTab({
   label,
   count,
   active,
@@ -3416,4 +3202,12 @@ function Stat({
       <div className="text-xs font-semibold flex items-center justify-center gap-1">
         {label}
         {typeof count === "number" && (
-          <span
+          <span
+            className="text-[10px] tabular-nums px-1 rounded-full"
+            style={{ color: "#9a9178" }}
+          >
+            · {count}
+          </span>
+        )}
+      </div>
+    </button>

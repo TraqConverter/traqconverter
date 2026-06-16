@@ -11,7 +11,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# Make `app...` imports work when run via `python -m scripts.create_superuser`.
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from passlib.context import CryptContext
@@ -43,7 +43,7 @@ def upsert_superuser(db: Session) -> User:
         user.is_active = True
         user.subscription_status = "ACTIVE"
         user.subscription_plan = "PRO"
-        # Bump token_version to invalidate any leaked old JWTs.
+
         user.token_version = (user.token_version or 0) + 1
         logger.info("Superuser exists — refreshed password + role")
     else:
@@ -61,11 +61,11 @@ def upsert_superuser(db: Session) -> User:
         db.flush()
         logger.info("Created new superuser %s", SUPERUSER_EMAIL)
 
-    # Ensure they have a team + wallet so feature gates that read wallet
-    # state don't complain. The feature_guard short-circuits the
-    # SUPERUSER role to PRO so wallet contents don't actually matter,
-    # but having them around keeps the rest of the app's assumptions
-    # intact.
+
+
+
+
+
     team = db.query(Team).filter(Team.owner_id == user.id).first()
     if not team:
         team = Team(owner_id=user.id, name="Espresso Translations")

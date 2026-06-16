@@ -6,11 +6,6 @@ import Link from "next/link"
 import { api } from "@/lib/api"
 import { getToken, clearToken } from "@/lib/auth"
 
-// ============================================================
-// TRAQCONVERTER — ESPRESSO-STYLED APP SHELL
-// Warm cream palette + teal accent
-// ============================================================
-
 type NavItem = {
   name: string
   path: string
@@ -89,10 +84,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
 
   const [loading, setLoading] = useState(true)
-  // `authReady` is true when we know the user is logged in AND not
-  // on an auth page. Sidebar data fetches depend on this flag instead
-  // of on `pathname` directly, so they fire once when the user logs
-  // in (false → true) and not on every navigation thereafter.
+
   const [authReady, setAuthReady] = useState(false)
   const [credits, setCredits] = useState<number | null>(null)
   const [projectCount, setProjectCount] = useState<number | null>(null)
@@ -125,20 +117,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
       setLoading(false)
     }
 
-    // Drive `authReady` from the synchronous token check + page kind.
-    // This flips false → true exactly once on first authenticated
-    // page-view, which is what the fetch effect below depends on.
     setAuthReady(Boolean(token) && !isAuthPage)
   }, [pathname, router])
 
   useEffect(() => {
-    // Sidebar data — wallet, user, project count — is fetched ONCE
-    // when the user authenticates rather than on every pathname
-    // change. The previous implementation re-ran three serial network
-    // calls on every navigation, which added 500-1500ms of perceived
-    // lag between clicks. Tab focus + a custom "sidebar:refresh"
-    // event let billing/upload flows refresh when counts genuinely
-    // changed.
+
     if (!authReady) {
       setCredits(0)
       setWallet(null)
@@ -193,7 +176,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
     refreshAll()
 
-    // Refresh when the tab regains focus (Stripe redirect, etc).
     const onFocus = () => refreshAll()
     const onSidebarRefresh = () => refreshAll()
     window.addEventListener("focus", onFocus)
@@ -223,22 +205,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }
 
   const handleLogout = async () => {
-    // Audit P1 #8: bump server-side token_version so this JWT
-    // (and any clones on other devices) is invalidated. Then
-    // clear local storage and redirect. Don't block logout on
-    // a network error — clear locally regardless.
+
     try {
       await api.post("/auth/logout")
     } catch {
-      /* ignore — logout must still complete locally */
+
     }
     clearToken()
     router.replace("/login")
   }
 
-  // Sidebar usage card is driven by the real wallet tier returned by
-  // /billing/wallet. Pro = 29 credits, Basic = 19, Trial = 1, plus any
-  // top-ups the user has purchased.
   const tier = wallet?.tier || ""
   const planLabel =
     tier === "PRO"
@@ -251,19 +227,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
       ? "Trial ended"
       : "—"
 
-  // Subscription cap per tier (resets each billing cycle).
   const subscriptionAllowance =
     tier === "PRO" ? 29 : tier === "BASIC" ? 19 : tier === "TRIAL" ? 1 : 0
-  // Current remaining credits in each bucket (server is source of truth).
+
   const subscriptionRemaining = wallet?.subscription_credits ?? 0
   const purchasedRemaining = wallet?.purchased_credits ?? 0
   const remaining = credits ?? subscriptionRemaining + purchasedRemaining
-  // "Used" is computed against the SUBSCRIPTION cap only — we don't know
-  // the lifetime total of purchased credits (the user may have bought
-  // several packs), so purchased is displayed separately. Mixing
-  // a fixed cap with current-remaining purchased used to make the
-  // sidebar's "used" counter freeze and purchased credits look like
-  // they were disappearing.
+
   const subscriptionUsed = Math.max(
     0,
     subscriptionAllowance - subscriptionRemaining,
@@ -296,15 +266,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
     return `${sub}${top}`
   })()
 
-  // Compute which nav item is active using "longest prefix wins" so
-  // that `/settings/account` doesn't also light up `/settings`
-  // (Members vs Settings) or `/settings/glossary` (Glossary vs
-  // Members). Otherwise nested routes highlight their parent too.
   const allMatches = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.match))
   const activeMatch = (() => {
-    // Exact match wins outright.
+
     if (allMatches.includes(pathname)) return pathname
-    // Otherwise the longest prefix match (with a "/" boundary) wins.
+
     const candidates = allMatches
       .filter((m) => m !== "/" && pathname.startsWith(m + "/"))
       .sort((a, b) => b.length - a.length)
@@ -325,7 +291,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-screen" style={{ background: "#faf5ee", color: "#1f2a2e" }}>
-      {/* ==================== SIDEBAR ==================== */}
+      {}
       <aside
         className="w-64 flex flex-col justify-between"
         style={{
@@ -334,7 +300,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         }}
       >
         <div className="px-5 py-6 overflow-y-auto">
-          {/* LOGO */}
+          {}
           <div className="flex items-center gap-3 mb-10">
             <div
               className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-white text-lg"
@@ -352,7 +318,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </div>
           </div>
 
-          {/* NAV GROUPS */}
+          {}
           {NAV_GROUPS.map((group) => (
             <div key={group.label} className="mb-7">
               <div
@@ -417,7 +383,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           ))}
         </div>
 
-        {/* PLAN CARD — dynamic from wallet.tier */}
+        {}
         <div className="px-5 pb-5">
           <div
             className="rounded-xl p-4"
@@ -484,7 +450,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      {/* ==================== MAIN ==================== */}
+      {}
       <div className="flex-1 flex flex-col overflow-hidden">
         <header
           className="px-8 pt-6 pb-4 flex items-center justify-between"

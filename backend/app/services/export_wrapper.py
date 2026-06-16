@@ -36,15 +36,15 @@ from docx.shared import Cm, Pt
 logger = logging.getLogger(__name__)
 
 
-# ----------------------------------------------------------------
-# Source PDF → images (one per page).
-# ----------------------------------------------------------------
+
+
+
 
 def _render_source_pages_as_images(pdf_path: Path, work_dir: Path) -> list:
     """Render each page of `pdf_path` to a PNG at ~2x resolution. Returns
     a list of paths in page order. Failures yield an empty list."""
     try:
-        import fitz  # PyMuPDF
+        import fitz
     except Exception:
         logger.warning("PyMuPDF not installed — source pages not embedded")
         return []
@@ -58,8 +58,8 @@ def _render_source_pages_as_images(pdf_path: Path, work_dir: Path) -> list:
         logger.warning("Couldn't open source PDF for embedding: %s", e)
         return []
     try:
-        # 2x scale gives a crisper image at A4-print resolution without
-        # blowing up the DOCX size too much.
+
+
         zoom = fitz.Matrix(2, 2)
         for page_num, page in enumerate(doc, start=1):
             try:
@@ -77,9 +77,9 @@ def _render_source_pages_as_images(pdf_path: Path, work_dir: Path) -> list:
     return out
 
 
-# ----------------------------------------------------------------
-# Team stamp → section footer (so it repeats on every page).
-# ----------------------------------------------------------------
+
+
+
 
 def _install_stamp_in_footer(section, stamp_path: Path, alignment: str = "right"):
     """Insert the team stamp image into the section's footer. Word
@@ -87,13 +87,13 @@ def _install_stamp_in_footer(section, stamp_path: Path, alignment: str = "right"
     the stamp shows up on every page without per-page code."""
     try:
         footer = section.footer
-        # If the footer already has a paragraph, reuse it — otherwise add one.
+
         if footer.paragraphs:
             p = footer.paragraphs[0]
         else:
             p = footer.add_paragraph()
 
-        # Clear any previous content
+
         for run in list(p.runs):
             run.text = ""
 
@@ -105,16 +105,16 @@ def _install_stamp_in_footer(section, stamp_path: Path, alignment: str = "right"
         p.alignment = align_map.get(alignment, WD_ALIGN_PARAGRAPH.RIGHT)
 
         run = p.add_run()
-        # Stamps are typically ~3cm wide — keeps them clearly visible
-        # in the footer without taking over the page.
+
+
         run.add_picture(str(stamp_path), width=Cm(3))
     except Exception:
         logger.exception("Failed to install team stamp in footer")
 
 
-# ----------------------------------------------------------------
-# Append the body of another DOCX into the current one.
-# ----------------------------------------------------------------
+
+
+
 
 
 def _detect_source_page_orientation(source_path) -> str:
@@ -160,8 +160,8 @@ def _append_body_from(src_doc: Document, dst_doc: Document):
     """
     src_body = src_doc.element.body
 
-    # Materialize the children list, drop trailing sectPr + trailing
-    # blank paragraphs.
+
+
     W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
     T_TAG = "{%s}t" % W_NS
     BR_TAG = "{%s}br" % W_NS
@@ -171,43 +171,43 @@ def _append_body_from(src_doc: Document, dst_doc: Document):
     def _is_empty_para(el):
         if el.tag.split("}")[-1] != "p":
             return False
-        # Has any text run?
+
         for t in el.iter(T_TAG):
             if (t.text or "").strip():
                 return False
-        # Has any drawing / picture (image)?
+
         for _ in el.iter(DRAWING_TAG):
             return False
         for _ in el.iter(PICT_TAG):
             return False
-        # Has any page break?
+
         for br in el.iter(BR_TAG):
             if br.get("{%s}type" % W_NS) == "page":
                 return False
         return True
 
     children = list(src_body.iterchildren())
-    # Drop trailing sectPr.
+
     while children and children[-1].tag.split("}")[-1] == "sectPr":
         children.pop()
-    # Drop trailing empty paragraphs.
+
     while children and _is_empty_para(children[-1]):
         children.pop()
 
     dst_body = dst_doc.element.body
 
-    # CRITICAL: python-docx Document objects always carry a trailing
-    # <w:sectPr> in the body — that element holds page size / margin
-    # info for the final section. python-docx's `add_paragraph()`
-    # inserts BEFORE that trailing sectPr. Raw `.append(child)` here
-    # lands AFTER the trailing sectPr and pushes the body past it,
-    # then `_append_certification`'s add_paragraph lands BEFORE the
-    # sectPr — visually placing the cert IN FRONT of the body.
-    #
-    # Also: every <w:drawing> in src carries r:embed="rIdN" pointing
-    # at SRC document part-rels. When we deepcopy, those rIds no
-    # longer resolve in dst — images vanish silently. Walk src
-    # drawings, register each image in dst_part, then remap r:embed.
+
+
+
+
+
+
+
+
+
+
+
+
     final_sectpr = None
     for ch in list(dst_body.iterchildren()):
         if ch.tag.split("}")[-1] == "sectPr":
@@ -276,10 +276,10 @@ def _append_body_from(src_doc: Document, dst_doc: Document):
             )
 
 
-# ----------------------------------------------------------------
-# Certification page — uses the team's selected template if one is
-# set, otherwise falls back to the hardcoded boilerplate.
-# ----------------------------------------------------------------
+
+
+
+
 
 def _append_certification(dst_doc: Document, project, user, work_dir: Path):
     """Append a certification block to the document. If the project has
@@ -288,12 +288,12 @@ def _append_certification(dst_doc: Document, project, user, work_dir: Path):
     Otherwise we write a simple hardcoded affidavit."""
     user_email = getattr(user, "email", "") or ""
 
-    # Single page break before the cert — _append_body_from already
-    # trimmed any trailing blanks from the merged translated section,
-    # so this gives us exactly one new page for the cert.
+
+
+
     dst_doc.add_page_break()
 
-    # Try the template first.
+
     try:
         from app.services.cert_template_service import (
             build_substitution_values,
@@ -313,12 +313,12 @@ def _append_certification(dst_doc: Document, project, user, work_dir: Path):
                     .filter(Certification.id == template_id)
                     .first()
                 )
-                # Audit P0 #2: model column is `file_path`, not
-                # `s3_key`. The old check was always false so the
-                # user's chosen cert template never ran.
-                # Audit P1 #3: only DOCX cert templates can be
-                # substituted with python-docx — skip silently if
-                # someone uploaded a PDF / image / other format.
+
+
+
+
+
+
                 cert_key = getattr(cert, "file_path", None) if cert else None
                 cert_name = (getattr(cert, "file_name", "") or "").lower() if cert else ""
                 if cert and cert_key and cert_name.endswith(".docx"):
@@ -349,7 +349,7 @@ def _append_certification(dst_doc: Document, project, user, work_dir: Path):
             "Cert-template substitution failed — falling back to hardcoded cert"
         )
 
-    # Hardcoded fallback.
+
     from datetime import datetime
 
     p = dst_doc.add_paragraph()
@@ -372,9 +372,9 @@ def _append_certification(dst_doc: Document, project, user, work_dir: Path):
     dst_doc.add_paragraph("Signature: ____________________________")
 
 
-# ----------------------------------------------------------------
-# Main entry point.
-# ----------------------------------------------------------------
+
+
+
 
 def build_full_export_docx(
     translated_docx_bytes: bytes,
@@ -394,7 +394,7 @@ def build_full_export_docx(
     """
     work_dir = Path(tempfile.mkdtemp(prefix="export_wrap_"))
     try:
-        # 1) Start a fresh document with sensible margins.
+
         out = Document()
         section = out.sections[0]
         section.top_margin = Cm(2)
@@ -402,7 +402,7 @@ def build_full_export_docx(
         section.left_margin = Cm(2)
         section.right_margin = Cm(2)
 
-        # 2) Team stamp into footer (repeats on every page automatically).
+
         try:
             from app.services.export_service import _resolve_team_stamp
             stamp_path, alignment = _resolve_team_stamp(project, work_dir)
@@ -413,11 +413,11 @@ def build_full_export_docx(
                 "Team-stamp resolution failed — continuing without footer stamp"
             )
 
-        # 3) Embed source PDF pages as images with full-bleed
-        #    layout. Tight 1cm margins so the original fills its
-        #    page. After the last source page, open a new section
-        #    with normal 2cm margins so the translation body
-        #    starts on a fresh page.
+
+
+
+
+
         source_added = False
         try:
             from app.services.s3_service import download_file_from_s3
@@ -432,15 +432,15 @@ def build_full_export_docx(
                 and source_path.exists()
                 and str(source_path).lower().endswith(".pdf")
             ):
-                # Match source orientation -- if the original is
-                # landscape, the translation must be landscape too.
+
+
                 src_orient = _detect_source_page_orientation(source_path)
                 if src_orient == "landscape":
-                    # A4 landscape: 29.7cm x 21cm.
+
                     pg_w, pg_h = Cm(29.7), Cm(21)
-                    src_img_w = Cm(27.7)  # 1cm margins
+                    src_img_w = Cm(27.7)
                 else:
-                    # A4 portrait: 21cm x 29.7cm.
+
                     pg_w, pg_h = Cm(21), Cm(29.7)
                     src_img_w = Cm(19)
                 page_imgs = _render_source_pages_as_images(source_path, work_dir)
@@ -465,12 +465,12 @@ def build_full_export_docx(
                     p.paragraph_format.space_before = Pt(0)
                     p.paragraph_format.space_after = Pt(0)
                     run = p.add_run()
-                    # Full-bleed source page (1cm margin each side).
+
                     run.add_picture(str(img), width=src_img_w)
                 if page_imgs:
                     source_added = True
-                    # Translation body section: matches source
-                    # orientation; normal 2cm margins; fresh page.
+
+
                     body_sect = out.add_section(WD_SECTION.NEW_PAGE)
                     body_sect.page_width = pg_w
                     body_sect.page_height = pg_h
@@ -483,25 +483,25 @@ def build_full_export_docx(
                 "Source-page embedding failed — continuing without source pages"
             )
 
-        # 4) Merge the translated content.
+
         try:
             translated_doc = Document(BytesIO(translated_docx_bytes))
             _append_body_from(translated_doc, out)
         except Exception:
             logger.exception("Translated-body merge failed")
-            # Last-ditch: dump translated text into a paragraph so the
-            # export at least carries the translation.
+
+
             out.add_paragraph(
                 "Translation content could not be merged. Please contact support."
             )
 
-        # 5) Certification page.
+
         try:
             _append_certification(out, project, user, work_dir)
         except Exception:
             logger.exception("Certification append failed")
 
-        # 6) Serialize.
+
         buf = BytesIO()
         out.save(buf)
         buf.seek(0)

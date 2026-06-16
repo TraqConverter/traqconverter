@@ -3,19 +3,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { api } from "@/lib/api"
 
-// ============================================================
-// MEMBERS — ESPRESSO LOOK
-// Wired to real backend:
-//   GET    /members                  → { team_id, team_name, members[], pending_invites[] }
-//   POST   /members/invite { email, role }
-//   PATCH  /members/{user_id} { role }
-//   DELETE /members/{user_id}
-//   DELETE /members/invites/{invite_id}
-//
-// If the invitee already has an account they are added immediately; otherwise
-// a pending invite is stored and auto-accepted on their next register/login.
-// ============================================================
-
 type Member = {
   id: string
   email: string
@@ -66,9 +53,7 @@ function initialsFor(m: { full_name: string | null; email: string }) {
 
 function relativeTime(iso?: string | null) {
   if (!iso) return "—"
-  // Backend returns naive UTC ISO strings without timezone markers.
-  // Without this, the browser parses them as local time and rows
-  // appear hours older than they actually are.
+
   const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(iso)
   const safe = hasTz ? iso : iso + "Z"
   const t = new Date(safe).getTime()
@@ -219,14 +204,14 @@ export default function MembersPage() {
 
   return (
     <div className="space-y-6 pb-16">
-      {/* BREADCRUMB */}
+      {}
       <div className="text-[12px] tracking-wide" style={{ color: "#9a9178" }}>
         TraqConverter <span style={{ color: "#cfc6ad" }}>›</span> Account{" "}
         <span style={{ color: "#cfc6ad" }}>›</span>{" "}
         <span style={{ color: "#1f2a2e" }}>Members</span>
       </div>
 
-      {/* HEADER */}
+      {}
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
           <div
@@ -295,7 +280,7 @@ export default function MembersPage() {
         </div>
       )}
 
-      {/* INVITE PANEL */}
+      {}
       {showInvite && (
         <div
           className="rounded-2xl p-5"
@@ -394,7 +379,7 @@ export default function MembersPage() {
         </div>
       )}
 
-      {/* MEMBERS TABLE */}
+      {}
       <div
         className="rounded-2xl overflow-hidden"
         style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
@@ -538,7 +523,7 @@ export default function MembersPage() {
         )}
       </div>
 
-      {/* PENDING INVITES */}
+      {}
       {snapshot && snapshot.pending_invites.length > 0 && (
         <div className="space-y-3">
           <div

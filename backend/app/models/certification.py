@@ -32,7 +32,7 @@ class Certification(Base):
 
     file_name = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
-    # AFFIDAVIT / ISO_17100 / SWORN_DECLARATION / OTHER
+
     kind = Column(String, nullable=False, default="OTHER")
     notes = Column(Text, nullable=True)
     file_hash = Column(String(64), nullable=False)

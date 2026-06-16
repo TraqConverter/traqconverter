@@ -18,7 +18,7 @@ from typing import Deque, Dict, Tuple
 
 from fastapi import HTTPException, Request, status
 
-# (ip, scope) → deque of timestamps
+
 _buckets: Dict[Tuple[str, str], Deque[float]] = {}
 
 
@@ -38,7 +38,7 @@ def rate_limit(scope: str, max_requests: int, per_seconds: int):
         window_start = now - per_seconds
         bucket = _buckets.setdefault(key, deque())
 
-        # Drop timestamps that fell out of the window.
+
         while bucket and bucket[0] < window_start:
             bucket.popleft()
 

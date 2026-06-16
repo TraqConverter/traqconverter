@@ -10,8 +10,8 @@ class Glossary(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    # Audit HIGH-2: this column was literally named `user_id` while
-    # FK'ing to `teams.id`. Renamed to match what it actually points at.
+
+
     team_id = Column(
         UUID(as_uuid=True),
         ForeignKey("teams.id", ondelete="CASCADE"),

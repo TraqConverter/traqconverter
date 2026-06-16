@@ -7,9 +7,9 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# --------------------------------------------------
-# STEP 1 — OCR Confidence Threshold
-# --------------------------------------------------
+
+
+
 
 CONFIDENCE_THRESHOLD = 80.0
 
@@ -41,9 +41,9 @@ def extract_text_with_textract(file_path):
         if block["BlockType"] != "LINE":
             continue
 
-        # --------------------------------------------
-        # STEP 1 — Confidence filtering
-        # --------------------------------------------
+
+
+
 
         confidence = block.get("Confidence", 0)
 
@@ -58,9 +58,9 @@ def extract_text_with_textract(file_path):
         if text:
             lines.append(text)
 
-    # --------------------------------------------------
-    # STEP 2 — OCR Failure Handling
-    # --------------------------------------------------
+
+
+
 
     if not lines:
         logger.error("OCR extraction failed — no usable text detected")

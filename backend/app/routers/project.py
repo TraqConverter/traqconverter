@@ -50,14 +50,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
-# ============================================================
-# AVAILABLE TRANSLATION MODELS
-# ------------------------------------------------------------
-# Exposes the model catalog from ai_translation_service to the
-# frontend so the new-project page can render a dropdown. Adding a
-# new model in MODEL_OPTIONS automatically shows up here without
-# any router changes.
-# ============================================================
+
+
+
+
+
+
+
+
 @router.get("/translation-models")
 def list_translation_models():
     from app.services.ai_translation_service import MODEL_OPTIONS
@@ -70,30 +70,30 @@ def list_translation_models():
                 "provider": cfg.get("provider"),
             }
             for key, cfg in MODEL_OPTIONS.items()
-            # Hide the "balanced" legacy alias from the picker — it's
-            # still accepted server-side but new users should pick a
-            # specific model.
+
+
+
             if key != "balanced"
         ]
     }
 
 
-# ============================================================
-# UPLOAD PROJECT
-# ============================================================
+
+
+
 
 @router.post("/upload")
 async def upload_project(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
 
-    # ✅ FIX 1: Provide defaults so frontend doesn’t break
+
     source_language: str = Form("English"),
     target_language: str = Form("Spanish"),
     model: str = Form("balanced"),
 
-    # New-project page toggles — persisted on the project so the worker
-    # can honour them at translation time.
+
+
     use_tm: bool = Form(True),
     apply_glossary: bool = Form(True),
     request_certification: bool = Form(False),
@@ -111,9 +111,9 @@ async def upload_project(
 
     try:
 
-        # ----------------------------------------------------
-        # Idempotency Check
-        # ----------------------------------------------------
+
+
+
         if idempotency_key:
             existing_project = (
                 db.query(TranslationProject)
@@ -130,10 +130,10 @@ async def upload_project(
                     "credits_used": existing_project.credits_used,
                 }
 
-        # ----------------------------------------------------
-        # Get Team — owner first, then membership fallback so
-        # invited team members can upload too (Audit P1 #6).
-        # ----------------------------------------------------
+
+
+
+
         team = (
             db.query(Team)
             .filter(Team.owner_id == current_user.id)
@@ -156,30 +156,30 @@ async def upload_project(
         if not team:
             raise HTTPException(status_code=400, detail="Team not found")
 
-        # ----------------------------------------------------
-        # Save File Locally
-        # ----------------------------------------------------
+
+
+
         file_path, _ = save_file_locally(file, str(team.id))
 
-        # ----------------------------------------------------
-        # Upload To S3
-        # ----------------------------------------------------
+
+
+
         s3_key = upload_file_to_s3(Path(file_path))
         logger.info(f"S3 upload successful: {s3_key}")
 
-        # ----------------------------------------------------
-        # Count Pages (SAFE GUARD)
-        # ----------------------------------------------------
+
+
+
         try:
             page_count = get_page_count(file_path)
         except Exception:
-            page_count = 1  # 🔥 fallback so upload never fails
+            page_count = 1
 
         credits_required = max(1, page_count)
 
-        # ----------------------------------------------------
-        # Create Project (FIXED MODEL FIELD)
-        # ----------------------------------------------------
+
+
+
         project = TranslationProject(
             user_id=current_user.id,
             team_id=team.id,
@@ -191,9 +191,9 @@ async def upload_project(
 
             source_language=source_language,
             target_language=target_language,
-            model=model,  # ✅ REQUIRED FIELD
+            model=model,
 
-            # Per-project options from the new-project page toggles.
+
             use_tm=use_tm,
             apply_glossary=apply_glossary,
             add_certification=request_certification,
@@ -210,15 +210,15 @@ async def upload_project(
         db.add(project)
         db.flush()
 
-        # ----------------------------------------------------
-        # Deduct Credits — superusers / admins bypass the wallet
-        # entirely so the operator account never runs out.
-        # ----------------------------------------------------
+
+
+
+
         is_staff = (current_user.role or "").upper() in (
             "SUPERUSER", "SUPER_ADMIN", "ADMIN",
         )
         if is_staff:
-            new_balance = -1  # signals "unlimited"
+            new_balance = -1
         else:
             try:
                 new_balance = CreditService.deduct_credits(
@@ -232,9 +232,9 @@ async def upload_project(
             except InsufficientCreditsError:
                 raise HTTPException(status_code=400, detail="Insufficient credits")
 
-        # ----------------------------------------------------
-        # Commit
-        # ----------------------------------------------------
+
+
+
         db.commit()
         db.refresh(project)
 
@@ -253,7 +253,7 @@ async def upload_project(
         db.rollback()
 
         logger.exception("Upload failed")
-        # Audit Low fix: was a print-with-emoji; use the logger instead.
+
         logger.error("Upload failed: %s", e)
 
         if file_path and os.path.exists(file_path):
@@ -261,9 +261,9 @@ async def upload_project(
 
         raise HTTPException(status_code=400, detail=str(e))
 
-    # ----------------------------------------------------
-    # Trigger Worker
-    # ----------------------------------------------------
+
+
+
     background_tasks.add_task(
         enqueue_translation_job,
         project_id,
@@ -280,9 +280,9 @@ async def upload_project(
         "remaining_credits": new_balance,
     }
 
-# ============================================================
-# LIST PROJECTS
-# ============================================================
+
+
+
 
 @router.get("/")
 def list_projects(
@@ -299,7 +299,7 @@ def list_projects(
     from app.models.team_member import TeamMember
     from app.models.team import Team
 
-    # Resolve the team this user belongs to (owner or member)
+
     team = db.query(Team).filter(Team.owner_id == current_user.id).first()
     if not team:
         membership = (
@@ -323,11 +323,11 @@ def list_projects(
 
     projects = base.limit(50).all()
 
-    # Pre-fetch BOTH assignee and owner user rows so we can render
-    # names/emails without N+1. The frontend uses assignee when set
-    # (someone's actively working on it) and falls back to the project
-    # creator otherwise — the dashboard's "TEAM" column needs real
-    # initials rather than the old "NL" placeholder.
+
+
+
+
+
     related_ids = {p.assignee_id for p in projects if p.assignee_id}
     related_ids |= {p.user_id for p in projects if p.user_id}
     users_by_id = {}
@@ -335,10 +335,10 @@ def list_projects(
         for u in db.query(User).filter(User.id.in_(related_ids)).all():
             users_by_id[str(u.id)] = u
 
-    # Source-language word count per project. Cheap Python tally
-    # over the segment rows we already need to load for progress
-    # anyway — single SELECT keyed by project_id, then sum in
-    # Python.
+
+
+
+
     word_counts: dict[str, int] = {}
     if projects:
         project_ids = [p.id for p in projects]
@@ -371,9 +371,9 @@ def list_projects(
             "id": str(p.id),
             "filename": p.file_name,
             "status": p.status,
-            # review_status is the human-review axis. The frontend
-            # uses it to render the "In review" / "Certified" pill
-            # when the worker has finished (status==COMPLETED).
+
+
+
             "review_status": p.review_status or "DRAFT",
             "progress": progress,
             "source_lang": p.source_language,
@@ -406,9 +406,9 @@ def list_projects(
     return result
 
 
-# ============================================================
-# ASSIGN PROJECT TO A TEAM MEMBER
-# ============================================================
+
+
+
 
 class _AssignPayload(BaseModel):
     assignee_id: str | None = None
@@ -432,7 +432,7 @@ def assign_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Caller must own the team or be a member of it
+
     team = db.query(Team).filter(Team.id == project.team_id).first()
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
@@ -450,7 +450,7 @@ def assign_project(
     if data.assignee_id is None:
         project.assignee_id = None
     else:
-        # Verify the assignee is on the same team
+
         target = db.query(User).filter(User.id == data.assignee_id).first()
         if not target:
             raise HTTPException(status_code=404, detail="Assignee not found")
@@ -478,9 +478,9 @@ def assign_project(
     }
 
 
-# ============================================================
-# GET PROJECT STATUS
-# ============================================================
+
+
+
 
 @router.get("/{project_id}")
 def get_project_status(
@@ -488,8 +488,8 @@ def get_project_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Audit P1 #4: team-aware so assigned teammates can read
-    # status (was owner-only).
+
+
     project = get_user_project_or_404(db, project_id, current_user)
 
     progress = 0
@@ -498,7 +498,7 @@ def get_project_status(
             (project.translated_segments / project.total_segments) * 100
         )
 
-    # Real per-segment counts so the editor toolbar doesn't show fake stats.
+
     total = (
         db.query(TranslationSegment)
         .filter(TranslationSegment.project_id == project.id)
@@ -522,7 +522,7 @@ def get_project_status(
         .count()
     )
 
-    # Average TM match across segments that had a hit.
+
     tm_hits = (
         db.query(TranslationSegment.tm_pct)
         .filter(
@@ -535,7 +535,7 @@ def get_project_status(
         round(sum(int(r[0]) for r in tm_hits) / len(tm_hits)) if tm_hits else 0
     )
 
-    # Resolve assignee user once for the avatar circle.
+
     assignee_payload = None
     if project.assignee_id:
         a = db.query(User).filter(User.id == project.assignee_id).first()
@@ -546,7 +546,7 @@ def get_project_status(
                 "full_name": a.full_name,
             }
 
-    # Resolve owner / uploader so the editor can show their initials too.
+
     uploader_payload = None
     owner = db.query(User).filter(User.id == project.user_id).first()
     if owner:
@@ -576,9 +576,9 @@ def get_project_status(
         "uploader": uploader_payload,
     }
 
-# ============================================================
-# GET PROJECT SEGMENTS
-# ============================================================
+
+
+
 
 @router.get("/{project_id}/segments")
 def get_project_segments(
@@ -586,10 +586,10 @@ def get_project_segments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Audit P1 #4: team-aware so teammates can read segments.
+
     project = get_user_project_or_404(db, project_id, current_user)
 
-    # 📄 Get segments
+
     segments = (
         db.query(TranslationSegment)
         .filter(TranslationSegment.project_id == project_id)
@@ -610,9 +610,9 @@ def get_project_segments(
     ]
 
 
-# ============================================================
-# TOGGLE SEGMENT APPROVAL (used by editor's green-tick action)
-# ============================================================
+
+
+
 
 class _ApprovePayload(BaseModel):
     approved: bool
@@ -626,8 +626,8 @@ def approve_segment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Audit HIGH-3: scope by team, not creator. Assigned teammates can
-    # see/approve/certify/download projects too.
+
+
     project = get_user_project_or_404(db, project_id, current_user)
 
     seg = (
@@ -647,9 +647,9 @@ def approve_segment(
     return {"id": str(seg.id), "approved": seg.approved}
 
 
-# ============================================================
-# UPDATE PROJECT REVIEW STATUS (DRAFT / IN_REVIEW / CERTIFIED)
-# ============================================================
+
+
+
 
 class _ReviewStatusPayload(BaseModel):
     status: str
@@ -667,8 +667,8 @@ def update_review_status(
     if new_status not in allowed:
         raise HTTPException(status_code=400, detail="Invalid review status")
 
-    # Audit HIGH-3: scope by team, not creator. Assigned teammates can
-    # see/approve/certify/download projects too.
+
+
     project = get_user_project_or_404(db, project_id, current_user)
 
     project.review_status = new_status
@@ -677,9 +677,9 @@ def update_review_status(
     return {"id": str(project.id), "review_status": project.review_status}
 
 
-# ============================================================
-# CERTIFY & DELIVER — flips review_status to CERTIFIED. Pro only.
-# ============================================================
+
+
+
 
 @router.post(
     "/{project_id}/certify",
@@ -690,8 +690,8 @@ def certify_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Audit HIGH-3: scope by team, not creator. Assigned teammates can
-    # see/approve/certify/download projects too.
+
+
     project = get_user_project_or_404(db, project_id, current_user)
 
     if project.status != ProjectStatus.COMPLETED:
@@ -712,19 +712,19 @@ def certify_project(
     }
 
 
-# ============================================================
-# DOWNLOAD PROJECT RESULT — gated on download_translation feature.
-# DOCX/PDF export endpoints live in app.routers.export to avoid
-# duplicate routes — they consume the layout-preserving rebuild
-# that the worker uploads to S3.
-# ============================================================
 
-# ============================================================
-# SOURCE PREVIEW — returns a short-lived signed URL the editor can
-# load into an <iframe>/<img> to show the ORIGINAL document next to
-# the rebuilt translation. No download gating — viewing the source
-# is always allowed if the user can see the project at all.
-# ============================================================
+
+
+
+
+
+
+
+
+
+
+
+
 @router.get("/{project_id}/source-url")
 def get_source_url(
     project_id: UUID,
@@ -734,11 +734,11 @@ def get_source_url(
     project = get_user_project_or_404(db, project_id, current_user)
     if not project.file_path:
         raise HTTPException(status_code=404, detail="Source file not available")
-    # inline=True so the browser renders the PDF/image in the iframe
-    # rather than downloading it.
+
+
     url = generate_presigned_download_url(project.file_path, inline=True)
-    # Hand the frontend a hint about how to render the file so it can
-    # choose <iframe> for PDFs and <img> for images.
+
+
     fname = (project.file_name or "").lower()
     if fname.endswith(".pdf"):
         kind = "pdf"
@@ -749,12 +749,12 @@ def get_source_url(
     return {"url": url, "kind": kind, "filename": project.file_name}
 
 
-# ============================================================
-# REBUILD PREVIEW — returns a signed URL to the rebuild output file
-# so the editor's Compare view can show it next to the original.
-# This is purely a preview / viewing call (no download-feature
-# gating) so users on any plan can verify the rebuild visually.
-# ============================================================
+
+
+
+
+
+
 @router.get("/{project_id}/rebuild-url")
 def get_rebuild_url(
     project_id: UUID,
@@ -763,12 +763,12 @@ def get_rebuild_url(
 ):
     project = get_user_project_or_404(db, project_id, current_user)
     if not project.output_file:
-        # The worker hasn't produced an output yet (project still
-        # processing or failed). Tell the frontend so it can show a
-        # helpful message rather than a broken iframe.
+
+
+
         return {"url": None, "kind": "none", "filename": None}
-    # inline=True so the browser renders the rebuild in the iframe
-    # rather than triggering a download.
+
+
     url = generate_presigned_download_url(project.output_file, inline=True)
     name = (project.output_file or "").rsplit("/", 1)[-1].lower()
     if name.endswith(".pdf"):
@@ -791,8 +791,8 @@ def download_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Audit HIGH-3: scope by team, not creator. Assigned teammates can
-    # see/approve/certify/download projects too.
+
+
     project = get_user_project_or_404(db, project_id, current_user)
 
     if project.status != ProjectStatus.COMPLETED:
@@ -807,15 +807,15 @@ def download_project(
     return {"download_url": download_url}
 
 
-# ============================================================
-# DELETE PROJECT
-# ============================================================
 
-# ============================================================
-# RENAME PROJECT — updates the display file_name shown in the UI.
-# Doesn't touch the underlying storage key (project.file_path) so
-# the original document and any rebuild remain reachable.
-# ============================================================
+
+
+
+
+
+
+
+
 
 class _PatchProjectPayload(BaseModel):
     file_name: Optional[str] = None
@@ -839,9 +839,9 @@ def update_project(
             raise HTTPException(
                 status_code=400, detail="file_name can't be empty"
             )
-        # Keep an extension on the visible name so DOCX/PDF export
-        # filenames don't get awkward — if the user dropped it, splice
-        # the original extension back on.
+
+
+
         original_ext = ""
         if project.file_name and "." in project.file_name:
             original_ext = "." + project.file_name.rsplit(".", 1)[-1]
@@ -850,7 +850,7 @@ def update_project(
         project.file_name = new_name[:255]
 
     if data.certification_template_id is not None:
-        # Empty string clears the template.
+
         if data.certification_template_id == "":
             project.certification_template_id = None
         else:
@@ -877,17 +877,17 @@ def update_project(
     }
 
 
-# ============================================================
-# FAST PREVIEW STREAMERS
-# ------------------------------------------------------------
-# Earlier Compare relied on Google Docs / Office Online viewers
-# which add 5-15s of latency because they fetch + parse + render
-# the file on Google's / Microsoft's servers. These endpoints
-# stream the file directly from our backend with
-# Content-Disposition: inline, so the browser's native PDF / image
-# viewer takes over. Authentication accepts either Bearer header
-# OR ?access_token=… because <iframe> can't send custom headers.
-# ============================================================
+
+
+
+
+
+
+
+
+
+
+
 from app.dependencies import get_current_user_or_query  # noqa: E402
 from fastapi.responses import Response as _FastResponse  # noqa: E402
 
@@ -897,24 +897,24 @@ def _project_preview_team_check(db, project_id, user):
     return get_user_project_or_404(db, project_id, user)
 
 
-# ============================================================
-# Resolve the rebuild DOCX bytes for a project, preferring (in
-# order):
-#   1. edited_html  — HTML edited in the WYSIWYG right pane,
-#                     converted back to DOCX via htmldocx.
-#   2. authored_docx_s3_key — Claude-authored DOCX (option 1).
-#   3. segment-driven _build_layout_docx_live as the final fallback.
-#
-# This is what the preview, the HTML preview, and the export
-# endpoints all rely on so a single resolution lives in one place.
-# ============================================================
+
+
+
+
+
+
+
+
+
+
+
 
 def _resolve_rebuild_docx_bytes(
     project, segments, *, preview_only: bool = True
 ) -> bytes:
     from io import BytesIO
 
-    # 1) User edited HTML → preferred source of truth.
+
     edited_html = getattr(project, "edited_html", None)
     if edited_html and edited_html.strip():
         try:
@@ -933,7 +933,7 @@ def _resolve_rebuild_docx_bytes(
                 "authored DOCX or segment renderer"
             )
 
-    # 2) Claude-authored DOCX in storage → download and return.
+
     authored_key = getattr(project, "authored_docx_s3_key", None)
     if authored_key:
         try:
@@ -958,7 +958,7 @@ def _resolve_rebuild_docx_bytes(
                 "segment renderer"
             )
 
-    # 3) Segment-driven rebuild (legacy path).
+
     from app.services.export_service import _build_layout_docx_live
 
     docx_buf = _build_layout_docx_live(
@@ -1007,10 +1007,10 @@ def preview_source(
     if fname.endswith(".pdf"):
         media = "application/pdf"
     elif fname.endswith((".png", ".jpg", ".jpeg", ".webp")):
-        # Wrap raw images in a single-page PDF so the browser's PDF
-        # viewer renders them with fit-to-page (raw images get shown
-        # at 1:1 native size in iframes which looks like a zoomed-in
-        # mess on high-DPI scans).
+
+
+
+
         try:
             from io import BytesIO as _BIO
             from PIL import Image
@@ -1030,10 +1030,10 @@ def preview_source(
             else:
                 media = "image/jpeg"
     elif fname.endswith(".docx"):
-        # Convert DOCX → PDF so the iframe can render it. LibreOffice
-        # is already on the image (Dockerfile installs it for Export
-        # PDF). If conversion fails we still serve the raw DOCX, which
-        # the browser will offer as a download.
+
+
+
+
         with tempfile.TemporaryDirectory() as tmp:
             converted = _convert_docx_to_pdf(bytes_)
         if converted:
@@ -1052,9 +1052,9 @@ def preview_source(
         media_type=media,
         headers={
             "Content-Disposition": "inline",
-            # Cache for 5 min — the source doesn't change during a
-            # single review session, no need to re-fetch on every
-            # iframe load.
+
+
+
             "Cache-Control": "private, max-age=300",
         },
     )
@@ -1079,7 +1079,7 @@ def preview_rebuild(
 
     project = _project_preview_team_check(db, project_id, user)
 
-    # Stash auth context the export pipeline expects.
+
     project._export_user_email = user.email or ""
     project._export_user_logo_key = getattr(user, "logo_s3_key", None)
 
@@ -1098,8 +1098,8 @@ def preview_rebuild(
 
     pdf_bytes = _convert_docx_to_pdf(docx_bytes)
     if not pdf_bytes:
-        # LibreOffice not available — stream the DOCX as-is so at
-        # least the user gets the file (the browser will download).
+
+
         return _FastResponse(
             content=docx_bytes,
             media_type=(
@@ -1119,14 +1119,14 @@ def preview_rebuild(
     )
 
 
-# ============================================================
-# REBUILD AS HTML — converts the rebuilt translation DOCX into
-# styled HTML using `mammoth`. The Compare-view right pane fetches
-# this so the user sees the document the way it'll export *and* can
-# edit it inline (the wrapper makes it contentEditable). Saves of the
-# edited HTML go through PATCH /projects/{id}/preview-edits and are
-# honoured by the export pipeline when present.
-# ============================================================
+
+
+
+
+
+
+
+
 
 @router.get("/{project_id}/preview/rebuild-html")
 def preview_rebuild_html(
@@ -1136,12 +1136,12 @@ def preview_rebuild_html(
 ):
     project = _project_preview_team_check(db, project_id, user)
 
-    # Stash auth context the export pipeline expects.
+
     project._export_user_email = user.email or ""
     project._export_user_logo_key = getattr(user, "logo_s3_key", None)
 
-    # If the user has already edited the HTML, just return that —
-    # there's no point round-tripping HTML→DOCX→HTML.
+
+
     edited_html = getattr(project, "edited_html", None)
     if edited_html and edited_html.strip():
         return _FastResponse(
@@ -1150,13 +1150,13 @@ def preview_rebuild_html(
             headers={"Cache-Control": "private, max-age=10"},
         )
 
-    # AUTO-AUTHOR: if this is a PDF project that hasn't yet been
-    # rebuilt with Claude, run the authored rebuild INLINE before
-    # we return. This blocks 60-180s on the first call but
-    # guarantees the right pane always shows Claude's output rather
-    # than the segment-renderer fallback (with its over-tabled
-    # headers, etc.). On subsequent calls authored_docx_s3_key is
-    # set and we skip straight to mammoth conversion.
+
+
+
+
+
+
+
     needs_author = (
         (project.source_kind or "").upper() == "PDF"
         and not getattr(project, "authored_docx_s3_key", None)
@@ -1220,10 +1220,10 @@ def preview_rebuild_html(
         project, segments, preview_only=True
     )
 
-    # mammoth gives us clean, semantic HTML (paragraphs, tables,
-    # headings) without LibreOffice's verbose CSS. Inline style maps
-    # keep emphasis (bold/italic) and a base stylesheet matches the
-    # cream/teal aesthetic so it reads like Word.
+
+
+
+
     try:
         import mammoth  # type: ignore
         from io import BytesIO as _BIO
@@ -1242,18 +1242,18 @@ def preview_rebuild_html(
         media_type="text/html; charset=utf-8",
         headers={
             "Cache-Control": "private, max-age=60",
-            # We render this HTML inside our own page via fetch() —
-            # CORS is governed by app.config cors_origins.
+
+
         },
     )
 
 
-# ============================================================
-# REBUILD AS RAW DOCX — streams the rebuilt DOCX bytes directly so
-# the frontend can render with docx-preview (much higher fidelity
-# than mammoth HTML — preserves tab stops, alignment, column widths,
-# fonts, page layout). Used by the Compare view's right pane.
-# ============================================================
+
+
+
+
+
+
 
 @router.get("/{project_id}/preview/rebuild-docx")
 def preview_rebuild_docx(
@@ -1299,18 +1299,18 @@ def preview_rebuild_docx(
         ),
         headers={
             "Cache-Control": "private, max-age=30",
-            # docx-preview fetches this client-side via fetch();
-            # CORS is governed by app.config.cors_origins.
+
+
         },
     )
 
 
-# ============================================================
-# SUGGEST GLOSSARY — AI scans all translated segments and proposes
-# glossary entries (recurring proper nouns, technical terms,
-# branded phrases). Returned as proposals — the user reviews and
-# saves the ones they want via POST /glossary.
-# ============================================================
+
+
+
+
+
+
 
 @router.post("/{project_id}/suggest-glossary")
 def suggest_glossary(
@@ -1370,7 +1370,7 @@ def suggest_glossary(
         f"if no good terms are found."
     )
 
-    # Compact pairs to keep prompt size reasonable.
+
     sample_size = 80
     sample = pairs[:sample_size]
     user_payload = "\n\n".join(
@@ -1390,7 +1390,7 @@ def suggest_glossary(
             status_code=500, detail=f"Glossary extraction failed: {e}"
         )
 
-    # Strip any accidental ``` fences and parse.
+
     cleaned = raw.strip()
     if cleaned.startswith("```"):
         cleaned = _re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned)
@@ -1401,7 +1401,7 @@ def suggest_glossary(
         logger.warning("Glossary suggestion: couldn't parse JSON")
         proposals = []
 
-    # Light validation — drop entries missing either side.
+
     cleaned_proposals = []
     seen_pairs: set[tuple[str, str]] = set()
     for p in proposals:
@@ -1431,22 +1431,22 @@ def suggest_glossary(
     }
 
 
-# ============================================================
-# REVISE — AI critiques and rewrites every translated segment in
-# the project. Used by the Compare view's "Request revision" button
-# when a reviewer wants the model to polish its own output.
-# ============================================================
+
+
+
+
+
 
 class _ReviseProjectPayload(BaseModel):
     instructions: Optional[str] = None
-    model: Optional[str] = None  # override the project's chosen model
+    model: Optional[str] = None
 
 
-# ============================================================
-# EDITED HTML — the Compare-view WYSIWYG right pane auto-saves the
-# user's in-page edits here every ~1.5s. Stored on the project and
-# preferred by the preview + export endpoints.
-# ============================================================
+
+
+
+
+
 
 class _EditedHtmlPayload(BaseModel):
     html: str
@@ -1460,7 +1460,7 @@ def save_edited_html(
     current_user: User = Depends(get_current_user),
 ):
     project = get_user_project_or_404(db, project_id, current_user)
-    # Reasonable cap to keep a runaway editor from blowing the row.
+
     raw = data.html or ""
     if len(raw) > 2_000_000:
         raise HTTPException(
@@ -1654,27 +1654,27 @@ def revise_project(
         improved = (improved or "").strip()
         if improved and improved != seg.translated_text:
             seg.translated_text = improved
-            seg.approved = False  # force reviewer to re-approve
+            seg.approved = False
             revised_count += 1
 
     db.commit()
 
-    # CRITICAL: the export reads from project.authored_docx_s3_key
-    # (Claude's authored DOCX), NOT from segments. If we only
-    # update segment rows, the user clicks Export DOCX and gets
-    # the SAME file as before — which is why the client reported
-    # "nothing changes when I Request Revision".
-    #
-    # Re-run the multi-turn rebuild with the user's instructions
-    # appended to the prompt so the new authored DOCX reflects
-    # what they asked for. Replace the cached
-    # authored_docx_s3_key. Clear edited_html so the next preview
-    # / export uses this fresh DOCX. Best-effort: if the rebuild
-    # fails (timeout, API error), keep the segment updates and
-    # surface the error to the client.
-    # The multi-turn rebuild is expensive (1-5 min). Run it in a
-    # FastAPI BackgroundTask so this HTTP request returns now.
-    # Frontend tells the user to reload in a couple of minutes.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     rebuild_status = "skipped_no_instructions"
     is_pdf = (project.file_name or "").lower().endswith(".pdf")
     if instructions and is_pdf:
@@ -1698,25 +1698,25 @@ def revise_project(
     }
 
 
-# ============================================================
-# RE-RUN — translate the whole project from scratch using a chosen
-# model. Replaces every existing translated_text. Used by the
-# Compare view's "Re-run" button when the user wants to try a
-# different model or just start over.
-# ============================================================
 
-# ============================================================
-# REBUILD WITH CLAUDE — on-demand "Premium rebuild" for an existing
-# project. Downloads the original PDF, runs the Claude-authored
-# rebuild service (sends PDF → Claude Sonnet → python-docx script →
-# DOCX), uploads the result to Supabase, and points
-# project.authored_docx_s3_key at it. Edited HTML is cleared so the
-# new authored DOCX is what the preview shows.
-#
-# Triggered by the "Rebuild with Claude" button in the editor
-# toolbar — used when the project was created before authored
-# rebuild was wired, or when the user wants a fresh authored pass.
-# ============================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 @router.post("/{project_id}/rebuild-with-claude")
 def rebuild_with_claude(
@@ -1735,8 +1735,8 @@ def rebuild_with_claude(
 
     project = get_user_project_or_404(db, project_id, current_user)
 
-    # Only meaningful for PDF source projects — Claude needs the PDF
-    # to see the layout.
+
+
     if (project.source_kind or "").upper() != "PDF":
         raise HTTPException(
             status_code=400,
@@ -1765,8 +1765,8 @@ def rebuild_with_claude(
 
         key = upload_file_to_s3(out_path)
         project.authored_docx_s3_key = key
-        # User's prior HTML edits no longer match the new structure —
-        # clear them so the preview reflects the new authored DOCX.
+
+
         project.edited_html = None
         db.commit()
     except Exception as e:
@@ -1786,7 +1786,7 @@ def rebuild_with_claude(
 
 
 class _RerunProjectPayload(BaseModel):
-    model: Optional[str] = None  # override the project's chosen model
+    model: Optional[str] = None
 
 
 @router.post("/{project_id}/rerun")
@@ -1810,8 +1810,8 @@ def rerun_project(
 
     new_model = (data.model or "").strip()
     if new_model:
-        # Persist the chosen model on the project so future exports +
-        # retranslations use it too.
+
+
         project.model = new_model
         db.commit()
 
@@ -1861,12 +1861,12 @@ def delete_project(
     from app.models.translation_segment import TranslationSegment
     from app.models.segment_comment import SegmentComment
 
-    # Audit HIGH-3: scope by team, not creator.
+
     project = get_user_project_or_404(db, project_id, current_user)
     pid = str(project.id)
 
     try:
-        # 1) Comments — keyed by segment id.
+
         segment_ids = [
             row[0]
             for row in db.query(TranslationSegment.id)
@@ -1878,19 +1878,19 @@ def delete_project(
                 SegmentComment.segment_id.in_(segment_ids)
             ).delete(synchronize_session=False)
 
-        # 2) Segments themselves.
+
         db.query(TranslationSegment).filter(
             TranslationSegment.project_id == project.id
         ).delete(synchronize_session=False)
 
-        # 3) Translation memory entries scoped to this project.
-        #    Wrapped in a SAVEPOINT so a failure here (e.g. the
-        #    table lacks project_id on older schemas) doesn't
-        #    blow away the comments+segments deletes from steps
-        #    1-2 like a bare db.rollback() would. Previously
-        #    that mass-rollback left segments still referencing
-        #    the project, and step 5 raised IntegrityError —
-        #    user reported "Couldn't delete project — IntegrityError".
+
+
+
+
+
+
+
+
         sp = db.begin_nested()
         try:
             db.execute(
@@ -1902,10 +1902,10 @@ def delete_project(
             sp.commit()
         except Exception:
             sp.rollback()
-            # TM table may not have project_id on older schemas
-            # — keep going. Outer transaction is intact.
 
-        # 4) Job queue rows. Same savepoint pattern.
+
+
+
         sp = db.begin_nested()
         try:
             db.execute(
@@ -1918,7 +1918,7 @@ def delete_project(
         except Exception:
             sp.rollback()
 
-        # 5) Finally the project row itself.
+
         db.delete(project)
         db.commit()
     except Exception as e:

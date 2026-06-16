@@ -31,8 +31,8 @@ def _resolve_user_team(db: Session, user: User) -> Team:
     raise HTTPException(status_code=404, detail="Team not found")
 
 
-# Both endpoints are Pro-only. Returning 403 lets the frontend render its
-# upgrade-to-Pro paywall instead of guessing at empty data.
+
+
 router = APIRouter(
     prefix="/tm",
     tags=["Translation Memory"],
@@ -40,9 +40,9 @@ router = APIRouter(
 )
 
 
-# ============================================================
-# LIST TM ENTRIES (with optional language filter + search)
-# ============================================================
+
+
+
 
 @router.get("/")
 def list_tm_entries(
@@ -82,9 +82,9 @@ def list_tm_entries(
     ]
 
 
-# ============================================================
-# TM SUMMARY (counts, language pairs, words saved estimate)
-# ============================================================
+
+
+
 
 @router.get("/summary")
 def tm_summary(
@@ -99,7 +99,7 @@ def tm_summary(
         .scalar()
     ) or 0
 
-    # Distinct language pairs
+
     pair_rows = (
         db.query(
             TranslationMemory.source_language,
@@ -123,8 +123,8 @@ def tm_summary(
         for r in pair_rows
     ]
 
-    # Crude "words" estimate — sum of whitespace-split tokens in source text.
-    # Done in Python because Postgres array_length on regexp_split is dialect-specific.
+
+
     word_estimate = 0
     for st in (
         db.query(TranslationMemory.source_text)

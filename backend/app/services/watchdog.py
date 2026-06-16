@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
 STALL_TIMEOUT_MINUTES = 2
 
-# Set once we've observed a missing translation_jobs table so we stop
-# spamming the logs while migrations haven't been applied yet.
+
+
 _jobs_table_warning_logged = False
 
 
@@ -40,8 +40,8 @@ def recover_stalled_jobs():
             minutes=STALL_TIMEOUT_MINUTES
         )
 
-        # 1. Reset stalled translation_jobs rows. SELECT FOR UPDATE
-        #    SKIP LOCKED prevents racing with a running worker.
+
+
         reset = db.execute(
             text(
                 """
@@ -70,9 +70,9 @@ def recover_stalled_jobs():
                 "Watchdog reset %d stalled translation_jobs rows", len(reset)
             )
 
-        # 2. Sweep projects whose heartbeat went silent without a
-        #    corresponding pending/processing job (worker crashed and
-        #    didn't even get to flip the job to processing). Re-enqueue.
+
+
+
         stalled_projects = (
             db.query(TranslationProject)
             .filter(
@@ -101,8 +101,8 @@ def recover_stalled_jobs():
             project.retry_count = (project.retry_count or 0) + 1
             db.commit()
 
-            # Drop a pending row so a worker re-runs it. file_path on
-            # the project holds the S3 / Supabase object key.
+
+
             try:
                 db.execute(
                     text(
