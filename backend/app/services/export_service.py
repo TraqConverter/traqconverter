@@ -614,8 +614,10 @@ def generate_docx(segments, user_email, project=None, user=None):
                     _os.unlink(tmp.name)
                 except Exception:
                     pass
+                from app.services.docx_blocks import strip_blocks
+
                 wrapped = build_full_export_docx(
-                    authored_bytes, project, user
+                    strip_blocks(authored_bytes), project, user
                 )
                 return wrapped
             except Exception:

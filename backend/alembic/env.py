@@ -32,6 +32,7 @@ import app.models.translation_memory  # noqa: F401
 import app.models.segment_comment  # noqa: F401
 import app.models.stripe_event  # noqa: F401
 import app.models.certification  # noqa: F401
+import app.models.document_version  # noqa: F401
 
 target_metadata = Base.metadata
 

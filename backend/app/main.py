@@ -148,6 +148,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Document-Version"],
 )
 
 
@@ -238,6 +239,7 @@ from app.routers import stripe
 from app.routers import subscription
 from app.routers import auth
 from app.routers import project
+from app.routers import document
 from app.routers import settings as settings_router
 from app.routers import billing
 from app.routers import segments
@@ -253,6 +255,7 @@ app.include_router(settings_router.router)
 app.include_router(stripe.router)
 app.include_router(subscription.router)
 app.include_router(auth.router)
+app.include_router(document.router)
 app.include_router(project.router)
 app.include_router(billing.router)
 app.include_router(segments.router)
