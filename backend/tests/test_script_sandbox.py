@@ -48,8 +48,9 @@ LEGIT = textwrap.dedent('''
 
 
 def _run(script, tmp):
-    work = Path(tempfile.mkdtemp(dir=tmp))
-    out = Path(tempfile.mkdtemp(dir=tmp))
+    # System temp like production; pytest's root-owned tmp_path isn't traversable by nobody.
+    work = Path(tempfile.mkdtemp())
+    out = Path(tempfile.mkdtemp())
     (work / "images").mkdir()
     from PIL import Image
     Image.new("RGB", (20, 20), "red").save(work / "images" / "logo.png")
