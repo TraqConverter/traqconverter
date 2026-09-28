@@ -3,7 +3,7 @@
 #
 #   docker compose up -d            # start everything
 #   docker compose logs -f api      # tail the API
-#   docker compose run --rm api alembic upgrade head
+# The api service runs `alembic upgrade head` before starting uvicorn.
 # ============================================================
 
 services:
@@ -37,7 +37,11 @@ services:
       # Override the DB URL so we point at the compose service rather
       # than localhost. Everything else comes from .env.
       database_url: postgresql+psycopg2://traqconverter:traqconverter@db:5432/traqconverter
+      DATABASE_URL: postgresql+psycopg2://traqconverter:traqconverter@db:5432/traqconverter
       CORS_ORIGINS: http://localhost:3000
+      # The separate worker service below processes the queue.
+      RUN_WORKER_INLINE: "0"
+    command: ["sh", "-c", "python -m alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     ports:
       - "8000:8000"
     volumes:
@@ -53,24 +57,26 @@ services:
       context: ./backend
     restart: unless-stopped
     depends_on:
-      db:
+      api:
         condition: service_healthy
     env_file:
       - ./backend/.env
     environment:
       database_url: postgresql+psycopg2://traqconverter:traqconverter@db:5432/traqconverter
-    command: ["python", "-m", "worker.worker"]
+      DATABASE_URL: postgresql+psycopg2://traqconverter:traqconverter@db:5432/traqconverter
+    command: ["python", "-m", "app.workers.sqs_worker"]
     volumes:
       - uploads:/app/uploads
 
   web:
     build:
       context: ./traqconverter-frontend
+      args:
+        # Inlined at build time; the browser calls the API through the host port.
+        NEXT_PUBLIC_API_URL: http://localhost:8000
     restart: unless-stopped
     depends_on:
       - api
-    environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
     ports:
       - "3000:3000"
 

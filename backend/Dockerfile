@@ -3,7 +3,7 @@
 # TraqConverter backend — FastAPI + worker.
 #   docker build -t traqconverter-backend .
 #   docker run --env-file .env -p 8000:8000 traqconverter-backend
-# Override CMD with `python -m worker.worker` to run the queue worker.
+# Override CMD with `python -m app.workers.sqs_worker` to run the queue worker.
 # ============================================================
 
 FROM python:3.11-slim AS base
@@ -55,9 +55,8 @@ USER app
 
 EXPOSE 8000
 
-# Healthcheck: hit the FastAPI root.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl --fail http://localhost:8000/ || exit 1
+    CMD curl --fail http://localhost:8000/health || exit 1
 
 # Default to the API server. Override the CMD to run the worker.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

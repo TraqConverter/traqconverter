@@ -13,6 +13,9 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11
+      # The worker service below processes the queue.
+      - key: RUN_WORKER_INLINE
+        value: "0"
       - fromGroup: traqconverter-secrets
 
   - type: worker
