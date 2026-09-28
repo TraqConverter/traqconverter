@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from sqlalchemy.orm import Session
 import os
@@ -7,6 +8,8 @@ from app.dependencies import get_current_user
 from app.models.user import User
 from app.core.file_validation import validate_file_extension, validate_file_size
 from app.services.storage_service import save_certification_file
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
@@ -83,10 +86,11 @@ async def upload_logo(
         current_user.logo_s3_key = s3_key
         db.commit()
         return {"message": "Logo uploaded", "logo_s3_key": s3_key}
-    except Exception as e:
+    except Exception:
+        logger.exception("Request failed")
         db.rollback()
         raise HTTPException(
-            status_code=500, detail=f"Logo upload failed: {e}"
+            status_code=500, detail="Logo upload failed"
         )
     finally:
         try:
@@ -190,10 +194,11 @@ async def upload_stamp(
         db.commit()
         db.refresh(team)
         return {"message": "Stamp uploaded", "stamp_s3_key": s3_key}
-    except Exception as e:
+    except Exception:
+        logger.exception("Request failed")
         db.rollback()
         raise HTTPException(
-            status_code=500, detail=f"Stamp upload failed: {e}"
+            status_code=500, detail="Stamp upload failed"
         )
     finally:
         try:

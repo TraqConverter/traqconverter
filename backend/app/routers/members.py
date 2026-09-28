@@ -5,6 +5,7 @@ from typing import Optional
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.dependencies.feature_guard import require_feature
 from app.models.user import User
 from app.models.team import Team
 from app.models.team_member import TeamMember, TeamInvite
@@ -126,7 +127,7 @@ def list_members(
 
 
 
-@router.post("/invite")
+@router.post("/invite", dependencies=[Depends(require_feature("team_collaboration"))])
 def invite_member(
     payload: InvitePayload,
     db: Session = Depends(get_db),
@@ -204,7 +205,7 @@ def invite_member(
 
 
 
-    email_delivered = _send_invite_email(team, current_user, email, role)
+    email_delivered = _send_invite_email(team, current_user, email, role, invite.token)
 
     return {
         "invited": True,
@@ -218,6 +219,7 @@ def _send_invite_email(
     inviter: User,
     invitee_email: str,
     role: str,
+    invite_token: str,
 ) -> bool:
     """Send the invite email through Resend. Returns True on success,
     False if Resend isn't configured or the send failed (we always
@@ -245,7 +247,7 @@ def _send_invite_email(
     base = (_settings.FRONTEND_URL or "http://localhost:3000").rstrip("/")
     register_url = (
         f"{base}/register?"
-        + urlencode({"email": invitee_email, "team": team.name or ""})
+        + urlencode({"email": invitee_email, "team": team.name or "", "invite": invite_token})
     )
 
     subject, html = render_invite_email(
@@ -357,14 +359,16 @@ def remove_member(
 
 
 
-def auto_accept_invites(db: Session, user: User) -> int:
-    if not user.email:
+def auto_accept_invites(db: Session, user: User, token: str | None) -> int:
+    """Accept the pending invite carrying `token` if it was sent to this user's email."""
+    if not user.email or not token:
         return 0
     invites = (
         db.query(TeamInvite)
         .filter(
             TeamInvite.email == user.email.lower(),
             TeamInvite.status == "PENDING",
+            TeamInvite.token == token,
         )
         .all()
     )
@@ -391,3 +395,19 @@ def auto_accept_invites(db: Session, user: User) -> int:
     if accepted:
         db.commit()
     return accepted
+
+
+class _AcceptInvitePayload(BaseModel):
+    token: str
+
+
+@router.post("/invites/accept")
+def accept_invite(
+    payload: _AcceptInvitePayload,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Signed-in users join via the invite link's token; the invite must be addressed to their email."""
+    if not auto_accept_invites(db, current_user, payload.token):
+        raise HTTPException(status_code=404, detail="Invite not found or not addressed to this account")
+    return {"accepted": True}

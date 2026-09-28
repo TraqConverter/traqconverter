@@ -9,9 +9,9 @@ forbidden-string flags, traceback if any). Claude can SEE its own
 output and iterate — exactly the workflow claude.ai uses behind
 the scenes for "make me a Word doc that matches this PDF".
 
-Each rebuild call may consume 3–8 turns and 100k+ tokens. We accept
-that cost because the alternative (single-shot prompt engineering)
-has hit a quality ceiling.
+Each rebuild call may consume up to 6 turns and 100k+ tokens (turns 2+
+read the PDF and prompt from the prompt cache). The loop stops at the
+first clean inspection and returns the best-scoring successful output.
 
 Public entry point:
     author_rebuild_docx_multiturn(pdf_bytes, source_lang, target_lang,
@@ -27,8 +27,12 @@ import os
 import re
 import shutil
 import tempfile
+import unicodedata
 from pathlib import Path
 from typing import Optional
+
+from app.services import claude_params
+from app.services.claude_authored_rebuild import is_translator_cert_text
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +79,9 @@ body-text char count, warnings), then iterate until the output
 matches the source.
 
 Save the final DOCX to exactly: r"{output_path}"
+
+Sandbox rules for every script:
+{sandbox_rules}
 
 Translate from {source_lang} into {target_lang}.
 
@@ -178,7 +185,7 @@ Helper recipes you can paste at the top of your script:
         bot = table.cell(row_end, col_idx)
         return top.merge(bot)
 
-    def _set_cell(table, row, col, text, *, bold=False, align=None):
+    def _set_cell(table, row, col, text, *, bold=False, align=None, size_pt=None):
         # Replace a cell's content cleanly. Clears existing
         # paragraphs first so you don't double-up text.
         cell = table.cell(row, col)
@@ -191,6 +198,9 @@ Helper recipes you can paste at the top of your script:
             p.alignment = _A.RIGHT
         run = p.add_run(text)
         run.bold = bold
+        if size_pt:
+            from docx.shared import Pt
+            run.font.size = Pt(size_pt)
 
 DOCUMENT-TYPE HINT
 ==================
@@ -333,19 +343,6 @@ _CLASSIFY_PROMPT = (
 
 
 
-_ADAPTIVE_THINKING_MODELS = (
-    "claude-fable-5",
-    "claude-mythos-5",
-    "claude-mythos-preview",
-)
-
-
-def _uses_adaptive_thinking(model: str) -> bool:
-    """True for models where we must skip the explicit thinking arg."""
-    m = (model or "").strip().lower()
-    return any(m.startswith(prefix) for prefix in _ADAPTIVE_THINKING_MODELS)
-
-
 def _classify_document(pdf_bytes: bytes) -> str:
     """Use Claude Vision on page 1 to pick a layout family. Returns
     one of CERTIFICATE / FORM / LETTER / RECEIPT / CONTRACT / OTHER.
@@ -380,9 +377,7 @@ def _classify_document(pdf_bytes: bytes) -> str:
         img_b64 = base64.standard_b64encode(png_bytes).decode("ascii")
         client = anthropic.Anthropic(api_key=api_key)
         resp = client.messages.create(
-            model=os.getenv(
-                "REBUILD_CLASSIFIER_MODEL", "claude-haiku-4-5-20251001"
-            ),
+            model=claude_params.CLASSIFIER_MODEL,
             max_tokens=20,
             messages=[
                 {
@@ -488,7 +483,7 @@ def _extract_form_fields_via_vision(pdf_bytes: bytes) -> list:
     if not api_key:
         return []
 
-    model = os.getenv("REBUILD_FORM_DUMP_MODEL", "claude-opus-4-8")
+    model = claude_params.FORM_DUMP_MODEL
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     except Exception:
@@ -511,6 +506,7 @@ def _extract_form_fields_via_vision(pdf_bytes: bytes) -> list:
                 resp = client.messages.create(
                     model=model,
                     max_tokens=6000,
+                    **claude_params.request_params(model, max_tokens=6000),
                     messages=[
                         {
                             "role": "user",
@@ -696,10 +692,10 @@ _TOOL_DEFINITION = {
 
 
 def _run_in_sandbox(code: str, output_path: str, timeout_seconds: int = 180) -> tuple[bool, str, bytes]:
-    """Run `code` in the existing sandbox. Returns
-    (success, traceback_or_empty, docx_bytes_or_empty)."""
+    """Validate and run `code`. Returns (success, error_report_for_claude, docx_bytes)."""
     try:
         from app.services.claude_authored_rebuild import (
+            SANDBOX_RULES,
             _run_script_in_sandbox,
             _validate_script,
             _strip_code_fence,
@@ -707,17 +703,24 @@ def _run_in_sandbox(code: str, output_path: str, timeout_seconds: int = 180) -> 
     except Exception as e:
         return (False, f"Sandbox import error: {e}", b"")
 
+    stripped = _strip_code_fence(code)
     try:
-        stripped = _strip_code_fence(code)
         _validate_script(stripped, output_path)
+    except ValueError as e:
+        return (
+            False,
+            f"Script REJECTED before running: {e}\n"
+            "Fix that construct and resend the whole script. The rules are:\n"
+            + SANDBOX_RULES,
+            b"",
+        )
+    try:
         docx_bytes = _run_script_in_sandbox(
             stripped, output_path=output_path, timeout_seconds=timeout_seconds
         )
         return (True, "", docx_bytes)
     except Exception as e:
-
-        msg = str(e)
-        return (False, msg, b"")
+        return (False, f"Code FAILED. Traceback:\n\n{e}", b"")
 
 
 
@@ -725,19 +728,67 @@ def _run_in_sandbox(code: str, output_path: str, timeout_seconds: int = 180) -> 
 
 
 
-_FORBIDDEN_PATTERNS = [
-    re.compile(r"\bCERTIFIED\s+TRANSLATION\b", re.I),
-    re.compile(r"\bI\s+hereby\s+certify\b", re.I),
-    re.compile(r"^\s*Translator\s*:\s*\S+@\S+", re.I | re.M),
-    re.compile(r"^\s*Signature\s*:\s*_+", re.I | re.M),
-    re.compile(r"this\s+translation\s+is\s+accurate\s+and\s+complete", re.I),
-
-    re.compile(r"\bNote\s*:\s*This\s+(is|document)\s+(an|a)?\s*\w*\s*translation\b", re.I),
-    re.compile(r"\bThis\s+document\s+is\s+(an|a)\s+\w+\s+translation\s+of\s+the\s+original\b", re.I),
-]
+_DIGIT_RUN_RE = re.compile(r"\d+")
+COVERAGE_MIN_MISSING = 2
+COVERAGE_MAX_MISSING_RATIO = 0.10
 
 
-def _inspect_docx(docx_bytes: bytes, doc_type: str = "CERTIFICATE") -> dict:
+def _norm_digits(run: str) -> str:
+    return "".join(str(unicodedata.digit(c)) for c in run).lstrip("0") or "0"
+
+
+def extract_number_tokens(text: str) -> set[str]:
+    """Digit runs of length >= 2, normalised (leading zeros dropped, any script's digits to ASCII)."""
+    return {_norm_digits(run) for run in _DIGIT_RUN_RE.findall(text or "") if len(run) >= 2}
+
+
+def missing_source_numbers(source_text: str, output_text: str) -> tuple[list[str], int]:
+    """Return (source numbers absent from the output, total source numbers)."""
+    source = extract_number_tokens(source_text)
+    output = {_norm_digits(run) for run in _DIGIT_RUN_RE.findall(output_text or "")}
+    missing = sorted(source - output, key=lambda v: (len(v), v))
+    return missing, len(source)
+
+
+def coverage_failed(missing: list, total: int) -> bool:
+    return (
+        len(missing) >= COVERAGE_MIN_MISSING
+        and total > 0
+        and len(missing) / total > COVERAGE_MAX_MISSING_RATIO
+    )
+
+
+def _pdf_text_layer(pdf_bytes: bytes) -> str:
+    try:
+        import fitz  # type: ignore
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as d:
+            return "\n".join(page.get_text() for page in d)
+    except Exception:
+        logger.exception("PDF text-layer extraction failed")
+        return ""
+
+
+def _source_text_for_coverage(pdf_bytes: bytes, tables: list, form_pages: list) -> str:
+    text = _pdf_text_layer(pdf_bytes)
+    if len(extract_number_tokens(text)) >= 3:
+        return text
+    # Scanned PDF with no text layer: fall back to what the vision pre-passes read.
+    parts = [text]
+    for t in tables or []:
+        parts.extend(t.get("headers") or [])
+        parts.extend(c for row in t.get("rows") or [] for c in row)
+    for page in form_pages or []:
+        parts.extend(
+            str(f.get("text", "")) for f in page.get("fields") or [] if isinstance(f, dict)
+        )
+    return "\n".join(str(p) for p in parts)
+
+
+def _inspect_docx(
+    docx_bytes: bytes,
+    doc_type: str = "CERTIFICATE",
+    source_text: Optional[str] = None,
+) -> dict:
     """Return a structured report describing the DOCX so Claude can
     judge whether it matches the source."""
     if not docx_bytes:
@@ -762,6 +813,11 @@ def _inspect_docx(docx_bytes: bytes, doc_type: str = "CERTIFICATE") -> dict:
         with zipfile.ZipFile(io.BytesIO(docx_bytes)) as z:
             doc_xml = z.read("word/document.xml").decode("utf-8", errors="replace")
             media = [n for n in z.namelist() if n.startswith("word/media/")]
+            header_footer_xml = [
+                z.read(n).decode("utf-8", errors="replace")
+                for n in z.namelist()
+                if re.match(r"word/(header|footer)\d*\.xml$", n)
+            ]
     except Exception as e:
         return {"error": f"DOCX parse failed: {e}"}
 
@@ -794,24 +850,26 @@ def _inspect_docx(docx_bytes: bytes, doc_type: str = "CERTIFICATE") -> dict:
     drawings = list(root.iter(DRAW_TAG))
 
 
-    full_text = "\n".join(body_paragraphs)
-    forbidden_hits = [
-        pat.pattern for pat in _FORBIDDEN_PATTERNS if pat.search(full_text)
-    ]
-
-
-
-
-
-    cert_block_re = re.compile(
-        r"(CERTIFIED TRANSLATION|I hereby certify|Translator:|"
-        r"This is a translation of)",
-        re.I,
-    )
+    forbidden_hits = [p for p in body_paragraphs if is_translator_cert_text(p)]
     real_body_paragraphs = [
-        p for p in body_paragraphs if not cert_block_re.search(p)
+        p for p in body_paragraphs if not is_translator_cert_text(p)
     ]
     body_text_chars = sum(len(p) for p in real_body_paragraphs)
+
+    missing_numbers: list = []
+    source_number_total = 0
+    if source_text:
+        output_text = "\n".join(body_paragraphs)
+        for xml in header_footer_xml:
+            try:
+                output_text += "\n" + "".join(
+                    t.text or "" for t in ET.fromstring(xml).iter(T_TAG)
+                )
+            except Exception:
+                logger.warning("header/footer parse failed during inspection")
+        missing_numbers, source_number_total = missing_source_numbers(
+            source_text, output_text
+        )
 
     report = {
         "success": True,
@@ -824,8 +882,11 @@ def _inspect_docx(docx_bytes: bytes, doc_type: str = "CERTIFICATE") -> dict:
         "table_count": len(tables),
         "image_count": len(drawings),
         "media_files": media,
-        "forbidden_string_hits": forbidden_hits,
+        "forbidden_string_hits": [h[:120] for h in forbidden_hits],
     }
+    if source_number_total:
+        report["source_numbers_missing"] = len(missing_numbers)
+        report["source_numbers_total"] = source_number_total
 
 
 
@@ -859,6 +920,17 @@ def _inspect_docx(docx_bytes: bytes, doc_type: str = "CERTIFICATE") -> dict:
         warnings.append(
             "Your output contains a CERTIFIED TRANSLATION / certification "
             "block. Remove it — the wrapper appends the real cert AFTER."
+        )
+    if coverage_failed(missing_numbers, source_number_total):
+        shown = ", ".join(missing_numbers[:40])
+        more = len(missing_numbers) - 40
+        warnings.append(
+            f"CRITICAL: {len(missing_numbers)} of {source_number_total} numbers "
+            f"from the source (dates, IDs, amounts, grades) do not appear "
+            f"anywhere in your output, which means content was dropped: {shown}"
+            + (f" (+{more} more)" if more > 0 else "")
+            + ". Find where each appears in the source and add the missing "
+            "content. Numbers must be copied digit-for-digit."
         )
     if page_count_estimate > 4:
         warnings.append(
@@ -967,13 +1039,17 @@ def _pdf_page_count(pdf_bytes: bytes) -> int:
         return 1
 
 
+DEFAULT_MAX_TURNS = 6
+_TURN_MAX_TOKENS = 32000
+
+
 def author_rebuild_docx_multiturn(
     pdf_bytes: bytes,
     source_lang: str,
     target_lang: str,
     *,
     model: Optional[str] = None,
-    max_turns: int = 10,
+    max_turns: int = DEFAULT_MAX_TURNS,
     timeout_per_run_seconds: int = 180,
     extra_instructions: Optional[str] = None,
 ) -> bytes:
@@ -998,13 +1074,35 @@ def author_rebuild_docx_multiturn(
     )
 
 
+def _is_clean(inspection: dict) -> bool:
+    return (
+        bool(inspection.get("success"))
+        and not inspection.get("warnings")
+        and not inspection.get("forbidden_string_hits")
+    )
+
+
+def _inspection_score(inspection: dict) -> tuple:
+    """Higher is better: no critical warnings, then source-number coverage, then fewer warnings, then more text."""
+    warnings = inspection.get("warnings") or []
+    critical = sum(1 for w in warnings if w.startswith("CRITICAL"))
+    critical += 1 if inspection.get("forbidden_string_hits") else 0
+    total = inspection.get("source_numbers_total") or 0
+    coverage = 1.0 - (inspection.get("source_numbers_missing", 0) / total) if total else 1.0
+    return (-critical, coverage, -len(warnings), inspection.get("body_text_chars", 0))
+
+
+def _thinking_enabled() -> bool:
+    return os.getenv("REBUILD_EXTENDED_THINKING", "1").lower() not in ("0", "false", "no", "off")
+
+
 def _author_rebuild_docx_multiturn_core(
     pdf_bytes: bytes,
     source_lang: str,
     target_lang: str,
     *,
     model: Optional[str] = None,
-    max_turns: int = 10,
+    max_turns: int = DEFAULT_MAX_TURNS,
     timeout_per_run_seconds: int = 180,
     extra_instructions: Optional[str] = None,
     _force_doc_type: Optional[str] = None,
@@ -1019,7 +1117,7 @@ def _author_rebuild_docx_multiturn_core(
     feedback (e.g. "make sure no lines are skipped", "the courses
     table needs visible borders").
 
-    Returns the bytes of the best DOCX produced across the loop.
+    Returns the bytes of the best-scoring DOCX produced across the loop.
     Raises RuntimeError if no successful run was ever produced.
     """
     try:
@@ -1032,10 +1130,9 @@ def _author_rebuild_docx_multiturn_core(
         raise RuntimeError("ANTHROPIC_API_KEY not set")
     client = anthropic.Anthropic(api_key=api_key)
 
-
-
     try:
         from app.services.claude_authored_rebuild import (
+            SANDBOX_RULES,
             _extract_pdf_images,
             _extract_tables_via_vision,
             _format_image_list,
@@ -1044,7 +1141,6 @@ def _author_rebuild_docx_multiturn_core(
             _strip_layout_table_borders,
             _strip_inline_cert_blocks,
             _strip_html_and_bracket_artifacts,
-            _replace_image_placeholders,
             _strip_broken_image_drawings,
             _merge_adjacent_compatible_tables,
             _collapse_pre_section_whitespace,
@@ -1052,15 +1148,31 @@ def _author_rebuild_docx_multiturn_core(
     except Exception as e:
         raise RuntimeError(f"Helper import failed: {e}")
 
+    if _force_doc_type:
+        doc_type = _force_doc_type.upper()
+    else:
+        doc_type = _classify_document(pdf_bytes)
+
+    if (
+        doc_type == "FORM"
+        and not _disable_page_by_page
+        and _pdf_page_count(pdf_bytes) > 1
+    ):
+        logger.info(
+            "Routing multi-page FORM to page-by-page rebuild"
+        )
+        return _author_rebuild_form_page_by_page(
+            pdf_bytes,
+            source_lang,
+            target_lang,
+            model=model,
+            max_turns=max_turns,
+            timeout_per_run_seconds=timeout_per_run_seconds,
+            extra_instructions=extra_instructions,
+        )
+
     out_dir = Path(tempfile.mkdtemp(prefix="claude_multiturn_"))
     output_path = str(out_dir / "rebuild.docx")
-
-
-
-
-
-
-
 
     images = []
     _vision_image_list_text = None
@@ -1104,69 +1216,32 @@ def _author_rebuild_docx_multiturn_core(
         logger.exception("Table pre-extraction failed — continuing")
         tables = []
 
-
-
-
-
-    if _force_doc_type:
-        doc_type = _force_doc_type.upper()
-    else:
-        doc_type = _classify_document(pdf_bytes)
-
-
-
-
-    if (
-        doc_type == "FORM"
-        and not _disable_page_by_page
-        and _pdf_page_count(pdf_bytes) > 1
-    ):
-        logger.info(
-            "Routing multi-page FORM to page-by-page rebuild"
-        )
-        return _author_rebuild_form_page_by_page(
-            pdf_bytes,
-            source_lang,
-            target_lang,
-            model=model,
-            max_turns=max_turns,
-            timeout_per_run_seconds=timeout_per_run_seconds,
-            extra_instructions=extra_instructions,
-        )
-
     prompt_template = _select_prompt_for(doc_type)
 
-
-
-    form_fields_text = "(not applicable for this document type)"
+    form_pages: list = []
+    form_fields_section = ""
     if doc_type == "FORM":
         try:
             form_pages = _extract_form_fields_via_vision(pdf_bytes)
-            form_fields_text = _format_form_fields_for_prompt(form_pages)
             logger.info(
                 "FORM field dump: %d pages extracted", len(form_pages)
             )
         except Exception:
             logger.exception("FORM field dump failed — continuing without it")
+        form_fields_section = (
+            "EXHAUSTIVE FORM-FIELD DUMP (every visible label / code / "
+            "column number / value per page — use as ground truth)\n"
+            "===================================================\n"
+            + _format_form_fields_for_prompt(form_pages)
+        )
+
+    source_text = _source_text_for_coverage(pdf_bytes, tables, form_pages)
 
     image_list_text = (
         _vision_image_list_text
         if _vision_image_list_text
         else _format_image_list(images)
     )
-
-
-
-
-    if doc_type == "FORM" and form_fields_text and form_fields_text != "(not applicable for this document type)":
-        form_fields_section = (
-            "EXHAUSTIVE FORM-FIELD DUMP (every visible label / code / "
-            "column number / value per page — use as ground truth)\n"
-            "===================================================\n"
-            + form_fields_text
-        )
-    else:
-        form_fields_section = ""
 
     format_kwargs = dict(
         source_lang=source_lang or "the source language",
@@ -1179,12 +1254,9 @@ def _author_rebuild_docx_multiturn_core(
             doc_type.upper(), _TYPE_HINTS["OTHER"]
         ),
         form_fields_section=form_fields_section,
+        sandbox_rules=SANDBOX_RULES,
     )
     initial_prompt = prompt_template.format(**format_kwargs)
-
-
-
-
 
     if extra_instructions and extra_instructions.strip():
         initial_prompt += (
@@ -1201,6 +1273,7 @@ def _author_rebuild_docx_multiturn_core(
 
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("ascii")
 
+    # Turns can run past 5 minutes (generation + sandbox), so both breakpoints use the 1h TTL.
     messages = [
         {
             "role": "user",
@@ -1213,209 +1286,146 @@ def _author_rebuild_docx_multiturn_core(
                         "data": pdf_b64,
                     },
                 },
-                {"type": "text", "text": initial_prompt},
+                claude_params.cached_text_block(initial_prompt, ttl="1h"),
             ],
         }
     ]
 
-    chosen_model = (
-        model
-        or os.getenv("REBUILD_DEFAULT_MODEL")
-        or "claude-opus-4-8"
+    chosen_model = claude_params.rebuild_model(model)
+    api_params = claude_params.request_params(
+        chosen_model, max_tokens=_TURN_MAX_TOKENS, thinking=_thinking_enabled()
     )
-    last_good_docx: bytes = b""
-    last_good_inspection: dict = {}
-
-    for turn in range(1, max_turns + 1):
-        logger.info(
-            "Multi-turn rebuild: turn %d/%d (model=%s)",
-            turn, max_turns, chosen_model,
-        )
-        try:
-
-
-
-            api_kwargs = dict(
-                model=chosen_model,
-                max_tokens=32000,
-                tools=[_TOOL_DEFINITION],
-                messages=messages,
-            )
-
-
-            allow_thinking = (
-                os.getenv("REBUILD_EXTENDED_THINKING", "1").lower()
-                not in ("0", "false", "no", "off")
-                and not _uses_adaptive_thinking(chosen_model)
-            )
-            if allow_thinking:
-
-
-
-
-                api_kwargs["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": 12000,
-                }
-            try:
-                resp = client.messages.create(**api_kwargs)
-            except TypeError:
-
-                api_kwargs.pop("thinking", None)
-                resp = client.messages.create(**api_kwargs)
-            except Exception as _e:
-                msg = str(_e)
-
-                if "thinking" in msg.lower() and "thinking" in api_kwargs:
-                    api_kwargs.pop("thinking", None)
-                    resp = client.messages.create(**api_kwargs)
-                else:
-                    raise
-        except Exception as e:
-            logger.exception("Anthropic call failed on turn %d: %s", turn, e)
-
-
-            if last_good_docx:
-                break
-            raise
-
-
-        tool_use_blocks = []
-        text_blocks = []
-        for block in resp.content or []:
-            btype = getattr(block, "type", None)
-            if btype == "tool_use":
-                tool_use_blocks.append(block)
-            elif btype == "text":
-                text_blocks.append(getattr(block, "text", "") or "")
-
-
-
-        messages.append({"role": "assistant", "content": resp.content})
-
-        stop_reason = getattr(resp, "stop_reason", None)
-        logger.info(
-            "Turn %d: stop_reason=%s, tool_use_blocks=%d, text_chars=%d, "
-            "input_tokens=%d, output_tokens=%d",
-            turn,
-            stop_reason,
-            len(tool_use_blocks),
-            sum(len(t) for t in text_blocks),
-            getattr(resp.usage, "input_tokens", -1),
-            getattr(resp.usage, "output_tokens", -1),
-        )
-
-        if not tool_use_blocks:
-
-            if text_blocks:
-                logger.info(
-                    "Claude finished without further tool calls. "
-                    "Final text (first 200 chars): %s",
-                    "\n".join(text_blocks)[:200],
-                )
-            break
-
-        tool_results = []
-        for tu in tool_use_blocks:
-            tool_input = getattr(tu, "input", None) or {}
-            tool_id = getattr(tu, "id", None)
-            code = tool_input.get("code") or ""
-
-            success, traceback_text, docx_bytes = _run_in_sandbox(
-                code, output_path, timeout_seconds=timeout_per_run_seconds
-            )
-
-            if success and docx_bytes:
-                inspection = _inspect_docx(docx_bytes, doc_type=doc_type)
-
-
-                last_good_docx = docx_bytes
-                last_good_inspection = inspection
-                report_text = (
-                    "Code ran successfully.\n\n"
-                    + json.dumps(inspection, ensure_ascii=False, indent=2)
-                )
-            else:
-                report_text = (
-                    "Code FAILED. Traceback:\n\n" + (traceback_text or "(no message)")
-                )
-
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": tool_id,
-                "content": report_text,
-            })
-
-        messages.append({"role": "user", "content": tool_results})
-
+    best_docx: bytes = b""
+    best_inspection: dict = {}
+    best_score: Optional[tuple] = None
 
     try:
-        shutil.rmtree(out_dir, ignore_errors=True)
-    except Exception:
-        pass
-
-
-
-
-    if last_good_docx:
-        try:
-            body_chars = int(
-                last_good_inspection.get("body_text_chars", -1) or -1
+        for turn in range(1, max_turns + 1):
+            logger.info(
+                "Multi-turn rebuild: turn %d/%d (model=%s)",
+                turn, max_turns, chosen_model,
             )
-        except Exception:
-            body_chars = -1
-        if 0 <= body_chars < 150:
-            raise RuntimeError(
-                "Multi-turn rebuild produced an empty body "
-                "(%d body chars across %d paragraphs). "
-                "The pipeline failed to transcribe the source." % (
-                    body_chars,
-                    int(
-                        last_good_inspection.get("paragraph_count", 0)
-                        or 0
-                    ),
+            try:
+                resp = claude_params.create_message(
+                    client,
+                    model=chosen_model,
+                    max_tokens=_TURN_MAX_TOKENS,
+                    tools=[_TOOL_DEFINITION],
+                    messages=messages,
+                    cache_control={"type": "ephemeral", "ttl": "1h"},
+                    **api_params,
                 )
-            )
+            except anthropic.APIError as e:
+                logger.exception("Anthropic call failed on turn %d: %s", turn, e)
+                if best_docx:
+                    break
+                raise
 
-    if not last_good_docx:
+            tool_use_blocks = []
+            text_blocks = []
+            for block in resp.content or []:
+                btype = getattr(block, "type", None)
+                if btype == "tool_use":
+                    tool_use_blocks.append(block)
+                elif btype == "text":
+                    text_blocks.append(getattr(block, "text", "") or "")
+
+            messages.append({"role": "assistant", "content": resp.content})
+
+            logger.info(
+                "Turn %d: stop_reason=%s, tool_use_blocks=%d, text_chars=%d",
+                turn,
+                getattr(resp, "stop_reason", None),
+                len(tool_use_blocks),
+                sum(len(t) for t in text_blocks),
+            )
+            claude_params.log_usage(f"Multi-turn rebuild turn {turn}", resp)
+
+            if not tool_use_blocks:
+                if text_blocks:
+                    logger.info(
+                        "Claude finished without further tool calls. "
+                        "Final text (first 200 chars): %s",
+                        "\n".join(text_blocks)[:200],
+                    )
+                break
+
+            tool_results = []
+            clean_this_turn = False
+            for tu in tool_use_blocks:
+                tool_input = getattr(tu, "input", None) or {}
+                code = tool_input.get("code") or ""
+
+                success, error_text, docx_bytes = _run_in_sandbox(
+                    code, output_path, timeout_seconds=timeout_per_run_seconds
+                )
+
+                if success and docx_bytes:
+                    inspection = _inspect_docx(
+                        docx_bytes, doc_type=doc_type, source_text=source_text
+                    )
+                    score = _inspection_score(inspection)
+                    if best_score is None or score > best_score:
+                        best_docx, best_inspection, best_score = docx_bytes, inspection, score
+                    clean_this_turn = clean_this_turn or _is_clean(inspection)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tu.id,
+                        "content": (
+                            "Code ran successfully.\n\n"
+                            + json.dumps(inspection, ensure_ascii=False, indent=2)
+                        ),
+                    })
+                else:
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tu.id,
+                        "content": error_text or "Code FAILED (no message)",
+                        "is_error": True,
+                    })
+
+            if clean_this_turn:
+                logger.info("Turn %d produced a clean inspection — stopping", turn)
+                break
+            messages.append({"role": "user", "content": tool_results})
+    finally:
+        shutil.rmtree(out_dir, ignore_errors=True)
+
+    if not best_docx:
         raise RuntimeError(
             "Multi-turn rebuild ended with no successful DOCX produced"
         )
 
+    body_chars = int(best_inspection.get("body_text_chars", -1) or -1)
+    if 0 <= body_chars < 150:
+        raise RuntimeError(
+            "Multi-turn rebuild produced an empty body "
+            "(%d body chars across %d paragraphs). "
+            "The pipeline failed to transcribe the source." % (
+                body_chars,
+                int(best_inspection.get("paragraph_count", 0) or 0),
+            )
+        )
+
     logger.info(
         "Multi-turn rebuild complete: %d bytes, %d paragraphs, "
-        "%d tables, %d images, page_estimate=%d",
-        len(last_good_docx),
-        last_good_inspection.get("paragraph_count", -1),
-        last_good_inspection.get("table_count", -1),
-        last_good_inspection.get("image_count", -1),
-        last_good_inspection.get("page_count_estimate", -1),
+        "%d tables, %d images, page_estimate=%d, source numbers missing=%s/%s",
+        len(best_docx),
+        best_inspection.get("paragraph_count", -1),
+        best_inspection.get("table_count", -1),
+        best_inspection.get("image_count", -1),
+        best_inspection.get("page_count_estimate", -1),
+        best_inspection.get("source_numbers_missing", "-"),
+        best_inspection.get("source_numbers_total", "-"),
     )
 
-
-
-
-    docx_bytes = last_good_docx
+    docx_bytes = best_docx
     try:
         docx_bytes = _strip_rotation_from_docx(docx_bytes)
         docx_bytes = _strip_layout_table_borders(docx_bytes)
         docx_bytes = _strip_inline_cert_blocks(docx_bytes)
-
-
-
-
         docx_bytes = _strip_html_and_bracket_artifacts(docx_bytes)
-
-
-
-
         docx_bytes = _merge_adjacent_compatible_tables(docx_bytes)
-
-
-
-
-
-
         docx_bytes = _collapse_pre_section_whitespace(docx_bytes)
         docx_bytes = _strip_broken_image_drawings(docx_bytes)
     except Exception:
@@ -1463,48 +1473,30 @@ def _merge_authored_docx_fragments(fragments: list) -> bytes:
     we share its trim-trailing-blank-para / drop-sectPr handling.
 
     A page break is inserted between fragments so each source page
-    starts on its own output page.
+    starts on its own output page. Raises if any fragment can't be merged.
     """
     if not fragments:
         return b""
     if len(fragments) == 1:
         return fragments[0]
-    try:
-        import io as _io
-        from docx import Document  # type: ignore
-        from docx.enum.text import WD_BREAK  # type: ignore
-        from app.services.export_wrapper import _append_body_from
-    except Exception:
-        logger.exception("Fragment merge unavailable — returning first only")
-        return fragments[0]
+    import io as _io
+    from docx import Document  # type: ignore
+    from docx.enum.text import WD_BREAK  # type: ignore
+    from app.services.export_wrapper import _append_body_from
 
-    try:
-        out_doc = Document(_io.BytesIO(fragments[0]))
-    except Exception:
-        logger.exception("Could not open fragment 0 — returning raw bytes")
-        return fragments[0]
+    out_doc = Document(_io.BytesIO(fragments[0]))
 
-    for raw in fragments[1:]:
-
+    for idx, raw in enumerate(fragments[1:], start=2):
+        p = out_doc.add_paragraph()
+        p.add_run().add_break(WD_BREAK.PAGE)
         try:
-            p = out_doc.add_paragraph()
-            r = p.add_run()
-            r.add_break(WD_BREAK.PAGE)
-        except Exception:
-            logger.exception("Page-break insertion failed")
-        try:
-            src_doc = Document(_io.BytesIO(raw))
-            _append_body_from(src_doc, out_doc)
-        except Exception:
-            logger.exception("Fragment append failed")
+            _append_body_from(Document(_io.BytesIO(raw)), out_doc)
+        except Exception as e:
+            raise RuntimeError(f"Could not merge rebuilt page {idx}: {e}") from e
 
     buf = _io.BytesIO()
-    try:
-        out_doc.save(buf)
-        return buf.getvalue()
-    except Exception:
-        logger.exception("Merged DOCX save failed — returning first fragment")
-        return fragments[0]
+    out_doc.save(buf)
+    return buf.getvalue()
 
 
 def _author_rebuild_form_page_by_page(
@@ -1512,18 +1504,16 @@ def _author_rebuild_form_page_by_page(
     source_lang: str,
     target_lang: str,
     *,
-    model = None,
-    max_turns: int = 4,
+    model: Optional[str] = None,
+    max_turns: int = DEFAULT_MAX_TURNS,
     timeout_per_run_seconds: int = 180,
-    extra_instructions = None,
+    extra_instructions: Optional[str] = None,
 ) -> bytes:
     """Multi-page FORM rebuild: split into single pages, run a full
     multi-turn rebuild on each, then merge the resulting DOCXs.
 
-    Falls back to a single whole-document rebuild on any internal
-    failure (so we never lose ALL pages just because one failed).
-
-    Returns merged DOCX bytes.
+    Raises RuntimeError if any page fails, so a translation with a
+    missing page is never delivered.
     """
     pages = _split_pdf_per_page(pdf_bytes)
     if not pages or len(pages) == 1:
@@ -1546,19 +1536,25 @@ def _author_rebuild_form_page_by_page(
             _disable_page_by_page=True,
         )
 
+    expected_pages = _pdf_page_count(pdf_bytes)
+    if len(pages) != expected_pages:
+        raise RuntimeError(
+            f"Form page split produced {len(pages)} of {expected_pages} pages"
+        )
+
     fragments = []
     for i, page_pdf in enumerate(pages, start=1):
         logger.info(
             "Form page-by-page: rebuilding page %d / %d",
             i, len(pages),
         )
+        page_extra = (
+            (extra_instructions or "")
+            + f"\n\nThis is PAGE {i} of {len(pages)} of a multi-page "
+            "form. Translate this page only. Do not add masthead or "
+            "cert blocks — the wrapper handles those."
+        ).strip()
         try:
-            page_extra = (
-                (extra_instructions or "")
-                + f"\n\nThis is PAGE {i} of {len(pages)} of a multi-page "
-                "form. Translate this page only. Do not add masthead or "
-                "cert blocks — the wrapper handles those."
-            ).strip()
             page_docx = _author_rebuild_docx_multiturn_core(
                 page_pdf,
                 source_lang,
@@ -1570,16 +1566,11 @@ def _author_rebuild_form_page_by_page(
                 _force_doc_type="FORM",
                 _disable_page_by_page=True,
             )
-            fragments.append(page_docx)
-        except Exception:
-            logger.exception(
-                "Form page %d rebuild failed — skipping page", i
-            )
-
-    if not fragments:
-        raise RuntimeError(
-            "Form page-by-page rebuild produced no successful pages"
-        )
+        except Exception as e:
+            raise RuntimeError(
+                f"Form page {i} of {len(pages)} failed to rebuild: {e}"
+            ) from e
+        fragments.append(page_docx)
 
     merged = _merge_authored_docx_fragments(fragments)
     logger.info(

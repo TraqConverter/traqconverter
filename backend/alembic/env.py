@@ -24,7 +24,6 @@ from app.database import Base
 import app.models.user  # noqa: F401
 import app.models.team  # noqa: F401
 import app.models.team_member  # noqa: F401
-import app.models.job  # noqa: F401
 import app.models.credit  # noqa: F401
 import app.models.glossary  # noqa: F401
 import app.models.project  # noqa: F401
@@ -35,6 +34,15 @@ import app.models.stripe_event  # noqa: F401
 import app.models.certification  # noqa: F401
 
 target_metadata = Base.metadata
+
+
+def include_object(obj, name, type_, reflected, compare_to):
+    # translation_jobs is raw-SQL only (no model); keep autogenerate from dropping it
+    if type_ == "table" and name == "translation_jobs":
+        return False
+    if type_ == "index" and getattr(obj, "table", None) is not None and obj.table.name == "translation_jobs":
+        return False
+    return True
 
 
 
@@ -76,7 +84,7 @@ def run_migrations_online():
     env_path = Path(__file__).resolve().parent.parent / ".env"
     load_dotenv(dotenv_path=env_path)
 
-    database_url = os.getenv("DATABASE_URL")
+    database_url = os.getenv("DATABASE_URL") or os.getenv("database_url")
 
     connectable = create_engine(
         database_url,
@@ -87,6 +95,7 @@ def run_migrations_online():
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
+            include_object=include_object,
         )
 
         with context.begin_transaction():

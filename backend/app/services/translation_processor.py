@@ -1,7 +1,6 @@
 import logging
 import tempfile
 import shutil
-import re
 import os
 import asyncio
 
@@ -57,7 +56,6 @@ from app.services.s3_service import (
 )
 from app.services.ai_translation_service import translate_batch, translate_text
 from app.services.translation_memory_service import store_tm_entry
-from app.services.certification_service import CertificationService
 from app.services.layout_translator import (
     extract_segments,
     rebuild_output,
@@ -209,6 +207,10 @@ def process_translation_job(project_id: str):
         project.status = ProjectStatus.PROCESSING
         project.progress_percent = 0
         project.translated_segments = 0
+        project.failure_reason = None
+        project.authored_docx_s3_key = None
+        project.edited_html = None
+        project.rebuild_error = None
         project.last_heartbeat = datetime.utcnow()
 
         db.commit()
@@ -518,20 +520,15 @@ def process_translation_job(project_id: str):
 
 
 
-        project.progress_percent = 100
-        project.status = ProjectStatus.COMPLETED
-
-
-        if (project.review_status or "DRAFT") == "DRAFT":
-            project.review_status = "IN_REVIEW"
-
-        db.commit()
-
-        safe_broadcast(
-            project_id,
-            100,
-            "IN_REVIEW",
-        )
+        # Certified output can't ship with source text standing in for a translation.
+        untranslated = [
+            s.segment_index for s in segments
+            if not (s.translated_text or "").strip() and any(ch.isalpha() for ch in (s.source_text or ""))
+        ]
+        if untranslated:
+            raise RuntimeError(
+                f"{len(untranslated)} of {len(segments)} segments could not be translated"
+            )
 
 
 
@@ -559,9 +556,7 @@ def process_translation_job(project_id: str):
         except Exception as e:
 
 
-            logger.exception(f"Layout-preserving rebuild failed: {e}")
-            shutil.copyfile(input_file, output_file)
-            output_to_upload = output_file
+            raise RuntimeError(f"Layout-preserving rebuild failed: {e}") from e
 
         output_s3_key = upload_file_to_s3(output_to_upload)
 
@@ -620,58 +615,26 @@ def process_translation_job(project_id: str):
                     "segment-driven output (project=%s)",
                     project_id,
                 )
+                project.rebuild_error = "Claude layout rebuild failed; showing the segment-based layout"
+                db.commit()
 
 
 
 
-        try:
-            cert_file = (
-                temp_dir /
-                f"{project.id}_certification.pdf"
-            )
 
-            CertificationService.generate_certification_pdf(
-                output_path=cert_file,
-                user_name="Certified Translator",
-                source_language=source_lang,
-                target_language=target_lang,
-            )
-
-            cert_s3_key = upload_file_to_s3(cert_file)
-
-            project.certification_file = cert_s3_key
-
-            db.commit()
-
-        except Exception as e:
-            logger.error(f"Certification failed: {e}")
+        project.progress_percent = 100
+        project.status = ProjectStatus.COMPLETED
+        if (project.review_status or "DRAFT") == "DRAFT":
+            project.review_status = "IN_REVIEW"
+        db.commit()
+        safe_broadcast(project_id, 100, "IN_REVIEW")
 
         logger.info("Worker completed")
 
     except Exception:
-        logger.exception("Worker failed")
-
+        # The worker decides between retry and FAILED-with-refund.
+        logger.exception("Processing failed for project %s", project_id)
         db.rollback()
-
-        if project:
-            try:
-                project.status = ProjectStatus.FAILED
-                project.last_heartbeat = datetime.utcnow()
-
-                db.commit()
-
-                safe_broadcast(
-                    str(project.id),
-                    project.progress_percent or 0,
-                    "FAILED"
-                )
-
-            except Exception:
-                logger.exception(
-                    "Failed marking project as FAILED"
-                )
-
-
         raise
 
     finally:

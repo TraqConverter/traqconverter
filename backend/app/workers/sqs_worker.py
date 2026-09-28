@@ -1,53 +1,34 @@
-"""Translation worker.
+"""Postgres-backed translation worker (filename kept for Procfile/Docker compatibility).
 
-Despite the legacy `sqs_worker.py` filename (kept so Procfile / Docker
-ENTRYPOINTs don't break), this worker polls the Postgres-backed
-`translation_jobs` table — no SQS dependency anymore.
-
-How it works
-------------
-Workers compete for pending rows using
-`SELECT … FOR UPDATE SKIP LOCKED` which lets many workers run in
-parallel without ever picking the same job twice. The claimed row's
-status flips from `pending → processing`. On success it becomes
-`completed`; on failure it becomes `failed` with the traceback in
-`last_error` and retried up to MAX_ATTEMPTS times.
-
-Run with:    python -m app.workers.sqs_worker
-Or via the Procfile: `worker: python -m app.workers.sqs_worker`
+Run with: python -m app.workers.sqs_worker
 """
-import json
 import logging
 import os
 import socket
+import threading
 import time
 import traceback
 import uuid
+from contextlib import contextmanager
 
 from sqlalchemy import text
 
 from app.database import SessionLocal
+from app.models.project import ProjectStatus, TranslationProject
+from app.services.project_lifecycle import fail_project_by_id
 from app.services.translation_processor import process_translation_job
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-
-
-
 POLL_INTERVAL_SECONDS = 2
-MAX_ATTEMPTS = 3
+HEARTBEAT_SECONDS = 30
+# Each attempt can run a full Opus rebuild, so retries are expensive.
+MAX_ATTEMPTS = int(os.getenv("JOB_MAX_ATTEMPTS", "2"))
 WORKER_ID = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
 
 
 def _claim_next_job():
-    """Atomically claim the oldest pending job for this worker.
-
-    Returns a dict {id, project_id, s3_key} or None when the queue is
-    empty. Uses FOR UPDATE SKIP LOCKED so multiple workers can run
-    safely in parallel.
-    """
     db = SessionLocal()
     try:
         row = db.execute(
@@ -55,10 +36,10 @@ def _claim_next_job():
                 """
                 UPDATE translation_jobs
                    SET status     = 'processing',
-                       locked_at  = NOW(),
+                       locked_at  = timezone('utc', now()),
                        locked_by  = :worker_id,
                        attempts   = attempts + 1,
-                       updated_at = NOW()
+                       updated_at = timezone('utc', now())
                  WHERE id = (
                        SELECT id
                          FROM translation_jobs
@@ -68,7 +49,7 @@ def _claim_next_job():
                         LIMIT 1
                         FOR UPDATE SKIP LOCKED
                  )
-             RETURNING id, project_id, s3_key
+             RETURNING id, project_id, s3_key, attempts
                 """
             ),
             {"worker_id": WORKER_ID, "max_attempts": MAX_ATTEMPTS},
@@ -80,6 +61,7 @@ def _claim_next_job():
             "id": str(row.id),
             "project_id": str(row.project_id),
             "s3_key": row.s3_key,
+            "attempts": int(row.attempts),
         }
     except Exception:
         db.rollback()
@@ -89,107 +71,105 @@ def _claim_next_job():
         db.close()
 
 
-def _mark_job(job_id: str, status: str, last_error: str | None = None):
-    """Flip a job to `completed` or `failed`."""
+def _execute(sql: str, params: dict) -> None:
     db = SessionLocal()
     try:
-        db.execute(
-            text(
-                """
-                UPDATE translation_jobs
-                   SET status     = :status,
-                       last_error = :last_error,
-                       updated_at = NOW()
-                 WHERE id = :job_id
-                """
-            ),
-            {
-                "status": status,
-                "last_error": (last_error or "")[:8000] or None,
-                "job_id": job_id,
-            },
-        )
+        db.execute(text(sql), params)
         db.commit()
     except Exception:
         db.rollback()
-        logger.exception("mark_job failed")
+        logger.exception("worker update failed")
     finally:
         db.close()
 
 
+def _beat(job_id: str, project_id: str) -> None:
+    _execute(
+        "UPDATE translation_jobs SET locked_at = timezone('utc', now()), updated_at = timezone('utc', now()) "
+        "WHERE id = :job_id AND locked_by = :worker_id",
+        {"job_id": job_id, "worker_id": WORKER_ID},
+    )
+    _execute(
+        "UPDATE translation_projects SET last_heartbeat = timezone('utc', now()) WHERE id = :pid",
+        {"pid": project_id},
+    )
+
+
+@contextmanager
+def _heartbeat(job_id: str, project_id: str):
+    stop = threading.Event()
+
+    def _loop():
+        while not stop.wait(HEARTBEAT_SECONDS):
+            _beat(job_id, project_id)
+
+    t = threading.Thread(target=_loop, name=f"heartbeat-{job_id[:8]}", daemon=True)
+    t.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        t.join(timeout=5)
+
+
+def _requeue(job_id: str, project_id: str, error: str) -> None:
+    _execute(
+        """
+        UPDATE translation_jobs
+           SET status = 'pending', locked_at = NULL, locked_by = NULL,
+               last_error = :err, updated_at = timezone('utc', now())
+         WHERE id = :id
+        """,
+        {"err": error[:8000], "id": job_id},
+    )
+    db = SessionLocal()
+    try:
+        project = db.query(TranslationProject).filter(TranslationProject.id == project_id).first()
+        if project and project.status != ProjectStatus.COMPLETED:
+            project.status = ProjectStatus.PENDING
+            db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("couldn't reset project %s to PENDING", project_id)
+    finally:
+        db.close()
+
+
+def _mark_job(job_id: str, status: str, last_error: str | None = None) -> None:
+    _execute(
+        "UPDATE translation_jobs SET status = :status, last_error = :err, updated_at = timezone('utc', now()) WHERE id = :id",
+        {"status": status, "err": (last_error or "")[:8000] or None, "id": job_id},
+    )
+
+
+def run_job(job: dict) -> None:
+    job_id, project_id = job["id"], job["project_id"]
+    logger.info("Processing job=%s project=%s attempt=%d", job_id, project_id, job["attempts"])
+    try:
+        with _heartbeat(job_id, project_id):
+            process_translation_job(project_id)
+        _mark_job(job_id, "completed")
+        logger.info("Completed job=%s project=%s", job_id, project_id)
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.exception("Job %s failed: %s", job_id, e)
+        if job["attempts"] < MAX_ATTEMPTS:
+            _requeue(job_id, project_id, tb)
+            logger.warning("Job %s re-queued (attempt %d/%d)", job_id, job["attempts"], MAX_ATTEMPTS)
+        else:
+            _mark_job(job_id, "failed", last_error=tb)
+            fail_project_by_id(project_id, "Translation failed after retries; credits were refunded")
+            logger.error("Job %s exhausted retries", job_id)
+
+
 def start_worker():
-    logger.info("🚀 Translation worker started (id=%s)", WORKER_ID)
-    logger.info("Queue backend: Postgres translation_jobs")
-
+    logger.info("Translation worker started (id=%s)", WORKER_ID)
     while True:
-        try:
-            job = _claim_next_job()
-        except Exception:
-            logger.exception("Unexpected error in claim loop")
-            time.sleep(POLL_INTERVAL_SECONDS)
-            continue
-
+        job = _claim_next_job()
         if not job:
             time.sleep(POLL_INTERVAL_SECONDS)
             continue
-
-        job_id = job["id"]
-        project_id = job["project_id"]
-        logger.info("📥 Processing job=%s project=%s", job_id, project_id)
-
-        try:
-            process_translation_job(project_id)
-            _mark_job(job_id, "completed")
-            logger.info("✅ Completed job=%s project=%s", job_id, project_id)
-        except Exception as e:
-            tb = traceback.format_exc()
-            logger.exception("❌ Job failed: %s", e)
-
-
-            db = SessionLocal()
-            try:
-                row = db.execute(
-                    text(
-                        "SELECT attempts FROM translation_jobs WHERE id = :id"
-                    ),
-                    {"id": job_id},
-                ).fetchone()
-                attempts = int(row.attempts) if row else MAX_ATTEMPTS
-            except Exception:
-                attempts = MAX_ATTEMPTS
-            finally:
-                db.close()
-
-            if attempts < MAX_ATTEMPTS:
-
-                db = SessionLocal()
-                try:
-                    db.execute(
-                        text(
-                            """
-                            UPDATE translation_jobs
-                               SET status     = 'pending',
-                                   locked_at  = NULL,
-                                   locked_by  = NULL,
-                                   last_error = :err,
-                                   updated_at = NOW()
-                             WHERE id = :id
-                            """
-                        ),
-                        {"err": (tb or "")[:8000], "id": job_id},
-                    )
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                finally:
-                    db.close()
-                logger.warning(
-                    "⚠️ Job re-queued (attempt %d/%d)",
-                    attempts, MAX_ATTEMPTS,
-                )
-            else:
-                _mark_job(job_id, "failed", last_error=tb)
-                logger.error("☠️ Job exhausted retries → failed")
+        run_job(job)
 
 
 if __name__ == "__main__":

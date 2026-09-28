@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from uuid import UUID
@@ -12,6 +13,8 @@ from app.models.project import TranslationProject
 from app.models.user import User
 
 from app.services.export_service import generate_docx, generate_pdf
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["Export"])
 
@@ -53,8 +56,9 @@ def export_docx_route(
             project=project,
             user=current_user,
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"DOCX export failed: {str(e)}")
+    except Exception:
+        logger.exception("Request failed")
+        raise HTTPException(status_code=500, detail="DOCX export failed")
 
     return StreamingResponse(
         file_buffer,
@@ -100,8 +104,9 @@ def export_pdf_route(
             project=project,
             user=current_user,
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PDF export failed: {str(e)}")
+    except Exception:
+        logger.exception("Request failed")
+        raise HTTPException(status_code=500, detail="PDF export failed")
 
     return StreamingResponse(
         file_buffer,
@@ -122,7 +127,10 @@ def export_pdf_route(
 
 
 
-@router.post("/{project_id}/build-rebuild-docx")
+@router.post(
+    "/{project_id}/build-rebuild-docx",
+    dependencies=[Depends(require_feature("download_translation"))],
+)
 def build_rebuild_docx(
     project_id: UUID,
     db: Session = Depends(get_db),
@@ -158,9 +166,10 @@ def build_rebuild_docx(
             project=project,
             user=current_user,
         )
-    except Exception as e:
+    except Exception:
+        logger.exception("Request failed")
         raise HTTPException(
-            status_code=500, detail=f"DOCX build failed: {str(e)}"
+            status_code=500, detail="DOCX build failed"
         )
 
 

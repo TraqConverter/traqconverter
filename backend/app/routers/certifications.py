@@ -1,3 +1,4 @@
+import logging
 import hashlib
 import os
 import uuid
@@ -16,6 +17,8 @@ from app.models.team_member import TeamMember
 from app.models.certification import Certification
 from app.core.file_validation import validate_file_extension, validate_file_size
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/certifications",
@@ -153,9 +156,10 @@ async def upload_certification(
         except Exception:
             pass
         s3_key = upload_file_to_s3(tmp_path)
-    except Exception as e:
+    except Exception:
+        logger.exception("Request failed")
         raise HTTPException(
-            status_code=500, detail=f"Couldn't upload certification: {e}"
+            status_code=500, detail="Couldn't upload certification"
         )
     finally:
         if tmp_path and tmp_path.exists():
@@ -225,9 +229,10 @@ def download_certification(
 
     try:
         url = generate_presigned_download_url(cert.file_path)
-    except Exception as e:
+    except Exception:
+        logger.exception("Request failed")
         raise HTTPException(
-            status_code=500, detail=f"Couldn't generate download link: {e}"
+            status_code=500, detail="Couldn't generate download link"
         )
     return RedirectResponse(url=url, status_code=307)
 
@@ -282,10 +287,10 @@ def scan_certification(
             r = _req.get(url, timeout=15)
             r.raise_for_status()
             docx_bytes = r.content
-        except Exception as e:
+        except Exception:
             raise HTTPException(
                 status_code=410,
-                detail=f"Couldn't fetch template from storage: {e}",
+                detail="Couldn't fetch template from storage",
             )
 
     scan = scan_docx_for_tokens(docx_bytes)

@@ -6,6 +6,7 @@ class UserRegister(BaseModel):
 
     password: str = Field(min_length=8, max_length=128)
     full_name: str = Field(min_length=1, max_length=200)
+    invite_token: str | None = Field(default=None, max_length=200)
 
     @field_validator("password")
     @classmethod

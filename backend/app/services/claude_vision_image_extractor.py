@@ -18,7 +18,7 @@ we:
 
 Public entry point:
     extract_image_regions_via_vision(pdf_bytes, dest_dir,
-                                     model="claude-opus-4-6")
+                                     model=claude_params.IMAGE_REGION_MODEL)
         -> list[{"kind", "filename", "page", "width_px",
                   "height_px", "suggested_width_cm"}]
 """
@@ -32,6 +32,8 @@ import os
 import re
 import textwrap
 from pathlib import Path
+
+from app.services import claude_params
 
 logger = logging.getLogger(__name__)
 
@@ -197,12 +199,13 @@ def _ask_vision_for_regions(pages, model: str) -> list:
         resp = client.messages.create(
             model=model,
             max_tokens=8000,
-            temperature=0.1,
             messages=[{"role": "user", "content": content}],
+            **claude_params.request_params(model, max_tokens=8000, temperature=0.1),
         )
-    except Exception as e:
+    except anthropic.APIError as e:
         logger.warning("Vision image-region call failed: %s", e)
         return []
+    claude_params.log_usage("Vision image regions", resp)
 
     raw = ""
     for block in resp.content or []:
@@ -322,7 +325,7 @@ def extract_image_regions_via_vision(
     pdf_bytes: bytes,
     dest_dir: Path,
     *,
-    model: str = "claude-opus-4-6",
+    model: str = claude_params.IMAGE_REGION_MODEL,
 ) -> list:
     """End-to-end vision-based image extraction.
 
