@@ -1,3 +1,4 @@
+import os
 import tempfile
 import textwrap
 from pathlib import Path
@@ -108,3 +109,9 @@ def test_external_entities_not_resolved(tmp_path):
     )
     proc, _ = _run(script, tmp_path)
     assert b"TOPSECRET" not in proc.stdout + proc.stderr
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() != 0, reason="privilege drop only applies when running as root")
+def test_root_parent_runs_script_as_nobody(tmp_path):
+    proc, _ = _run("import os\nassert os.getuid() == 65534 and os.getgid() == 65534, os.getuid()", tmp_path)
+    assert proc.returncode == 0, proc.stderr.decode()

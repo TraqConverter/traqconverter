@@ -92,7 +92,16 @@ def _check_attr(attr: str) -> None:
 
 def _library_paths() -> list[str]:
     paths = {sysconfig.get_paths()[k] for k in ("stdlib", "platstdlib", "purelib", "platlib")}
-    paths.update(p for p in sys.path if p and ("site-packages" in p or "dist-packages" in p))
+    prefixes = {os.path.realpath(sys.prefix), os.path.realpath(sys.base_prefix)}
+    # Interpreter-owned entries only (stdlib, lib-dynload, site-packages); never the app directory.
+    paths.update(
+        p for p in sys.path
+        if p and (
+            "site-packages" in p
+            or "dist-packages" in p
+            or any(os.path.realpath(p).startswith(pre + os.sep) for pre in prefixes)
+        )
+    )
     return sorted({os.path.realpath(p) for p in paths if os.path.isdir(p)})
 
 

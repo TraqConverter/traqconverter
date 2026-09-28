@@ -81,6 +81,10 @@ jobs:
       - name: Tests
         run: python -m pytest backend/tests -q
 
+      # Production containers may run as root; the sandbox must drop to nobody there.
+      - name: Sandbox as root
+        run: sudo -E env "PATH=$PATH" python -m pytest backend/tests/test_script_sandbox.py -q
+
   frontend:
     name: Frontend (Next.js)
     runs-on: ubuntu-latest
