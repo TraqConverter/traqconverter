@@ -122,3 +122,28 @@ def test_unknown_target_rejected():
 
 def test_strip_blocks_removes_editor_bookmarks():
     assert db.block_ids(db.strip_blocks(_sample())) == []
+
+
+def test_fields_and_footnote_refs_are_left_untouched():
+    from lxml import etree
+
+    data = _sample()
+    doc = db._Doc.load(data)
+    p = next(doc.trees["word/document.xml"].iter(db.w("p")))
+    field = etree.fromstring(
+        f'<w:root xmlns:w="{db.W_NS}">'
+        '<w:r><w:t xml:space="preserve"> page </w:t></w:r>'
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText>PAGE</w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>7</w:t></w:r>'
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t xml:space="preserve"> end</w:t></w:r>'
+        '</w:root>'
+    )
+    for child in list(field):
+        p.append(child)
+    data = doc.dump()
+    first = db.block_ids(data)[0]
+    before = db.paragraph_text(next(db._Doc.load(data).trees["word/document.xml"].iter(db.w("p"))))
+    assert before.endswith("1987 page  end")
+    out, _ = db.apply_text_edits(data, [(first, before.replace(" end", " finish"))])
+    xml = db._Doc.load(out).files["word/document.xml"].decode()
+    assert ">7<" in xml and "PAGE" in xml and "finish" in xml

@@ -155,18 +155,30 @@ def block_ids(data: bytes) -> list[str]:
 def _pieces(p):
     """Text-bearing elements of a paragraph in order, excluding nested text-box paragraphs."""
     out = []
+    # Field codes and their results (page numbers, dates) aren't visible to the editor; leave them untouched.
+    in_field = [0]
 
     def walk(el):
         for child in el:
             tag = child.tag
-            if tag in (w("txbxContent"), w("p")):
+            if tag in (w("txbxContent"), w("p"), w("fldSimple"), w("footnoteReference"), w("endnoteReference")):
+                continue
+            if tag == w("fldChar"):
+                kind = child.get(w("fldCharType"))
+                if kind == "begin":
+                    in_field[0] += 1
+                elif kind == "end" and in_field[0]:
+                    in_field[0] -= 1
                 continue
             if tag == w("t"):
-                out.append((child, child.text or ""))
+                if not in_field[0]:
+                    out.append((child, child.text or ""))
             elif tag == w("tab") and el.tag == w("r"):
-                out.append((child, "\t"))
+                if not in_field[0]:
+                    out.append((child, "\t"))
             elif tag in (w("br"), w("cr")) and el.tag == w("r"):
-                out.append((child, "\n"))
+                if not in_field[0]:
+                    out.append((child, "\n"))
             else:
                 walk(child)
 
