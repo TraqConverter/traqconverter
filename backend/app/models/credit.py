@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey
+from sqlalchemy import CheckConstraint, Column, String, Integer, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -12,6 +12,10 @@ from app.database import Base
 
 class CreditWallet(Base):
     __tablename__ = "credit_wallets"
+    __table_args__ = (
+        CheckConstraint("subscription_credits >= 0", name="check_subscription_credits_non_negative"),
+        CheckConstraint("purchased_credits >= 0", name="check_purchased_credits_non_negative"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     team_id = Column(UUID(as_uuid=True), ForeignKey("teams.id"))

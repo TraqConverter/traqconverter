@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from uuid import UUID
@@ -5,6 +6,7 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import (
     get_user_project_or_404,
     assert_project_access,
@@ -14,6 +16,8 @@ from app.models.project import TranslationProject
 from app.models.user import User
 
 from app.services.translation_memory_service import store_tm_entry
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/segments", tags=["Segments"])
 
@@ -120,7 +124,10 @@ def update_segment(
 
 
 
-@router.post("/{segment_id}/retranslate")
+@router.post(
+    "/{segment_id}/retranslate",
+    dependencies=[Depends(user_rate_limit("retranslate", max_requests=120, per_seconds=3600))],
+)
 def retranslate_segment(
     segment_id: UUID,
     data: SegmentRetranslate,
@@ -193,9 +200,10 @@ def retranslate_segment(
                 db=db,
                 project=project,
             )
-    except Exception as e:
+    except Exception:
+        logger.exception("Request failed")
         raise HTTPException(
-            status_code=500, detail=f"Retranslation failed: {e}"
+            status_code=500, detail="Retranslation failed"
         )
 
     segment.translated_text = (new_translation or "").strip()

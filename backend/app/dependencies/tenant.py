@@ -11,7 +11,6 @@ current_user)` before touching the row.
 """
 from __future__ import annotations
 
-from typing import Iterable
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -65,3 +64,18 @@ def assert_project_access(
     allowed = team_ids_for(db, user)
     if project.team_id not in allowed:
         raise HTTPException(status_code=404, detail="Project not found")
+
+
+def can_manage_project(db: Session, project: TranslationProject, user: User) -> bool:
+    """Destructive actions: the uploader, the team owner, or a team ADMIN/PM."""
+    if project.user_id == user.id or (user.role or "").upper() in ("SUPERUSER", "SUPER_ADMIN", "ADMIN"):
+        return True
+    team = db.query(Team).filter(Team.id == project.team_id).first()
+    if team and team.owner_id == user.id:
+        return True
+    member = (
+        db.query(TeamMember)
+        .filter(TeamMember.team_id == project.team_id, TeamMember.user_id == user.id)
+        .first()
+    )
+    return bool(member and (member.role or "").upper() in ("ADMIN", "PM"))

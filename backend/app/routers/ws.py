@@ -14,10 +14,8 @@ from typing import Dict, List
 from uuid import UUID
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
-from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.database import SessionLocal
 from app.models.project import TranslationProject
 from app.models.team import Team
@@ -43,19 +41,19 @@ MAX_GLOBAL = 1000
 
 
 def _decode_token(token: str | None) -> str | None:
-    """Return the user id (`sub` claim) if the JWT is valid, else None."""
+    """Return the user id if the JWT is valid and not revoked, else None."""
     if not token:
         return None
+    from fastapi import HTTPException
+    from app.dependencies import _validate_token
+
+    db: Session = SessionLocal()
     try:
-        payload = jwt.decode(
-            token, settings.secret_key, algorithms=[settings.algorithm]
-        )
-    except JWTError:
+        return str(_validate_token(token, db).id)
+    except HTTPException:
         return None
-    sub = payload.get("sub")
-    if not sub:
-        return None
-    return str(sub)
+    finally:
+        db.close()
 
 
 def _resolve_user(user_id: str) -> User | None:

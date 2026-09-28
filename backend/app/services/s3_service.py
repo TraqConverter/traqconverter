@@ -166,3 +166,12 @@ def generate_presigned_download_url(
     except ClientError:
         logger.exception("Failed generating signed URL")
         raise
+
+
+def delete_objects_from_s3(keys) -> None:
+    """Best-effort delete; a storage hiccup must not block deleting the project row."""
+    for key in {k for k in keys if k}:
+        try:
+            s3_client.delete_object(Bucket=BUCKET_NAME, Key=key)
+        except ClientError:
+            logger.exception("Object delete failed: %s", key)

@@ -8,8 +8,28 @@ from app.dependencies import get_current_user
 from app.models.segment_comment import SegmentComment
 from app.models.translation_segment import TranslationSegment
 from app.models.user import User
+from app.dependencies.tenant import get_user_project_or_404
 
 router = APIRouter(prefix="/segments", tags=["Segment Comments"])
+
+
+def _segment_for_user(db: Session, segment_id, user: User) -> TranslationSegment:
+    segment = db.query(TranslationSegment).filter(TranslationSegment.id == segment_id).first()
+    if not segment:
+        raise HTTPException(status_code=404, detail="Segment not found")
+    get_user_project_or_404(db, segment.project_id, user)
+    return segment
+
+
+def _comment_for_user(db: Session, comment_id, user: User) -> SegmentComment:
+    comment = db.query(SegmentComment).filter(SegmentComment.id == comment_id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    try:
+        _segment_for_user(db, comment.segment_id, user)
+    except HTTPException:
+        raise HTTPException(status_code=404, detail="Comment not found")
+    return comment
 
 
 class CommentCreate(BaseModel):
@@ -25,6 +45,7 @@ def get_comments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
+    _segment_for_user(db, segment_id, current_user)
     results = db.query(SegmentComment, User).outerjoin(
         User, SegmentComment.user_id == User.id
     ).filter(
@@ -59,17 +80,15 @@ def create_comment(
     current_user: User = Depends(get_current_user)
 ):
 
-    segment = db.query(TranslationSegment).filter(
-        TranslationSegment.id == segment_id
-    ).first()
-
-    if not segment:
-        raise HTTPException(status_code=404, detail="Segment not found")
+    _segment_for_user(db, segment_id, current_user)
+    text = (data.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Comment can't be empty")
 
     comment = SegmentComment(
         segment_id=segment_id,
         user_id=current_user.id,
-        text=data.text
+        text=text[:5000]
     )
 
     db.add(comment)
@@ -97,12 +116,7 @@ def resolve_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    comment = db.query(SegmentComment).filter(
-        SegmentComment.id == comment_id
-    ).first()
-
-    if not comment:
-        raise HTTPException(status_code=404, detail="Comment not found")
+    comment = _comment_for_user(db, comment_id, current_user)
 
     comment.resolved = True
     db.commit()
@@ -127,13 +141,7 @@ def edit_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    comment = (
-        db.query(SegmentComment)
-        .filter(SegmentComment.id == comment_id)
-        .first()
-    )
-    if not comment:
-        raise HTTPException(status_code=404, detail="Comment not found")
+    comment = _comment_for_user(db, comment_id, current_user)
 
     if str(comment.user_id) != str(current_user.id):
         raise HTTPException(
@@ -164,13 +172,7 @@ def delete_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    comment = (
-        db.query(SegmentComment)
-        .filter(SegmentComment.id == comment_id)
-        .first()
-    )
-    if not comment:
-        raise HTTPException(status_code=404, detail="Comment not found")
+    comment = _comment_for_user(db, comment_id, current_user)
 
 
     if str(comment.user_id) != str(current_user.id):
@@ -194,13 +196,7 @@ def reopen_comment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    comment = (
-        db.query(SegmentComment)
-        .filter(SegmentComment.id == comment_id)
-        .first()
-    )
-    if not comment:
-        raise HTTPException(status_code=404, detail="Comment not found")
+    comment = _comment_for_user(db, comment_id, current_user)
     comment.resolved = False
     db.commit()
     db.refresh(comment)

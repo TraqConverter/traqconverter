@@ -1,3 +1,4 @@
+import secrets
 import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, DateTime, ForeignKey, UniqueConstraint
@@ -46,6 +47,8 @@ class TeamInvite(Base):
     email = Column(String, nullable=False, index=True)
     role = Column(String, nullable=False, default="MEMBER")
     status = Column(String, nullable=False, default="PENDING")
+    # Registration can't prove email ownership, so joining a team requires the link's secret.
+    token = Column(String, nullable=True, unique=True, index=True, default=lambda: secrets.token_urlsafe(32))
     invited_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),

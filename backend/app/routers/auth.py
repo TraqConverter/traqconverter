@@ -333,7 +333,7 @@ def delete_account(
         db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Couldn't delete account — {type(e).__name__}",
+            detail="Couldn't delete account",
         )
 
     return {"status": "deleted"}
@@ -373,8 +373,11 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
         .filter(
             TeamInvite.email == (user_data.email or "").lower(),
             TeamInvite.status == "PENDING",
+            TeamInvite.token == user_data.invite_token,
         )
         .first()
+        if user_data.invite_token
+        else None
     )
 
     if pending_invite is None:
@@ -421,10 +424,8 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    try:
-        auto_accept_invites(db, user)
-    except Exception:
-        pass
+    if pending_invite is not None:
+        auto_accept_invites(db, user, user_data.invite_token)
 
 
 
@@ -450,11 +451,6 @@ def login(user_data: UserLogin, db: Session = Depends(get_db)):
 
     if not verify_password(user_data.password, user.password_hash):
         raise HTTPException(status_code=400, detail="Invalid credentials")
-
-    try:
-        auto_accept_invites(db, user)
-    except Exception:
-        pass
 
     token = create_access_token(
         {"sub": str(user.id)},
