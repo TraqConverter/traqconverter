@@ -114,7 +114,7 @@ def test_force_borderless_table_styles_nils_table_grid():
 def test_author_prompt_has_no_real_personal_data_and_valid_recipe():
     prompt = car._AUTHOR_PROMPT_TEMPLATE.format(
         source_lang="Italian", target_lang="English", output_path="/tmp/out/rebuild.docx",
-        image_list="", table_list="", sandbox_rules=car.SANDBOX_RULES,
+        image_list="", table_list="", sandbox_rules=car.SANDBOX_RULES, notation_rules=car.NOTATION_RULES,
     )
     assert "MARIO ROSSI" in prompt
     # Example IDs must be zeroed placeholders, never real-looking numbers.

@@ -7,3 +7,4 @@ from app.models.translation_memory import TranslationMemory
 from app.models.team_member import TeamMember, TeamInvite
 from app.models.certification import Certification
 from .segment_comment import SegmentComment
+from app.models.document_version import DocumentVersion

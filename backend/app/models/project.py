@@ -135,6 +135,7 @@ class TranslationProject(Base):
     rebuild_error = Column(String, nullable=True)
     rebuild_started_at = Column(DateTime, nullable=True)
     failure_reason = Column(String, nullable=True)
+    document_version = Column(Integer, nullable=False, default=0, server_default="0")
 
 
 

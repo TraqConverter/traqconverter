@@ -138,3 +138,12 @@ def log_usage(label: str, resp: Any) -> None:
         getattr(usage, "cache_read_input_tokens", None),
         getattr(usage, "cache_creation_input_tokens", None),
     )
+
+
+def api_key() -> Optional[str]:
+    """Environment first (production), then settings, which also read backend/.env locally."""
+    import os
+
+    from app.config import settings
+
+    return os.getenv("ANTHROPIC_API_KEY") or settings.ANTHROPIC_API_KEY

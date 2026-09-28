@@ -9,7 +9,6 @@ from docx import Document
 
 from app.services import claude_authored_rebuild as car
 from app.services import claude_multiturn_rebuild as mt
-from app.services import claude_vision_image_extractor as cvie
 
 SOURCE_TEXT = (
     "UNIVERSITA DEGLI STUDI DI ESEMPIO\n"
@@ -121,8 +120,6 @@ class _FakeClient:
 @pytest.fixture
 def loop_env(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    monkeypatch.setattr(cvie, "extract_image_regions_via_vision", lambda *a, **k: [])
-    monkeypatch.setattr(car, "_extract_pdf_images", lambda *a, **k: [])
     monkeypatch.setattr(car, "_extract_tables_via_vision", lambda *a, **k: [])
     monkeypatch.setattr(mt, "_pdf_text_layer", lambda pdf: SOURCE_TEXT)
     requests = []
@@ -222,7 +219,6 @@ def test_multipage_form_routes_before_running_prepasses(monkeypatch):
     def forbidden(*a, **k):
         raise AssertionError("whole-document pre-pass should not run")
 
-    monkeypatch.setattr(cvie, "extract_image_regions_via_vision", forbidden)
     monkeypatch.setattr(car, "_extract_tables_via_vision", forbidden)
     monkeypatch.setattr(mt, "_classify_document", lambda pdf: "FORM")
     monkeypatch.setattr(mt, "_pdf_page_count", lambda pdf: 2)

@@ -22,7 +22,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import textwrap
 from pathlib import Path
@@ -60,6 +59,30 @@ SANDBOX_RULES = """\
       - Never use these attribute names: .write, .parse, .etree,
         .getroottree, .environ, .system, .popen, .modules. Build XML
         with OxmlElement(...) and qn(...) from docx.oxml, not lxml."""
+
+# Certified-translation convention: graphics and unreadable content are described, never copied.
+NOTATION_RULES = """\
+  * Never insert images: do not call doc.add_picture(...). Describe
+    every non-text element with a short italic note in square
+    brackets, written in the TARGET language, at the exact position
+    it occupies in the source (same cell, same side, same line):
+      - Handwritten signature: [Signature]. If a name is printed or
+        legible next to it, keep that name as normal text.
+      - Stamp or seal: [Stamp: <translated legible text>], or
+        [Round stamp: ...] / [Dry seal: ...] when the shape matters.
+        Stamp with no legible text: [Stamp, illegible].
+      - Revenue/duty stamp (e.g. marca da bollo): [Revenue stamp: <amount>].
+      - Crest, coat of arms, emblem: [Coat of arms of <entity>];
+        company or institution logo: [Logo: <name>].
+      - Photo: [Photo]. QR code: [QR code]. Barcode: [Barcode].
+      - Handwritten text you can read: translate it and mark it
+        [Handwritten: <translation>].
+  * Unreadable content: replace exactly the unreadable part with
+    [illegible] (a single word, number or line; never a whole
+    paragraph when only part is unreadable). Never guess digits,
+    dates, names or amounts: a wrong number is worse than [illegible].
+  * Crossed-out text stays readable: [Crossed out: <translation>].
+  * These notes are required output, not placeholders to avoid."""
 
 
 _AUTHOR_PROMPT_TEMPLATE = textwrap.dedent("""
@@ -193,8 +216,8 @@ pattern that fits each:
 
 For document types not listed: pick the closest match and adapt.
 The HARD RULES (no rotation, borderless layout tables, ALL data
-distributed cell-by-cell in data tables, real images via
-doc.add_picture) apply to ALL document types.
+distributed cell-by-cell in data tables, bracketed notations
+instead of images) apply to ALL document types.
 
 PROVEN PYTHON-DOCX RECIPE (certificate / diploma type)
 =======================================================
@@ -247,9 +270,7 @@ t.columns[0].width = Cm(4)
 t.columns[1].width = Cm(13)
 
 logo_cell = t.rows[0].cells[0]
-logo_cell.paragraphs[0].add_run().add_picture(
-    "images/p1_header.png", width=Cm(3)
-)
+logo_cell.paragraphs[0].add_run("[Coat of arms of the Italian Republic]").italic = True
 
 name_cell = t.rows[0].cells[1]
 name_p = name_cell.paragraphs[0]
@@ -324,15 +345,15 @@ for row in rows:
                 r.font.size = Pt(8)
 
 # === SIGNATURE BLOCK ===
-# Borderless 2-col table: officer name + signature image on left,
-# round seal on right.
+# Borderless 2-col table: officer name + signature notation on left,
+# stamp notation on right.
 sig = doc.add_table(rows=1, cols=2)
 _no_borders(sig)
 left = sig.rows[0].cells[0]
 left.paragraphs[0].add_run("The Issuing Officer\\nBIANCHI ANNA").bold = True
-left.add_paragraph().add_run().add_picture("images/p2_signature.png", width=Cm(5))
+left.add_paragraph().add_run("[Signature]").italic = True
 right = sig.rows[0].cells[1]
-right.paragraphs[0].add_run().add_picture("images/p2_seal.png", width=Cm(3))
+right.paragraphs[0].add_run("[Round stamp: University of Esempio – Student Registrar's Office]").italic = True
 
 # === DECODING SECTION + TRANSLATOR'S NOTE ===
 doc.add_paragraph("(*) Decoding of the institution-triad codes appearing in the document:")
@@ -420,8 +441,8 @@ Read the document end-to-end and reproduce its visual structure:
                 borders.append(e)
             tblPr.append(borders)
 
-  * Signature blocks (officer name + signature image + seal/stamp
-    image) sit at the bottom of the issuing page in a borderless
+  * Signature blocks (officer name + [Signature] + [Stamp: ...]
+    notations) sit at the bottom of the issuing page in a borderless
     2- or 3-column layout. Reproduce the same layout.
   * Decoding keys / legends / footnotes at the very end of the
     source appear at the end of the output in the same compact
@@ -458,70 +479,9 @@ Preserve verbatim (do NOT translate or alter):
 When in doubt, prefer "leave the original + add gloss in target
 language in italics" over "drop the original altogether".
 
-ARTWORK / IMAGES — DO NOT EMBED ANY
-====================================
-The user has explicitly instructed: NO inline images anywhere
-in the translation body. Do NOT call doc.add_picture() at all,
-regardless of whether image files exist in ./images/. Do NOT
-insert any bracketed image placeholder like "[Coat of Arms]"
-or "[Signature]" either.
-
-Why: the export wrapper embeds the FULL source PDF pages
-BEFORE your translation body, so the original crest, signature,
-seal, stamp, photo, QR code, and every other graphic element
-is already preserved in the export at full visual fidelity.
-Re-rendering them inline produces blurry tiny rectangles
-that look broken.
-
-Your translation is TEXT-ONLY:
-  - Masthead: institution name typed centered, 12-14pt bold.
-  - Signature block: officer name typed in normal weight.
-    No signature image, no seal, no stamp.
-  - Decoding tables, body paragraphs, course grids: text +
-    real Word tables only. No image elements.
-
-Ignore the EXTRACTED IMAGES list further below — it remains
-in the prompt for back-compat but you must NOT use any of
-those files in your output.
-
-  * For an entry with kind=header → DO NOT insert any image here.
-    The wrapper already embeds the full source PDF pages BEFORE
-    your translation, so the original masthead (crest + ministry
-    name) is preserved in the export. In YOUR translation body
-    use a TEXT-ONLY masthead: a centered bold heading with the
-    institution name typed out in {target_lang} at 12-14pt (e.g.
-    "MINISTRY OF THE INTERIOR" or "UNIVERSITY OF ESEMPIO"). NO
-    crest image, NO logo image, NO low-res cropped strip. Just
-    typed bold text.
-  * For an entry with kind=footer → DO NOT paste this wide strip.
-    Same problem — it's a low-res strip. Instead, rebuild the
-    signature block in Word: officer name typed in normal weight
-    above a signature image (width=Cm(5)) on the left, and the
-    seal/stamp image (width=Cm(3)) on the right, in a borderless
-    2-column table.
-  * For an entry with kind=embedded → discrete extracted image
-    (logo, photo, signature, seal). Place it where the source PDF
-    shows it, sized appropriately per the sizing hints below.
-  * Insert with `doc.add_picture("images/<filename>", width=Cm(N))`
-    at the matching position.
-  * STRICT SIZING — never exceed these widths for these element
-    types (stretching small images to wider widths produces the
-    blurry "broken image" effect):
-      - crest / coat of arms      width=Cm(2.5)
-      - institution logo          width=Cm(3)
-      - round seal / rubber stamp width=Cm(3)
-      - handwritten signature     width=Cm(5)
-      - ID / passport photo       width=Cm(3) (set height instead)
-      - watermark / background    skip (don't embed)
-    For any other small image element, DO NOT set width=Cm(17) or
-    width=Cm(15) — use Cm(3-5) max.
-  * If the source is a flat scan (one big image per page rather
-    than discrete logo/seal/signature image files), the
-    EXTRACTED IMAGES list may be empty or only contain whole-page
-    bitmaps. In that case use a short italic bracketed placeholder
-    paragraph at the matching position (e.g. "[Logo]", "[Stamp]",
-    "[Signature]") instead of trying to reference a file that
-    isn't there.
+NON-TEXT ELEMENTS
+=================
+{notation_rules}
 
 ORDERING RULE: NEVER place a "CERTIFIED TRANSLATION" or affidavit-
 style block at the START of the document. Your output ends with
@@ -745,170 +705,10 @@ def _validate_script(script: str, output_path: str) -> None:
     script_sandbox.validate_script(script)
 
 
-def _extract_pdf_images(pdf_bytes: bytes, dest_dir: Path) -> list:
-    """Extract images from a PDF, with a fallback for flat scans.
-
-    Tries two strategies per page:
-
-      1. `page.get_images(full=True)` — finds embedded XObjects.
-         Works on vector PDFs that have logos / stamps as
-         separate image streams.
-      2. When (1) finds nothing on a page, the page is treated as
-         a flat scan: we crop the masthead strip (top 28% of the
-         page) and the signature strip (bottom 25% of the LAST
-         page) as separate PNGs. That gives Claude real logo /
-         seal / signature bitmaps to insert via doc.add_picture
-         instead of falling back to "[Coat of Arms]" placeholders.
-
-    Returns dicts the prompt then formats:
-        {"filename": "...", "page": N,
-         "width_px": W, "height_px": H, "kind": "embedded"|"header"|"footer"}
-
-    Failures are non-fatal — we return whatever we got.
-    """
-    try:
-        import fitz
-    except Exception:
-        logger.warning("PyMuPDF (fitz) not installed — skipping image extraction")
-        return []
-
-    images_dir = dest_dir / "images"
-    images_dir.mkdir(parents=True, exist_ok=True)
-
-    out = []
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        logger.warning("Failed to open PDF for image extraction: %s", e)
-        return []
-
-    try:
-        n_pages = len(doc)
-        for page_num, page in enumerate(doc, start=1):
-            embedded_count = 0
-
-
-
-
-
-
-            page_rect = page.rect
-            page_area = max(1.0, page_rect.width * page_rect.height)
-            for img_idx, img in enumerate(page.get_images(full=True)):
-                xref = img[0]
-                try:
-                    pix = fitz.Pixmap(doc, xref)
-                    if pix.n - pix.alpha >= 4:
-                        pix = fitz.Pixmap(fitz.csRGB, pix)
-
-                    img_area_pts = (pix.width * pix.height) / (3 * 3)
-
-                    if pix.width >= page_rect.width * 0.85 and pix.height >= page_rect.height * 0.6:
-                        logger.info(
-                            "Skipping page-sized embedded image p%d idx%d (%dx%d vs page %dx%d)",
-                            page_num, img_idx, pix.width, pix.height,
-                            int(page_rect.width), int(page_rect.height),
-                        )
-                        pix = None
-                        continue
-                    fname = f"p{page_num}_img{img_idx}.png"
-                    fpath = images_dir / fname
-                    pix.save(str(fpath))
-                    out.append({
-                        "filename": fname,
-                        "page": page_num,
-                        "width_px": pix.width,
-                        "height_px": pix.height,
-                        "kind": "embedded",
-                    })
-                    embedded_count += 1
-                    pix = None
-                except Exception as e:
-                    logger.warning(
-                        "Skipped image p%d idx%d: %s", page_num, img_idx, e
-                    )
-
-
-
-
-            if embedded_count == 0:
-                try:
-                    rect = page.rect
-                    page_w, page_h = rect.width, rect.height
-                    if page_w < 100 or page_h < 100:
-                        continue
-
-
-
-
-
-
-                    header_clip = fitz.Rect(
-                        0, 0, page_w, page_h * 0.16
-                    )
-                    pix = page.get_pixmap(
-                        matrix=fitz.Matrix(3, 3),
-                        clip=header_clip,
-                        alpha=False,
-                    )
-                    fname = f"p{page_num}_header.png"
-                    fpath = images_dir / fname
-                    pix.save(str(fpath))
-                    out.append({
-                        "filename": fname,
-                        "page": page_num,
-                        "width_px": pix.width,
-                        "height_px": pix.height,
-                        "kind": "header",
-                    })
-                    pix = None
-
-
-
-                    if page_num == n_pages:
-                        footer_clip = fitz.Rect(
-                            0, page_h * 0.62, page_w, page_h * 0.80
-                        )
-                        pix = page.get_pixmap(
-                            matrix=fitz.Matrix(3, 3),
-                            clip=footer_clip,
-                            alpha=False,
-                        )
-                        fname = f"p{page_num}_footer.png"
-                        fpath = images_dir / fname
-                        pix.save(str(fpath))
-                        out.append({
-                            "filename": fname,
-                            "page": page_num,
-                            "width_px": pix.width,
-                            "height_px": pix.height,
-                            "kind": "footer",
-                        })
-                        pix = None
-                except Exception as e:
-                    logger.warning(
-                        "Flat-scan crop fallback failed on page %d: %s",
-                        page_num, e,
-                    )
-    finally:
-        try:
-            doc.close()
-        except Exception:
-            pass
-
-    logger.info(
-        "Extracted %d image(s) from PDF (%d embedded, %d scan crops)",
-        len(out),
-        sum(1 for x in out if x.get("kind") == "embedded"),
-        sum(1 for x in out if x.get("kind") in ("header", "footer")),
-    )
-    return out
-
-
 def _format_image_list(images: list) -> str:
     """Render the extracted-image list as bullet lines for the prompt."""
     if not images:
-        return "(no images extracted — use bracketed placeholders)"
+        return "(none: render every graphic as a bracketed notation)"
     lines = []
     kind_hint = {
         "header": "likely contains logo + masthead — crop or use as-is",
@@ -952,7 +752,7 @@ def _extract_tables_via_vision(
         logger.warning("Vision table extraction unavailable (missing dep)")
         return []
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = claude_params.api_key()
     if not api_key:
         return []
 
@@ -1101,7 +901,7 @@ def _call_claude_to_author(
             "anthropic SDK not installed — cannot run authored rebuild"
         ) from e
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = claude_params.api_key()
     if not api_key:
         raise RuntimeError(
             "ANTHROPIC_API_KEY not set — cannot run authored rebuild"
@@ -1117,6 +917,7 @@ def _call_claude_to_author(
         image_list=_format_image_list(images),
         table_list=_format_table_list(tables),
         sandbox_rules=SANDBOX_RULES,
+        notation_rules=NOTATION_RULES,
     )
 
     logger.info(
@@ -1724,158 +1525,6 @@ def _image_is_mostly_uniform(img_path) -> bool:
         return ratio >= 0.72
     except Exception:
         return False
-
-
-def _replace_image_placeholders(docx_bytes: bytes, work_dir: Path) -> bytes:
-    """Replace bracketed text placeholders with actual extracted
-    images.
-
-    Looks for "[Coat of Arms]" / "[Logo]" / "[Stamp]" / "[Signature]"
-    / "[Photo]" / "[Seal]" / "[Crest]" text in the DOCX. For each
-    match, picks the most suitable extracted image (logo-like for
-    [Coat of Arms]/[Logo]/[Crest], footer-crop for [Stamp]/[Signature]
-    /[Seal], any embedded for [Photo]) and inlines it via python-docx.
-
-    `work_dir` is the same out_dir we passed to _extract_pdf_images,
-    so images live at work_dir/images/<filename>.
-    """
-    try:
-        import io
-        import re as _re
-        from io import BytesIO
-        from docx import Document
-        from docx.shared import Cm
-
-        images_dir = Path(work_dir) / "images"
-        if not images_dir.exists():
-            return docx_bytes
-
-        all_imgs = sorted(images_dir.glob("*.png")) + sorted(images_dir.glob("*.jpg")) + sorted(images_dir.glob("*.jpeg"))
-
-
-
-
-
-        kept = []
-        dropped = 0
-        for p in all_imgs:
-            if _image_is_mostly_uniform(p):
-                dropped += 1
-                continue
-            kept.append(p)
-        if dropped:
-            logger.info(
-                "image substitution: dropped %d background-only crop(s)",
-                dropped,
-            )
-        all_imgs = kept
-        if not all_imgs:
-            return docx_bytes
-
-
-        headers = [p for p in all_imgs if "header" in p.name]
-        footers = [p for p in all_imgs if "footer" in p.name]
-        embedded = [p for p in all_imgs if "img" in p.name and "header" not in p.name and "footer" not in p.name]
-
-        def _pick(placeholder: str):
-            ph = placeholder.lower()
-            if any(k in ph for k in ("coat", "logo", "crest", "arms")):
-                return (headers + embedded + footers)[0] if (headers + embedded + footers) else None
-            if any(k in ph for k in ("stamp", "seal", "signature", "sigillum")):
-                return (footers + embedded + headers)[0] if (footers + embedded + headers) else None
-            if "photo" in ph:
-                return (embedded + headers + footers)[0] if (embedded + headers + footers) else None
-            return None
-
-
-        def _width(placeholder: str) -> float:
-            ph = placeholder.lower()
-            if any(k in ph for k in ("coat", "logo", "crest", "arms")):
-                return 3.5
-            if "stamp" in ph or "seal" in ph:
-                return 3.0
-            if "signature" in ph:
-                return 5.0
-            if "photo" in ph:
-                return 3.0
-            return 4.0
-
-        PATTERN = _re.compile(
-            r"\[(?:Coat\s*of\s*Arms|Logo|Crest|Arms|Stamp|Seal|Signature|Photo)\]",
-            _re.IGNORECASE,
-        )
-
-        doc = Document(BytesIO(docx_bytes))
-        replaced = 0
-
-        def _process_paragraph(para):
-            """If this paragraph contains a placeholder, replace it
-            with an image inline."""
-            nonlocal replaced
-            full_text = "".join(r.text or "" for r in para.runs)
-            m = PATTERN.search(full_text)
-            if not m:
-                return
-            placeholder = m.group(0)
-            img_path = _pick(placeholder)
-            if not img_path:
-                return
-
-            new_text = full_text[:m.start()] + full_text[m.end():]
-
-            for r in list(para.runs):
-                r._element.getparent().remove(r._element)
-
-            if new_text.strip():
-
-                before = full_text[:m.start()]
-                after = full_text[m.end():]
-                if before:
-                    para.add_run(before)
-                run = para.add_run()
-                run.add_picture(str(img_path), width=Cm(_width(placeholder)))
-                if after:
-                    para.add_run(after)
-            else:
-                run = para.add_run()
-                run.add_picture(str(img_path), width=Cm(_width(placeholder)))
-            replaced += 1
-
-
-        for para in doc.paragraphs:
-            _process_paragraph(para)
-
-        for tbl in doc.tables:
-            for row in tbl.rows:
-                for cell in row.cells:
-                    for para in cell.paragraphs:
-                        _process_paragraph(para)
-
-        for section in doc.sections:
-            for para in section.header.paragraphs:
-                _process_paragraph(para)
-            for para in section.footer.paragraphs:
-                _process_paragraph(para)
-            for tbl in section.header.tables:
-                for row in tbl.rows:
-                    for cell in row.cells:
-                        for para in cell.paragraphs:
-                            _process_paragraph(para)
-            for tbl in section.footer.tables:
-                for row in tbl.rows:
-                    for cell in row.cells:
-                        for para in cell.paragraphs:
-                            _process_paragraph(para)
-
-        if replaced:
-            logger.info("Replaced %d image placeholder(s) with real images", replaced)
-            buf = BytesIO()
-            doc.save(buf)
-            return buf.getvalue()
-        return docx_bytes
-    except Exception:
-        logger.exception("Image-placeholder replace failed — returning original")
-        return docx_bytes
 
 
 _CERT_STRONG_PATTERNS = (
@@ -2530,7 +2179,6 @@ def _strip_broken_image_drawings(docx_bytes: bytes) -> bytes:
     """
     try:
         import io
-        import re as _re
         import zipfile
         from xml.etree import ElementTree as ET
 
@@ -2681,7 +2329,8 @@ def author_rebuild_docx(
 
 
 
-    images = _extract_pdf_images(pdf_bytes, out_dir)
+    # Graphics are rendered as bracketed notations, so no image crops are extracted.
+    images: list = []
 
 
 
@@ -2736,7 +2385,6 @@ def author_rebuild_docx(
 
 
 
-        docx_bytes = _replace_image_placeholders(docx_bytes, out_dir)
 
 
 

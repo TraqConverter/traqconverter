@@ -3,10 +3,11 @@
 Usage:
     python -m scripts.create_superuser
 
-Idempotent — running it twice resets the password and re-asserts the
-SUPERUSER role / Pro plan. Safe to run on every deploy.
+Reads SUPERUSER_EMAIL and SUPERUSER_PASSWORD from the environment.
+Idempotent: re-running resets the password and re-asserts the role.
 """
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -25,8 +26,9 @@ from app.models.user import User
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SUPERUSER_EMAIL = "info@espressotranslations.com"
-SUPERUSER_PASSWORD = "Translation2026!"
+# Never hardcode these: this repository is public.
+SUPERUSER_EMAIL = os.environ.get("SUPERUSER_EMAIL", "")
+SUPERUSER_PASSWORD = os.environ.get("SUPERUSER_PASSWORD", "")
 SUPERUSER_NAME = "Espresso Translations Admin"
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -98,11 +100,14 @@ def upsert_superuser(db: Session) -> User:
 
 
 def main() -> int:
+    if not SUPERUSER_EMAIL or len(SUPERUSER_PASSWORD) < 12:
+        print("Set SUPERUSER_EMAIL and SUPERUSER_PASSWORD (12+ characters) in the environment.")
+        return 1
     db = SessionLocal()
     try:
         user = upsert_superuser(db)
         print(
-            f"✅ Superuser ready: id={user.id} email={user.email} "
+            f"Superuser ready: id={user.id} email={user.email} "
             f"role={user.role}"
         )
         return 0

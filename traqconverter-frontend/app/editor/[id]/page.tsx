@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { api, apiErrorDetail, fetchObjectUrl } from "@/lib/api"
+import DocumentEditor from "@/components/editor/DocumentEditor"
 
 type Segment = {
   id: string
@@ -58,15 +59,7 @@ function revisionCostText(freeLeft: number | undefined) {
   return "No free revisions left on this project. This will cost credits equal to the document's page count."
 }
 
-type Comment = {
-  id: string
-  text: string
-  created_at: string
-  resolved: boolean
-  user: { id: string | null; email: string }
-}
-
-type Tab = "tm" | "glossary" | "comments" | "status"
+type Tab = "glossary" | "status"
 
 const REVIEW_STATUSES = [
   { value: "DRAFT", label: "Draft", bg: "#ede3cc", dot: "#9a9178", text: "#6b6558" },
@@ -103,22 +96,6 @@ function initialsFor(p: { full_name: string | null; email: string }) {
   return p.email.slice(0, 2).toUpperCase()
 }
 
-function relativeTime(iso: string) {
-
-  const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(iso)
-  const safe = hasTz ? iso : iso + "Z"
-  const t = new Date(safe).getTime()
-  if (!Number.isFinite(t)) return ""
-  const diff = Date.now() - t
-  const m = 60_000, h = 3_600_000, d = 86_400_000
-  if (diff < 0) return "just now"
-  if (diff < m) return "just now"
-  if (diff < h) return `${Math.floor(diff / m)}m ago`
-  if (diff < d) return `${Math.floor(diff / h)}h ago`
-  if (diff < 7 * d) return `${Math.floor(diff / d)}d ago`
-  return new Date(safe).toLocaleDateString()
-}
-
 export default function EditorPage() {
   const router = useRouter()
   const params = useParams()
@@ -130,12 +107,9 @@ export default function EditorPage() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null)
-  const [activeIdx, setActiveIdx] = useState(0)
-  const [tab, setTab] = useState<Tab>("comments")
+  const [tab, setTab] = useState<Tab>("status")
   const [compareReloadKey, setCompareReloadKey] = useState(0)
 
-  const [comments, setComments] = useState<Record<string, Comment[]>>({})
-  const [newComment, setNewComment] = useState("")
   const [busy, setBusy] = useState<string | null>(null)
   const [glossaryCount, setGlossaryCount] = useState<number>(0)
   const [showStatusMenu, setShowStatusMenu] = useState(false)
@@ -146,7 +120,7 @@ export default function EditorPage() {
     total: number
   } | null>(null)
 
-  const [compareMode, setCompareMode] = useState(true)
+  const [chatOpen, setChatOpen] = useState(false)
   const [sourcePreview, setSourcePreview] = useState<{
     url: string
     kind: "pdf" | "image" | "other"
@@ -181,16 +155,6 @@ export default function EditorPage() {
     }
   }
 
-  const toggleCompareMode = () => {
-    const next = !compareMode
-    setCompareMode(next)
-
-    if (next) {
-      loadCompare()
-    }
-  }
-
-  const [compareEdit, setCompareEdit] = useState(true)
   const [compareActionBusy, setCompareActionBusy] = useState<
     null | "revise" | "rerun"
   >(null)
@@ -255,22 +219,17 @@ export default function EditorPage() {
     }
   }
 
-  const startClaudeRebuild = (opts?: { discardEdits?: boolean }) => {
+  const startClaudeRebuild = () => {
     setConfirmState({
       title: "Rebuild with Claude",
       body:
-        "Claude reads the original PDF and writes a fresh translated DOCX" +
-        (opts?.discardEdits ? ", discarding your edits in the preview" : "") +
-        ". It runs in the background and usually takes 1-3 minutes.\n\n" +
+        "Claude reads the original PDF and writes a fresh translated DOCX. It runs in the background and usually takes 1-3 minutes.\n\n" +
         revisionCostText(project?.free_revisions_left),
       confirmLabel: "Start rebuild",
       onConfirm: async () => {
         try {
           setCompareActionBusy("rerun")
           setError(null)
-          if (opts?.discardEdits) {
-            await api.delete(`/projects/${id}/edited-html`)
-          }
           const res = await api.post(`/projects/${id}/rebuild-with-claude`)
           markRebuildRunning(res.data?.revision_count)
           setNotice(
@@ -519,11 +478,11 @@ export default function EditorPage() {
   }, [id, fetchProject])
 
   useEffect(() => {
-    if (project && compareMode && !sourcePreview) {
+    if (project && !sourcePreview) {
       loadCompare()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, compareMode])
+  }, [project])
 
   useEffect(() => {
     if (!project) return
@@ -570,176 +529,6 @@ export default function EditorPage() {
       .then((res) => setGlossaryCount((res.data || []).length))
       .catch(() => setGlossaryCount(0))
   }, [])
-
-  const activeSegment = segments[activeIdx]
-
-  useEffect(() => {
-    if (!activeSegment) return
-    if (comments[activeSegment.id]) return
-    api
-      .get(`/segments/${activeSegment.id}/comments`)
-      .then((res) =>
-        setComments((c) => ({ ...c, [activeSegment.id]: res.data || [] }))
-      )
-      .catch(() => {
-        setComments((c) => ({ ...c, [activeSegment.id]: [] }))
-      })
-  }, [activeSegment, comments])
-
-  const refreshCommentsForActive = useCallback(async () => {
-    if (!activeSegment) return
-    try {
-      const res = await api.get(`/segments/${activeSegment.id}/comments`)
-      setComments((c) => ({ ...c, [activeSegment.id]: res.data || [] }))
-    } catch {
-
-    }
-  }, [activeSegment])
-
-  const addComment = async () => {
-    if (!activeSegment || !newComment.trim()) return
-    try {
-      setBusy("comment")
-      await api.post(`/segments/${activeSegment.id}/comments`, {
-        text: newComment.trim(),
-      })
-      setNewComment("")
-      await refreshCommentsForActive()
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || "Couldn't add the comment.")
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const resolveComment = async (commentId: string) => {
-    try {
-      setBusy(`resolve:${commentId}`)
-      await api.patch(`/segments/${commentId}/resolve`)
-      await refreshCommentsForActive()
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || "Couldn't resolve that comment.")
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const reopenComment = async (commentId: string) => {
-    try {
-      setBusy(`reopen:${commentId}`)
-      await api.patch(`/segments/comments/${commentId}/reopen`)
-      await refreshCommentsForActive()
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || "Couldn't reopen that comment.")
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const [editingCommentId, setEditingCommentId] = useState<string | null>(null)
-  const [editingCommentDraft, setEditingCommentDraft] = useState("")
-
-  const startEditComment = (commentId: string, currentText: string) => {
-    setEditingCommentId(commentId)
-    setEditingCommentDraft(currentText)
-  }
-
-  const cancelEditComment = () => {
-    setEditingCommentId(null)
-    setEditingCommentDraft("")
-  }
-
-  const saveEditComment = async (commentId: string) => {
-    const text = editingCommentDraft.trim()
-    if (!text) {
-      setError("Comment can't be empty.")
-      return
-    }
-    try {
-      setBusy(`edit:${commentId}`)
-      await api.patch(`/segments/comments/${commentId}`, { text })
-      cancelEditComment()
-      await refreshCommentsForActive()
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || "Couldn't update that comment.")
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const deleteComment = async (commentId: string) => {
-    if (!confirm("Delete this comment? This can't be undone.")) return
-    try {
-      setBusy(`delete:${commentId}`)
-      await api.delete(`/segments/comments/${commentId}`)
-      await refreshCommentsForActive()
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || "Couldn't delete that comment.")
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const retranslateSegment = async (seg: Segment) => {
-    const instructions = window.prompt(
-      "Optional instructions for the AI (e.g. 'more formal', " +
-        "'use Municipality of' instead of City). Leave empty for a " +
-        "clean re-translation.",
-      "",
-    )
-    if (instructions === null) return
-    try {
-      setBusy(`retranslate:${seg.id}`)
-      const res = await api.post(`/segments/${seg.id}/retranslate`, {
-        instructions: instructions.trim() || null,
-      })
-      const newText: string = res.data?.translated_text || ""
-      setSegments((xs) =>
-        xs.map((x) =>
-          x.id === seg.id
-            ? { ...x, translated_text: newText, approved: false }
-            : x,
-        ),
-      )
-    } catch (err: any) {
-      setError(
-        err?.response?.data?.detail || "Couldn't retranslate that segment.",
-      )
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const toggleApprove = async (seg: Segment) => {
-    try {
-      setBusy(`approve:${seg.id}`)
-      const res = await api.patch(
-        `/projects/${id}/segments/${seg.id}/approve`,
-        { approved: !seg.approved }
-      )
-      const approved = !!res.data?.approved
-      setSegments((xs) =>
-        xs.map((x) => (x.id === seg.id ? { ...x, approved } : x))
-      )
-
-      setProject((p) =>
-        p
-          ? {
-              ...p,
-              stats: {
-                ...p.stats,
-                approved_segments:
-                  p.stats.approved_segments + (approved ? 1 : -1),
-              },
-            }
-          : p
-      )
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || "Couldn't update that segment.")
-    } finally {
-      setBusy(null)
-    }
-  }
 
   const approveAllTranslated = async () => {
 
@@ -897,30 +686,6 @@ export default function EditorPage() {
     }
   }
 
-  const updateTargetText = (segId: string, value: string) => {
-    setSegments((xs) =>
-      xs.map((x) => (x.id === segId ? { ...x, translated_text: value } : x))
-    )
-    const w = window as unknown as {
-      __segSaveTimers?: Record<string, number>
-    }
-    if (!w.__segSaveTimers) w.__segSaveTimers = {}
-    if (w.__segSaveTimers[segId]) {
-      window.clearTimeout(w.__segSaveTimers[segId])
-    }
-    w.__segSaveTimers[segId] = window.setTimeout(() => {
-      api
-        .patch(`/segments/${segId}`, { translated_text: value })
-        .catch((err: any) => {
-          console.error("SEGMENT SAVE ERROR:", err)
-          setError(
-            err?.response?.data?.detail ||
-              "Couldn't save your edit — try again."
-          )
-        })
-    }, 700)
-  }
-
   const stats = useMemo(() => {
     if (!project) {
       return {
@@ -948,10 +713,6 @@ export default function EditorPage() {
       list.push(project.uploader)
     return list
   }, [project])
-
-  const activeComments =
-    activeSegment && comments[activeSegment.id] ? comments[activeSegment.id] : []
-  const commentCount = activeComments.filter((c) => !c.resolved).length
 
   if (loading) {
     return (
@@ -1098,37 +859,6 @@ export default function EditorPage() {
               <path d="M19 6 18 21H6L5 6" />
             </svg>
             Delete
-          </button>
-
-          {}
-          <button
-            type="button"
-            onClick={toggleCompareMode}
-            className="inline-flex items-center gap-2 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
-            style={{
-              background: !compareMode ? "#0a7870" : "#ffffff",
-              color: !compareMode ? "#ffffff" : "#1f2a2e",
-              border: !compareMode
-                ? "1px solid #0a7870"
-                : "1px solid #e7ddc5",
-            }}
-            title="Drop into the per-row segment editor"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <line x1="4" y1="6" x2="20" y2="6" />
-              <line x1="4" y1="12" x2="20" y2="12" />
-              <line x1="4" y1="18" x2="20" y2="18" />
-            </svg>
-            {compareMode ? "Segments" : "Back to compare"}
           </button>
 
           {}
@@ -1357,19 +1087,8 @@ export default function EditorPage() {
         </button>
       </div>
 
-      {}
-      <div
-        className="grid grid-cols-1 gap-4"
-        style={{
-
-          gridTemplateColumns: compareMode
-            ? "minmax(0, 1fr)"
-            : "minmax(0, 1fr) 360px",
-        }}
-      >
-        {compareMode ? (
-          <div className="flex flex-col" style={{ minHeight: 0 }}>
-            {}
+      <div>
+        <div className="flex flex-col">
             <div
               className="flex items-center justify-between gap-3 mb-3 px-4 py-3 rounded-2xl"
               style={{
@@ -1378,36 +1097,12 @@ export default function EditorPage() {
               }}
             >
               <div className="text-[12px]" style={{ color: "#8a8270" }}>
-                Source on the left · {compareEdit ? "editable translation" : "rendered preview"} on the right.
+                Type in the translation to edit it. Select text to ask Claude for changes.
               </div>
               <div
                 className="flex items-center gap-2 relative"
                 onClick={(e) => e.stopPropagation()}
               >
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCompareEdit((v) => {
-                      const next = !v
-
-                      if (!next && !sourcePreview) {
-                        loadCompare()
-                      }
-                      return next
-                    })
-                  }}
-                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
-                  style={{
-                    background: compareEdit ? "#ffffff" : "#0a7870",
-                    color: compareEdit ? "#1f2a2e" : "#fff",
-                    border: `1px solid ${
-                      compareEdit ? "#e7ddc5" : "#0a7870"
-                    }`,
-                  }}
-                  title={compareEdit ? "Switch to rendered PDF preview" : "Switch back to the editable view"}
-                >
-                  {compareEdit ? "👁  Show preview" : "✎  Edit translation"}
-                </button>
                 <button
                   type="button"
                   onClick={suggestGlossary}
@@ -1527,489 +1222,53 @@ export default function EditorPage() {
             </div>
 
             <div
-              className="rounded-2xl overflow-hidden grid flex-1"
+              className="grid"
               style={{
-                gridTemplateColumns: "1fr 1fr",
+                gridTemplateColumns: chatOpen
+                  ? "minmax(0, 0.75fr) minmax(0, 1.6fr)"
+                  : "minmax(0, 1fr) minmax(0, 1fr)",
                 gap: 12,
-                minHeight: 0,
+                height: "calc(100vh - 32px)",
+                minHeight: 560,
               }}
             >
-            {}
-            <ComparePane
-              label="ORIGINAL"
-              data={sourcePreview}
-              loading={compareLoading}
-              emptyHint="The source file isn't available."
-            />
-            {}
-            {}
-            {compareEdit ? (
-              <CompareEditPanel
-                projectId={String(id)}
-                compareOpen={compareMode}
-                externalReloadKey={compareReloadKey}
-                rebuildRunning={rebuildRunning}
-                onRerunClaude={() => startClaudeRebuild({ discardEdits: true })}
+              <ComparePane
+                label="ORIGINAL"
+                data={sourcePreview}
+                loading={compareLoading}
+                emptyHint="The source file isn't available."
               />
-            ) : (
-              <CompareEditPanel
+              <DocumentEditor
                 projectId={String(id)}
-                compareOpen={compareMode}
-                externalReloadKey={compareReloadKey}
-                rebuildRunning={rebuildRunning}
-                onRerunClaude={() => startClaudeRebuild({ discardEdits: true })}
+                reloadKey={compareReloadKey}
+                onChatOpenChange={setChatOpen}
               />
-            )}
             </div>
           </div>
-        ) : null}
+      </div>
 
-        {!compareMode && (
-
-        <div className="contents">
-        {}
+      <aside
+        className="rounded-2xl overflow-hidden flex flex-col mt-4"
+        style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
+      >
         <div
-          className="rounded-2xl overflow-hidden"
-          style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
+          className="grid grid-cols-2"
+          style={{ borderBottom: "1px solid #f1e8d1" }}
         >
-          <div
-            className="grid items-center text-[11px] font-semibold tracking-[0.14em] px-5 py-3"
-            style={{
-              gridTemplateColumns: "60px 1fr 1fr 80px 36px 60px",
-              background: "#faf5ee",
-              borderBottom: "1px solid #f1e8d1",
-              color: "#9a9178",
-            }}
-          >
-            <div>#</div>
-            <div>SOURCE · {project.source_language?.toUpperCase() || ""}</div>
-            <div>TARGET · {project.target_language?.toUpperCase() || ""}</div>
-            <div className="text-right">TM</div>
-            <div className="text-right" title="AI retranslate">AI</div>
-            <div className="text-right">✓</div>
-          </div>
-
-          {segments.length === 0 ? (
-            <div className="px-5 py-12 text-center text-sm" style={{ color: "#8a8270" }}>
-              This project has no translated segments yet.
-            </div>
-          ) : (
-            segments.map((seg, idx) => {
-              const isActive = idx === activeIdx
-              return (
-                <div
-                  key={seg.id}
-                  onClick={() => setActiveIdx(idx)}
-                  className="grid items-start px-5 py-4 text-sm cursor-pointer transition"
-                  style={{
-                    gridTemplateColumns: "60px 1fr 1fr 80px 36px 60px",
-                    borderBottom: "1px solid #f4ecd6",
-                    background: isActive ? "#faf5ee" : "#ffffff",
-                    color: "#1f2a2e",
-                  }}
-                >
-                  <div
-                    className="font-mono text-[11px] tabular-nums pt-1"
-                    style={{ color: "#9a9178" }}
-                  >
-                    {String(seg.segment_index).padStart(2, "0")}
-                  </div>
-                  <div
-                    className="leading-relaxed pr-3"
-                    style={{ color: "#4a4638" }}
-                  >
-                    {seg.source_text}
-                  </div>
-                  <textarea
-                    value={seg.translated_text}
-                    onChange={(e) => updateTargetText(seg.id, e.target.value)}
-                    onClick={(e) => e.stopPropagation()}
-                    rows={Math.max(1, Math.ceil(seg.translated_text.length / 60))}
-                    className="bg-transparent outline-none resize-none leading-relaxed font-medium pr-3"
-                    style={{ color: "#1f2a2e" }}
-                  />
-                  <div className="text-right text-xs tabular-nums pt-1">
-                    {seg.tm_pct != null ? (
-                      <span
-                        className="inline-flex items-center px-1.5 py-0.5 rounded-md font-semibold"
-                        style={{
-                          background:
-                            seg.tm_pct >= 95
-                              ? "#d8ead6"
-                              : seg.tm_pct >= 80
-                              ? "#f6e3b8"
-                              : "#f3ecdb",
-                          color:
-                            seg.tm_pct >= 95
-                              ? "#2d5a24"
-                              : seg.tm_pct >= 80
-                              ? "#7a5a10"
-                              : "#6b6558",
-                        }}
-                      >
-                        {seg.tm_pct}%
-                      </span>
-                    ) : (
-                      <span style={{ color: "#cfc6ad" }}>—</span>
-                    )}
-                  </div>
-                  <div className="flex justify-end pt-0.5">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        retranslateSegment(seg)
-                      }}
-                      disabled={busy === `retranslate:${seg.id}`}
-                      aria-label="AI retranslate this segment"
-                      title="AI retranslate this segment"
-                      className="w-6 h-6 rounded-full flex items-center justify-center transition"
-                      style={{
-                        background:
-                          busy === `retranslate:${seg.id}`
-                            ? "#cfe6e2"
-                            : "#f3ecdb",
-                        color: "#0a7870",
-                        border: "1px solid #e7ddc5",
-                      }}
-                    >
-                      <svg
-                        width="13"
-                        height="13"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        {}
-                        <path d="M21 12a9 9 0 1 1-3-6.7" />
-                        <path d="M21 4v5h-5" />
-                      </svg>
-                    </button>
-                  </div>
-                  <div className="flex justify-end pt-0.5">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        toggleApprove(seg)
-                      }}
-                      disabled={busy === `approve:${seg.id}`}
-                      aria-label={seg.approved ? "Unapprove" : "Approve"}
-                      title={seg.approved ? "Unapprove" : "Approve"}
-                      className="w-6 h-6 rounded-full flex items-center justify-center transition"
-                      style={{
-                        background: seg.approved ? "#0a7870" : "#f3ecdb",
-                        color: seg.approved ? "#fff" : "#9a9178",
-                        border: `1px solid ${
-                          seg.approved ? "#0a645d" : "#e7ddc5"
-                        }`,
-                      }}
-                    >
-                      <svg
-                        width="13"
-                        height="13"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="3"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="m5 12 5 5 10-10" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              )
-            })
-          )}
+          <SideTab
+            label="Glossary"
+            count={glossaryCount}
+            active={tab === "glossary"}
+            onClick={() => setTab("glossary")}
+          />
+          <SideTab
+            label="Status"
+            active={tab === "status"}
+            onClick={() => setTab("status")}
+          />
         </div>
-        </div>
-        )}
 
-        {}
-        {!compareMode && (
-        <aside
-          className="rounded-2xl overflow-hidden flex flex-col h-fit sticky top-4"
-          style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
-        >
-          <div
-            className="grid grid-cols-3"
-            style={{ borderBottom: "1px solid #f1e8d1" }}
-          >
-            <SideTab
-              label="Comments"
-              count={commentCount}
-              active={tab === "comments"}
-              onClick={() => setTab("comments")}
-            />
-            <SideTab
-              label="Glossary"
-              count={glossaryCount}
-              active={tab === "glossary"}
-              onClick={() => setTab("glossary")}
-            />
-            <SideTab
-              label="Status"
-              active={tab === "status"}
-              onClick={() => setTab("status")}
-            />
-          </div>
-
-          <div className="p-5 min-h-[260px]">
-            {tab === "comments" && activeSegment && (
-              <>
-                <div
-                  className="text-[10px] font-semibold tracking-[0.14em] mb-3"
-                  style={{ color: "#9a9178" }}
-                >
-                  COMMENTS ON SEGMENT #{String(activeSegment.segment_index).padStart(2, "0")}
-                </div>
-
-                {activeComments.length === 0 ? (
-                  <div
-                    className="text-sm text-center py-8"
-                    style={{ color: "#8a8270" }}
-                  >
-                    No comments on this segment yet.
-                  </div>
-                ) : (
-                  <div className="space-y-3 mb-4">
-                    {activeComments.map((c) => (
-                      <div
-                        key={c.id}
-                        className="rounded-xl p-3"
-                        style={{
-                          background: c.resolved ? "#f3ecdb" : "#fbf7ee",
-                          border: `1px solid ${c.resolved ? "#e7ddc5" : "#f1e8d1"}`,
-                          opacity: c.resolved ? 0.65 : 1,
-                        }}
-                      >
-                        <div className="flex items-center justify-between mb-1.5 gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <div
-                              className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0"
-                              style={{ background: "#cfe6e2", color: "#0a7870" }}
-                            >
-                              {(c.user.email || "??").slice(0, 2).toUpperCase()}
-                            </div>
-                            <div
-                              className="text-[12px] font-medium truncate"
-                              style={{ color: "#1f2a2e" }}
-                            >
-                              {c.user.email}
-                            </div>
-                          </div>
-                          <div
-                            className="text-[10px] shrink-0"
-                            style={{ color: "#9a9178" }}
-                          >
-                            {relativeTime(c.created_at)}
-                          </div>
-                        </div>
-                        {editingCommentId === c.id ? (
-                          <div className="mb-2">
-                            <textarea
-                              autoFocus
-                              value={editingCommentDraft}
-                              onChange={(e) =>
-                                setEditingCommentDraft(e.target.value)
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter" && !e.shiftKey) {
-                                  e.preventDefault()
-                                  saveEditComment(c.id)
-                                }
-                                if (e.key === "Escape") cancelEditComment()
-                              }}
-                              rows={3}
-                              className="w-full text-sm leading-relaxed outline-none rounded-lg px-3 py-2 resize-none"
-                              style={{
-                                background: "#ffffff",
-                                border: "1px solid #0a7870",
-                                color: "#1f2a2e",
-                              }}
-                            />
-                            <div className="flex items-center justify-end gap-2 mt-2">
-                              <button
-                                type="button"
-                                onClick={cancelEditComment}
-                                className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full"
-                                style={{
-                                  background: "#ffffff",
-                                  color: "#1f2a2e",
-                                  border: "1px solid #e7ddc5",
-                                }}
-                              >
-                                Cancel
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => saveEditComment(c.id)}
-                                disabled={
-                                  busy === `edit:${c.id}` ||
-                                  !editingCommentDraft.trim()
-                                }
-                                className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full"
-                                style={{
-                                  background:
-                                    busy === `edit:${c.id}` ||
-                                    !editingCommentDraft.trim()
-                                      ? "#9bc9c5"
-                                      : "#0a7870",
-                                  color: "#fff",
-                                }}
-                              >
-                                {busy === `edit:${c.id}` ? "Saving…" : "Save"}
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div
-                            className="text-sm leading-relaxed mb-2"
-                            style={{
-                              color: "#1f2a2e",
-                              textDecoration: c.resolved
-                                ? "line-through"
-                                : "none",
-                            }}
-                          >
-                            {c.text}
-                          </div>
-                        )}
-                        {}
-                        <div className="flex items-center gap-2 flex-wrap">
-                        {!c.resolved ? (
-                          <button
-                            type="button"
-                            onClick={() => resolveComment(c.id)}
-                            disabled={busy === `resolve:${c.id}`}
-                            className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full transition"
-                            style={{
-                              background: "#cfe6e2",
-                              color: "#0a5e58",
-                              border: "1px solid #b7dad4",
-                            }}
-                          >
-                            {busy === `resolve:${c.id}`
-                              ? "Resolving…"
-                              : "Mark as revised"}
-                          </button>
-                        ) : (
-                          <>
-                          <span
-                            className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full inline-flex items-center gap-1"
-                            style={{ background: "#d8ead6", color: "#2d5a24" }}
-                          >
-                            <svg
-                              width="11"
-                              height="11"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="3"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="m5 12 5 5 10-10" />
-                            </svg>
-                            Revised
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => reopenComment(c.id)}
-                            disabled={busy === `reopen:${c.id}`}
-                            className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full transition"
-                            style={{
-                              background: "#ffffff",
-                              color: "#1f2a2e",
-                              border: "1px solid #e7ddc5",
-                            }}
-                          >
-                            {busy === `reopen:${c.id}` ? "Reopening…" : "Reopen"}
-                          </button>
-                          </>
-                        )}
-                        {}
-                        {editingCommentId !== c.id && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => startEditComment(c.id, c.text)}
-                              className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full transition"
-                              style={{
-                                background: "#ffffff",
-                                color: "#0a7870",
-                                border: "1px solid #cfe6e2",
-                              }}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => deleteComment(c.id)}
-                              disabled={busy === `delete:${c.id}`}
-                              className="text-[11px] font-semibold tracking-[0.06em] px-2.5 py-1 rounded-full transition"
-                              style={{
-                                background: "#ffffff",
-                                color: "#7a2f24",
-                                border: "1px solid #f2d4cf",
-                              }}
-                            >
-                              {busy === `delete:${c.id}` ? "Deleting…" : "Delete"}
-                            </button>
-                          </>
-                        )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {}
-                <div
-                  className="rounded-xl p-3"
-                  style={{
-                    background: "#faf5ee",
-                    border: "1px solid #e7ddc5",
-                  }}
-                >
-                  <textarea
-                    value={newComment}
-                    onChange={(e) => setNewComment(e.target.value)}
-                    placeholder="Leave a note for the reviewer…"
-                    rows={2}
-                    className="bg-transparent outline-none w-full text-sm resize-none leading-relaxed"
-                    style={{ color: "#1f2a2e" }}
-                  />
-                  <div className="flex justify-end mt-2">
-                    <button
-                      type="button"
-                      onClick={addComment}
-                      disabled={busy === "comment" || !newComment.trim()}
-                      className="px-3 py-1.5 rounded-full text-[12px] font-semibold transition"
-                      style={{
-                        background:
-                          busy === "comment" || !newComment.trim()
-                            ? "#9bc9c5"
-                            : "#0a7870",
-                        color: "#fff",
-                        cursor:
-                          busy === "comment" || !newComment.trim()
-                            ? "not-allowed"
-                            : "pointer",
-                      }}
-                    >
-                      {busy === "comment" ? "Posting…" : "Add comment"}
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-
+        <div className="p-5">
             {tab === "glossary" && (
               <>
                 <div
@@ -2053,9 +1312,7 @@ export default function EditorPage() {
               </>
             )}
           </div>
-        </aside>
-        )}
-      </div>
+      </aside>
 
       {}
       {glossarySuggestions.open && (
@@ -2725,480 +1982,6 @@ function ConfirmDialog({
             {state.confirmLabel}
           </button>
         </div>
-      </div>
-    </div>
-  )
-}
-
-function CompareEditPanel({
-  projectId,
-  compareOpen,
-  externalReloadKey,
-  rebuildRunning,
-  onRerunClaude,
-}: {
-  projectId: string
-  compareOpen: boolean
-  externalReloadKey?: number
-  rebuildRunning: boolean
-  onRerunClaude: () => void
-}) {
-  const [loading, setLoading] = useState<boolean>(true)
-  const [error, setError] = useState<string>("")
-
-
-  const [saveState, setSaveState] = useState<
-    "idle" | "dirty" | "saving" | "saved"
-  >("idle")
-
-  const docContainerRef = useRef<HTMLDivElement | null>(null)
-
-  const scheduleSaveRef = useRef<((html: string) => void) | null>(null)
-
-  const [docxBuffer, setDocxBuffer] = useState<ArrayBuffer | null>(null)
-
-  useEffect(() => {
-    if (!compareOpen || !projectId) return
-    let cancelled = false
-    setLoading(true)
-    setError("")
-    setDocxBuffer(null)
-    api
-      .get<ArrayBuffer>(`/projects/${projectId}/preview/rebuild-docx`, {
-        responseType: "arraybuffer",
-      })
-      .then((res) => {
-        if (cancelled) return
-
-        setDocxBuffer(res.data)
-      })
-      .catch((e: any) => {
-        if (cancelled) return
-        const body = e?.response?.data
-        let detail = ""
-        if (body instanceof ArrayBuffer) {
-          const text = new TextDecoder().decode(body)
-          try {
-            detail = JSON.parse(text)?.detail || text
-          } catch {
-            detail = text
-          }
-        }
-        setError(
-          typeof detail === "string" && detail
-            ? detail
-            : typeof e?.message === "string"
-              ? e.message
-              : "Couldn't load the document preview.",
-        )
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [projectId, compareOpen, externalReloadKey])
-
-  useEffect(() => {
-    if (!docxBuffer || loading) return
-    let cancelled = false
-    const container = docContainerRef.current
-    if (!container) return
-    ;(async () => {
-      try {
-        const { renderAsync } = await import("docx-preview")
-        if (cancelled) return
-
-        container.innerHTML = ""
-        const iframe = document.createElement("iframe")
-        iframe.style.width = "100%"
-        iframe.style.border = "0"
-        iframe.style.background = "transparent"
-        iframe.style.display = "block"
-        iframe.setAttribute("title", "Document preview")
-        container.appendChild(iframe)
-
-        await new Promise<void>((resolve) => {
-          const onLoad = () => resolve()
-          iframe.addEventListener("load", onLoad, { once: true })
-
-          if (iframe.contentDocument?.readyState === "complete") {
-            resolve()
-          }
-        })
-        if (cancelled) return
-        const idoc = iframe.contentDocument
-        if (!idoc) {
-          throw new Error("Iframe document inaccessible")
-        }
-
-        idoc.open()
-        idoc.write(
-          `<!doctype html><html><head>
-            <meta charset="utf-8">
-            <style>
-              html, body {
-                margin: 0;
-                padding: 0;
-                background: transparent;
-                color: #111;
-                font-family: 'Times New Roman', Times, serif;
-                overflow-x: hidden;
-              }
-              /* Shrink-to-fit. Apply zoom to the BODY so it
-                 cascades to every descendant regardless of
-                 docx-preview's actual DOM structure. JS sets
-                 --docx-zoom based on the pane width vs. the
-                 page width. Fallback 0.65 — aggressive enough
-                 to fit even very narrow panes until JS runs. */
-              body {
-                zoom: var(--docx-zoom, 0.65);
-              }
-              .docx-wrapper {
-                padding: 0 !important;
-                background: transparent !important;
-              }
-              section.docx, .docx {
-                margin: 0 auto 16px !important;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
-              }
-              table, thead, tbody, tfoot, tr, td, th {
-                border-color: transparent !important;
-              }
-              :focus { outline: 2px solid #cdb98a; outline-offset: 2px; }
-            </style>
-          </head><body></body></html>`,
-        )
-        idoc.close()
-
-        await renderAsync(docxBuffer, idoc.body, undefined, {
-          inWrapper: true,
-          ignoreWidth: false,
-          ignoreHeight: false,
-          ignoreFonts: false,
-          breakPages: true,
-          ignoreLastRenderedPageBreak: true,
-          experimental: true,
-          trimXmlDeclaration: true,
-          useBase64URL: true,
-          renderHeaders: true,
-          renderFooters: true,
-          renderFootnotes: true,
-          renderEndnotes: true,
-        })
-        if (cancelled) return
-
-        idoc
-          .querySelectorAll<HTMLElement>("section.docx, .docx")
-          .forEach((el) => {
-            el.contentEditable = "true"
-            el.spellcheck = true
-          })
-
-        const applyZoom = () => {
-          if (cancelled || !iframe.contentDocument) return
-          const docEl = iframe.contentDocument.documentElement
-          const page = iframe.contentDocument.querySelector<HTMLElement>(
-            "section.docx, .docx",
-          )
-          const paneWidth = iframe.clientWidth
-          let pageWidth = 794
-          if (page) {
-
-            const rect = page.getBoundingClientRect()
-            if (rect.width > 100) pageWidth = rect.width
-          }
-
-          const z = Math.min(1, (paneWidth - 24) / pageWidth)
-          if (Number.isFinite(z) && z > 0) {
-            docEl.style.setProperty("--docx-zoom", String(z))
-          }
-        }
-        applyZoom()
-
-        const resize = () => {
-          if (cancelled || !iframe.contentDocument) return
-          const body = iframe.contentDocument.body
-          const html = iframe.contentDocument.documentElement
-          const h = Math.max(
-            body.scrollHeight,
-            body.offsetHeight,
-            html.scrollHeight,
-            html.offsetHeight,
-          )
-          iframe.style.height = `${h + 24}px`
-        }
-        resize()
-
-        const onWinResize = () => {
-          applyZoom()
-          resize()
-        }
-        window.addEventListener("resize", onWinResize)
-        ;(iframe as any).__docxResizeHandler = onWinResize
-        const obs = new MutationObserver(() => resize())
-        obs.observe(idoc.body, {
-          childList: true,
-          subtree: true,
-          characterData: true,
-        })
-
-        idoc.body.addEventListener("input", () => {
-          scheduleSaveRef.current && scheduleSaveRef.current(idoc.body.innerHTML)
-        })
-
-        ;(iframe as any).__docxObserver = obs
-      } catch (e: any) {
-        if (!cancelled) {
-          setError(
-            typeof e?.message === "string"
-              ? `Couldn't render document: ${e.message}`
-              : "Couldn't render document preview.",
-          )
-        }
-      }
-    })()
-    return () => {
-      cancelled = true
-
-      const c = docContainerRef.current
-      if (c) {
-        const iframe = c.querySelector("iframe") as any
-        if (iframe?.__docxObserver) {
-          try {
-            iframe.__docxObserver.disconnect()
-          } catch {}
-        }
-        if (iframe?.__docxResizeHandler) {
-          try {
-            window.removeEventListener(
-              "resize",
-              iframe.__docxResizeHandler,
-            )
-          } catch {}
-        }
-      }
-    }
-  }, [docxBuffer, loading])
-
-  const saveTimerRef = useRef<number | null>(null)
-
-  const scheduleSave = (currentHtml: string) => {
-    setSaveState("dirty")
-    if (saveTimerRef.current) {
-      window.clearTimeout(saveTimerRef.current)
-    }
-    saveTimerRef.current = window.setTimeout(async () => {
-      try {
-        setSaveState("saving")
-        await api.patch(`/projects/${projectId}/edited-html`, {
-          html: currentHtml,
-        })
-        setSaveState("saved")
-
-        window.setTimeout(() => setSaveState("idle"), 1200)
-      } catch {
-        setSaveState("idle")
-
-      }
-    }, 1500) as unknown as number
-  }
-
-  scheduleSaveRef.current = scheduleSave
-
-  return (
-    <div
-      className="rounded-2xl overflow-hidden flex flex-col"
-      style={{ background: "#e8dfc7", border: "1px solid #e7ddc5", minHeight: 0 }}
-    >
-      <div
-        className="px-4 py-2.5 flex items-center justify-between text-[11px] font-semibold tracking-[0.14em]"
-        style={{
-          color: "#9a9178",
-          background: "#faf5ee",
-          borderBottom: "1px solid #f1e8d1",
-        }}
-      >
-        <span>TRANSLATION · EDIT THE DOCUMENT</span>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {saveState !== "idle" && (
-            <span
-              className="text-[10px] font-medium tracking-[0.06em]"
-              style={{
-                color:
-                  saveState === "saved"
-                    ? "#2d6a4f"
-                    : saveState === "saving"
-                    ? "#0a7870"
-                    : "#9a7330",
-              }}
-            >
-              {saveState === "dirty"
-                ? "● Unsaved edits"
-                : saveState === "saving"
-                ? "↻ Saving…"
-                : "✓ Saved"}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={onRerunClaude}
-            disabled={rebuildRunning}
-            className="text-[10px] font-semibold tracking-[0.08em] px-2 py-1 rounded-md transition"
-            style={{
-              background: "#ffffff",
-              color: "#0a5e58",
-              border: "1px solid #cfe6e2",
-              cursor: rebuildRunning ? "not-allowed" : "pointer",
-            }}
-            title="Re-run Claude on the PDF with the latest prompt"
-          >
-            {rebuildRunning ? "Rebuilding…" : "✦ Re-run Claude"}
-          </button>
-        </div>
-      </div>
-      <div
-        className="flex-1 overflow-auto"
-        style={{ background: "#e8dfc7", minHeight: 0, padding: "24px 0" }}
-      >
-        {loading ? (
-          <div
-            style={{
-              color: "#8a8270",
-              textAlign: "center",
-              padding: "80px 24px",
-            }}
-          >
-            <div
-              style={{
-                fontSize: 14,
-                fontWeight: 600,
-                color: "#0a5e58",
-                marginBottom: 8,
-              }}
-            >
-              ✦ Building document with Claude…
-            </div>
-            <div style={{ fontSize: 12, fontStyle: "italic" }}>
-              First load takes 1–3 minutes while Claude reads the PDF
-              and authors the translated DOCX. Subsequent loads are
-              instant.
-            </div>
-          </div>
-        ) : error ? (
-          <div
-            style={{
-              color: "#a14e2e",
-              fontStyle: "italic",
-              textAlign: "center",
-              padding: "40px 24px",
-            }}
-          >
-            {error}
-          </div>
-        ) : (
-          <div
-            style={{
-              width: "100%",
-              color: "#111",
-            }}
-          >
-            <style>{`
-              /* docx-preview's own page rendering (white sheet,
-                 drop shadow, A4 dimensions, fonts, alignment,
-                 tab stops) — much higher fidelity than mammoth.
-                 We just override a couple of cosmetic bits so it
-                 fits our cream/teal aesthetic. */
-              .docx-preview-host {
-                /* The .docx page is rendered at its true A4 size
-                   (~794px wide at 96 DPI). The right pane is
-                   often narrower, so shrink the page to fit
-                   without clipping the page-margin content. */
-                --docx-scale: 0.78;
-                overflow-x: hidden;
-              }
-              .docx-preview-host .docx-wrapper {
-                padding: 0;
-                background: transparent;
-              }
-              .docx-preview-host .docx-wrapper > section.docx,
-              .docx-preview-host > section.docx,
-              .docx-preview-host .docx {
-                transform: scale(var(--docx-scale));
-                transform-origin: top center;
-                /* Negate the space scaling leaves at the bottom
-                   so successive pages don't get a giant gap. */
-                margin: 0 auto -22% !important;
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
-              }
-              /* First page sits flush at the top. */
-              .docx-preview-host .docx:first-child {
-                margin-top: 0 !important;
-              }
-              /* Keep tables borderless in the preview (the DOCX
-                 itself is already borderless from the backend
-                 post-processor, but be defensive against any
-                 fallback rendering). */
-              .docx-preview-host table,
-              .docx-preview-host thead,
-              .docx-preview-host tbody,
-              .docx-preview-host tfoot,
-              .docx-preview-host tr,
-              .docx-preview-host td,
-              .docx-preview-host th {
-                border-color: transparent !important;
-              }
-              .docx-preview-host :focus {
-                outline: 2px solid #cdb98a;
-                outline-offset: 2px;
-                border-radius: 3px;
-              }
-            `}</style>
-            <div
-              ref={docContainerRef}
-              className="docx-preview-host"
-              suppressContentEditableWarning
-              onInput={(e) => {
-
-                const target = e.currentTarget as HTMLDivElement
-                scheduleSave(target.innerHTML)
-              }}
-              onBlur={(e) => {
-
-                const target = e.currentTarget as HTMLDivElement
-                if (saveTimerRef.current) {
-                  window.clearTimeout(saveTimerRef.current)
-                  saveTimerRef.current = null
-                }
-                api
-                  .patch(`/projects/${projectId}/edited-html`, {
-                    html: target.innerHTML,
-                  })
-                  .then(() => {
-                    setSaveState("saved")
-                    window.setTimeout(() => setSaveState("idle"), 1200)
-                  })
-                  .catch(() => setSaveState("idle"))
-              }}
-            />
-            <div
-              style={{
-                marginTop: 16,
-                paddingTop: 12,
-                borderTop: "1px dashed #e7ddc5",
-                fontSize: 11,
-                color: "#8a8270",
-                fontStyle: "italic",
-                fontFamily: "system-ui, sans-serif",
-              }}
-            >
-              Edits here autosave every ~1.5 seconds. When you click
-              Export, the exported DOCX/PDF reflects exactly what you
-              see on this page.
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )
