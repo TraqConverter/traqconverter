@@ -145,7 +145,13 @@ def chat_document(
             [t.model_dump() for t in payload.history],
         )
     except document_editor.ChatEditError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        from app.services.ai_actions import is_staff
+
+        detail = str(e)
+        # Staff see the provider's reason so configuration problems can be diagnosed from the UI.
+        if e.technical and is_staff(user):
+            detail = f"{detail} [{e.technical}]"
+        raise HTTPException(status_code=502, detail=detail)
 
     project = _locked_project(db, project_id, user)
     _require_version(project, payload.version)

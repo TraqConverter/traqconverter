@@ -175,3 +175,26 @@ def test_chat_gives_up_after_two_bad_answers(client, project_with_doc, fake_clau
     fake_claude(bad, bad)
     r = client.post(f"/projects/{project.id}/document/chat", headers=owner["headers"], json={"version": v, "message": "x"})
     assert r.status_code == 502
+
+
+def test_staff_see_provider_error_detail(client, db, project_with_doc, monkeypatch):
+    import anthropic
+    import httpx
+
+    owner, project = project_with_doc()
+    _, v = _get(client, owner, project)
+
+    def boom(client_, **kwargs):
+        req = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+        raise anthropic.AuthenticationError("invalid x-api-key", response=httpx.Response(401, request=req), body=None)
+
+    monkeypatch.setattr(claude_params, "create_message", boom)
+    monkeypatch.setattr(claude_params, "api_key", lambda: "k")
+    url = f"/projects/{project.id}/document/chat"
+    r = client.post(url, headers=owner["headers"], json={"version": v, "message": "x"})
+    assert r.status_code == 502 and "invalid x-api-key" not in r.json()["detail"]
+
+    owner["user"].role = "SUPERUSER"
+    db.commit()
+    r = client.post(url, headers=owner["headers"], json={"version": v, "message": "x"})
+    assert "AuthenticationError 401" in r.json()["detail"]
