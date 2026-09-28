@@ -28,7 +28,6 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      database_url: postgresql+psycopg2://traqconverter:traqconverter@localhost:5432/traqconverter_test
       DATABASE_URL: postgresql+psycopg2://traqconverter:traqconverter@localhost:5432/traqconverter_test
       app_name: TraqConverter
       environment: test
