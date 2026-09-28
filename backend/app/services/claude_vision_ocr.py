@@ -29,6 +29,7 @@ import re
 from typing import Any
 
 from app.config import settings
+from app.services import claude_params
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +100,9 @@ B) FORM ROWS where a label is followed on the SAME visual row (or
      → one element "Codice Fiscale    XXXXXX00X00X000X"
    If a value WRAPS to the next line (because it's long) include
    the wrapped portion in the same element using "\\n":
-       Luogo di residenza   VIA ESEMPIO, N. 1 ROMA (AP)
-     → one element "Luogo di residenza   VIA ESEMPIO, N. 1 SAN\\nBENEDETTO DEL TRONTO (AP)"
+       Luogo di residenza   VIA ROMA, N. 1 SANTA MARIA
+                            DELLE ROSE (XX)
+     → one element "Luogo di residenza   VIA ROMA, N. 1 SANTA MARIA\\nDELLE ROSE (XX)"
 
 C) PARAGRAPHS (multi-line prose) are ONE element. Join the
    constituent lines with single spaces, NOT with "\\n".
@@ -384,15 +386,14 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
     b64 = base64.standard_b64encode(img_bytes).decode("ascii")
 
     client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    model = settings.ANTHROPIC_VISION_MODEL
 
     try:
-        resp = client.messages.create(
-            model=settings.ANTHROPIC_VISION_MODEL,
-
-
-
+        resp = claude_params.create_message(
+            client,
+            model=model,
             max_tokens=16384,
-            system=_SYSTEM_PROMPT,
+            system=claude_params.system_param(model, _SYSTEM_PROMPT),
             messages=[
                 {
                     "role": "user",
@@ -422,9 +423,10 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
                 }
             ],
         )
-    except Exception as e:
+    except anthropic.APIError as e:
         logger.warning("Claude OCR API call failed: %s", e)
         return None
+    claude_params.log_usage("Claude OCR", resp)
 
 
     try:

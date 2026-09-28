@@ -2,7 +2,7 @@
 
 This service is the "Premium rebuild" path: instead of OCR →
 per-segment translate → template-driven assembly, we hand the entire
-source PDF to Claude Sonnet and ask Claude to author a complete
+source PDF to Claude and ask it to author a complete
 python-docx script that translates the document AND faithfully
 reproduces its layout (tables, columns, alignment, images, stamps).
 
@@ -28,6 +28,9 @@ import textwrap
 from pathlib import Path
 from typing import Optional
 
+from app.services import script_sandbox
+from app.services import claude_params
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,6 +46,22 @@ logger = logging.getLogger(__name__)
 
 
 
+SANDBOX_RULES = """\
+  * The script is statically checked before it runs; a violation
+    rejects the whole script. Rules:
+      - Import only: docx (python-docx), PIL, io, re, math, copy,
+        datetime, json, collections, itertools, functools, typing,
+        string, textwrap, decimal, fractions, statistics, enum,
+        dataclasses, unicodedata, os, pathlib, base64, random.
+      - No dunder attributes except __init__ (no obj.__class__,
+        __dict__, etc.). No global / nonlocal statements.
+      - Do not call eval, exec, compile, __import__, getattr,
+        setattr, delattr, vars, globals, locals, input, breakpoint.
+      - Never use these attribute names: .write, .parse, .etree,
+        .getroottree, .environ, .system, .popen, .modules. Build XML
+        with OxmlElement(...) and qn(...) from docx.oxml, not lxml."""
+
+
 _AUTHOR_PROMPT_TEMPLATE = textwrap.dedent("""
 TASK
 ====
@@ -56,12 +75,11 @@ OUTPUT FORMAT
 Return ONE Python 3 code block (```python … ```). No prose, no
 preamble, no commentary. The script must:
 
-  * Use only `python-docx` and the Python stdlib.
   * Build the document in memory and save to this exact path:
         OUTPUT_PATH = r"{output_path}"
         doc.save(OUTPUT_PATH)
-  * Not touch any other file. Not call subprocess, os.system,
-    requests, urllib, socket, or any network module. Not print.
+  * Not touch any other file. Not print.
+{sandbox_rules}
 
 OUTPUT REQUIREMENTS
 ===================
@@ -183,7 +201,7 @@ PROVEN PYTHON-DOCX RECIPE (certificate / diploma type)
 For a formal certificate / diploma / official document that has a
 repeating masthead on every page, use Word's section header so the
 masthead auto-repeats. Here is the EXACT structure that produced
-the gold-standard output on a Florence university certificate — use
+the gold-standard output on an Italian university certificate — use
 it as a template for the CERTIFICATE document type. Other types
 should adapt the relevant pieces (drop the section.header masthead
 for letters/contracts, change the data table columns for invoices/
@@ -223,7 +241,7 @@ for p in list(hdr.paragraphs):
     p._element.getparent().remove(p._element)
 
 # 1. Borderless 2-col table: logo | institution name stacked
-t = hdr.add_table(rows=1, cols=2))
+t = hdr.add_table(rows=1, cols=2, width=Cm(17))
 _no_borders(t)
 t.columns[0].width = Cm(4)
 t.columns[1].width = Cm(13)
@@ -241,8 +259,8 @@ r1 = name_p.add_run("UNIVERSITÀ"); r1.bold = True; r1.font.size = Pt(12)
 r1.add_break()
 r2 = name_p.add_run("DEGLI STUDI"); r2.bold = True; r2.font.size = Pt(12)
 r2.add_break()
-r3 = name_p.add_run("FIRENZE"); r3.bold = True; r3.font.size = Pt(12)
-gloss = name_p.add_run("   (University of Florence)")
+r3 = name_p.add_run("ESEMPIO"); r3.bold = True; r3.font.size = Pt(12)
+gloss = name_p.add_run("   (University of Esempio)")
 gloss.italic = True; gloss.font.size = Pt(9)
 
 # 2. Centered office name
@@ -273,7 +291,7 @@ p.alignment = WD_ALIGN_PARAGRAPH.CENTER
 r = p.add_run("HAVING EXAMINED THE OFFICIAL RECORDS, IT IS CERTIFIED, AT THE REQUEST OF THE INTERESTED PARTY, THAT")
 r.bold = True
 
-p = doc.add_paragraph("Dr. MARIO ROSSI, born on 01/01/1990 in Rome (RM), of ITALIAN citizenship, passed at this University the final examination of the Second-Level Master's Degree in LEADERSHIP AND STRATEGIC ANALYSIS on 17/02/2020 with a grade of 103/110.")
+p = doc.add_paragraph("Dr. MARIO ROSSI, born on 01/01/1990 in Rome (RM), of ITALIAN citizenship, passed at this University the final examination of the Second-Level Master's Degree in EXAMPLE STUDIES on 01/01/2020 with a grade of 100/110.")
 p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
 doc.add_paragraph("It is further certified that the interested party submitted the following Statutory study plan:").alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -282,7 +300,7 @@ p = doc.add_paragraph(); r = p.add_run("FIRST YEAR"); r.bold = True
 
 # Courses table — 8 columns. CHECK THE SOURCE: if the source
 # uses whitespace alignment (no visible borders between cells),
-# make this table borderless too. Florence-style certificates
+# make this table borderless too. Many Italian university certificates
 # are borderless — call _no_borders(table) right after add_table.
 table = doc.add_table(rows=1, cols=8)
 _no_borders(table)  # remove this line ONLY if source has visible borders
@@ -294,7 +312,7 @@ for i, label in enumerate(["Course Code", "Course", "Outcome", "Grade", "CFU", "
 # Add each course on its own row. CRITICAL: distribute values
 # one-per-cell. Never put a whole row into cell 0.
 rows = [
-    ("30610002", "ADMINISTRATIVE LAW", "Passed", "29/30", "6", "IUS/10", "28/11/2019", "10 3061 PDS0-2019"),
+    ("00000001", "ADMINISTRATIVE LAW", "Passed", "28/30", "6", "IUS/10", "01/12/2019", "10 0000 XXX0-2019"),
     # ... etc, one tuple per course
 ]
 for row in rows:
@@ -308,10 +326,10 @@ for row in rows:
 # === SIGNATURE BLOCK ===
 # Borderless 2-col table: officer name + signature image on left,
 # round seal on right.
-sig = doc.add_table(rows=1, cols=2))
+sig = doc.add_table(rows=1, cols=2)
 _no_borders(sig)
 left = sig.rows[0].cells[0]
-left.paragraphs[0].add_run("The Issuing Officer\nBIANCHI ANNA").bold = True
+left.paragraphs[0].add_run("The Issuing Officer\\nBIANCHI ANNA").bold = True
 left.add_paragraph().add_run().add_picture("images/p2_signature.png", width=Cm(5))
 right = sig.rows[0].cells[1]
 right.paragraphs[0].add_run().add_picture("images/p2_seal.png", width=Cm(3))
@@ -362,8 +380,8 @@ Read the document end-to-end and reproduce its visual structure:
   * If a document name (institution, organisation, hospital, court,
     company) is iconic and identifying — leave it in the original
     language and add a small italic gloss in {target_lang} on the
-    same line. E.g. "UNIVERSITÀ DEGLI STUDI FIRENZE (University of
-    Florence)".
+    same line. E.g. "UNIVERSITÀ DEGLI STUDI DI ESEMPIO (University of
+    Esempio)".
   * Two-label rows (e.g. "Certificate No. X  •  Student No. Y", or
     "Date: …  •  Reference: …" sitting on the same line in the
     source) → single paragraph with tab stops, NOT two paragraphs,
@@ -381,7 +399,7 @@ Read the document end-to-end and reproduce its visual structure:
       - source uses light/thin grey lines → use Table Grid then
         override to 0.5pt grey borders.
       - source uses heavy black borders → use Table Grid as-is.
-    For the Florence-style university certificate where the courses
+    For a university certificate where the courses
     list is just whitespace-aligned columns with no visible cell
     boundaries, the output data table MUST be borderless.
   * Layout tables (logo|name header, label|value rows, signature
@@ -423,8 +441,8 @@ Preserve verbatim (do NOT translate or alter):
     type word — "Università" → "University" — only when the name
     is descriptive, not iconic).
   * All identifiers: certificate numbers, student / customer /
-    invoice IDs, file references, internal codes (e.g. "PDS0-2019",
-    "10 3061").
+    invoice IDs, file references, internal codes (e.g. "XXX0-2019",
+    "10 0000").
   * All scientific / disciplinary / industry codes (IUS/10,
     SPS/04, ISO codes, CPT codes, ICD codes, NACE codes, etc.).
   * Numeric values: credit counts, grades ("29/30", "103/110"),
@@ -472,7 +490,7 @@ those files in your output.
     name) is preserved in the export. In YOUR translation body
     use a TEXT-ONLY masthead: a centered bold heading with the
     institution name typed out in {target_lang} at 12-14pt (e.g.
-    "MINISTRY OF THE INTERIOR" or "UNIVERSITY OF FLORENCE"). NO
+    "MINISTRY OF THE INTERIOR" or "UNIVERSITY OF ESEMPIO"). NO
     crest image, NO logo image, NO low-res cropped strip. Just
     typed bold text.
   * For an entry with kind=footer → DO NOT paste this wide strip.
@@ -597,7 +615,7 @@ left-aligned Word default. Specifically:
         in the source, just typographically all-caps.
     Bold belongs only on: real section headings ("FIRST YEAR",
     "PRIMO ANNO"), institutional masthead titles ("UNIVERSITÀ
-    DEGLI STUDI FIRENZE"), and table column headers — and only
+    DEGLI STUDI DI ESEMPIO"), and table column headers — and only
     when the source uses bold for those elements.
 
 HARD RULES (never violate)
@@ -640,7 +658,7 @@ HARD RULE — TABLES MUST USE doc.add_table()
 For EVERY entry in EXTRACTED TABLES below, you MUST emit a real
 Word table via `doc.add_table(rows=N, cols=M)` and populate
 cells[i][j].text = row[i][j]. DO NOT render tabular data as a
-flat list of paragraphs ("30610002\\nADMINISTRATIVE LAW\\nPassed\\n
+flat list of paragraphs ("00000001\\nADMINISTRATIVE LAW\\nPassed\\n
 29/30\\n6\\nIUS/10\\n..."). That breaks the visual structure and
 the output looks nothing like the source.
 
@@ -691,25 +709,6 @@ Begin your code block now.
 
 
 
-_SANDBOX_PREAMBLE = textwrap.dedent('''
-    # --- Sandbox preamble (injected by claude_authored_rebuild) ---
-    # Strip out network / shell escape modules before user code runs.
-    import sys as _sys
-    # Only block modules that actually open network sockets or
-    # spawn shells. urllib.parse, urllib, http, ctypes are NOT
-    # blocked because lxml (a python-docx dep) imports them
-    # internally for XML namespace / URI parsing.
-    _BLOCKED = (
-        "socket", "ssl",
-        "ftplib", "telnetlib", "smtplib", "poplib", "imaplib",
-        "urllib.request", "http.client",
-        "requests", "httpx",
-        "subprocess", "multiprocessing", "asyncio.subprocess",
-    )
-    for _m in _BLOCKED:
-        _sys.modules[_m] = None  # raises ImportError on `import`
-    # --- end preamble ---
-''').strip() + "\n\n"
 
 
 def _strip_code_fence(text: str) -> str:
@@ -743,10 +742,7 @@ def _validate_script(script: str, output_path: str) -> None:
     if "doc.save" not in script and ".save(" not in script:
         raise ValueError("Script never calls .save()")
 
-
-    for forbidden in ("subprocess", "socket.", "urllib", "requests.", "os.system"):
-        if forbidden in script:
-            raise ValueError(f"Script references blocked module: {forbidden}")
+    script_sandbox.validate_script(script)
 
 
 def _extract_pdf_images(pdf_bytes: bytes, dest_dir: Path) -> list:
@@ -932,7 +928,7 @@ def _format_image_list(images: list) -> str:
 
 def _extract_tables_via_vision(
     pdf_bytes: bytes,
-    model: str = "claude-opus-4-8",
+    model: str = claude_params.TABLE_EXTRACT_MODEL,
 ) -> list:
     """Pre-pass: render each page of the PDF as an image and ask
     Claude Vision to extract any data tables as structured JSON.
@@ -940,7 +936,7 @@ def _extract_tables_via_vision(
     Returns a list of dicts:
         [{"page": 1, "title": "FIRST YEAR",
           "headers": ["Course Code","Course","Outcome",...],
-          "rows": [["30610002","ADMINISTRATIVE LAW","Passed",...], ...]},
+          "rows": [["00000001","ADMINISTRATIVE LAW","Passed",...], ...]},
          ...]
 
     Empty list if no tables detected or the call fails. This list is
@@ -1029,15 +1025,17 @@ def _extract_tables_via_vision(
     content.append({"type": "text", "text": EXTRACT_PROMPT})
 
     try:
-        resp = client.messages.create(
+        resp = claude_params.create_message(
+            client,
             model=model,
             max_tokens=16000,
-            temperature=0.1,
             messages=[{"role": "user", "content": content}],
+            **claude_params.request_params(model, max_tokens=16000, temperature=0.1),
         )
-    except Exception as e:
+    except anthropic.APIError as e:
         logger.warning("Vision table extraction call failed: %s", e)
         return []
+    claude_params.log_usage("Vision table extraction", resp)
 
     raw = ""
     for block in resp.content or []:
@@ -1093,15 +1091,9 @@ def _call_claude_to_author(
     output_path: str,
     images: list,
     tables: list,
-    model: str = "claude-opus-4-8",
+    model: Optional[str] = None,
 ) -> str:
-    """Send the PDF + prompt to Claude and return the raw code block.
-
-    We use Claude Sonnet (the same family that powers Claude.ai) and
-    pass the PDF as a `document` content block — the SDK's native
-    way of attaching PDFs. We allow up to 16k output tokens because
-    big layouts produce big scripts.
-    """
+    """Send the PDF + prompt to Claude (falling back down the model chain) and return the raw reply."""
     try:
         import anthropic  # type: ignore
     except ImportError as e:
@@ -1116,6 +1108,7 @@ def _call_claude_to_author(
         )
 
     client = anthropic.Anthropic(api_key=api_key)
+    model = claude_params.rebuild_model(model)
 
     prompt = _AUTHOR_PROMPT_TEMPLATE.format(
         source_lang=source_lang or "the source language",
@@ -1123,6 +1116,7 @@ def _call_claude_to_author(
         output_path=output_path,
         image_list=_format_image_list(images),
         table_list=_format_table_list(tables),
+        sandbox_rules=SANDBOX_RULES,
     )
 
     logger.info(
@@ -1132,104 +1126,61 @@ def _call_claude_to_author(
     )
 
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("ascii")
-
-
-
-
-    model_chain = [model, "claude-sonnet-4-6", "claude-sonnet-4-5-20250929"]
-    seen = set()
-    model_chain = [m for m in model_chain if m and not (m in seen or seen.add(m))]
-
-    def _try_call(attempt_model, use_thinking):
-        kwargs = {
-            "model": attempt_model,
-            "max_tokens": 64000 if use_thinking else 16000,
-            "messages": [
+    messages = [
+        {
+            "role": "user",
+            "content": [
                 {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "document",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "application/pdf",
-                                "data": pdf_b64,
-                            },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                }
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": pdf_b64,
+                    },
+                },
+                {"type": "text", "text": prompt},
             ],
         }
-        if use_thinking:
+    ]
 
-
-            kwargs["thinking"] = {"type": "enabled", "budget_tokens": 20000}
-            kwargs["temperature"] = 1.0
-        else:
-            kwargs["temperature"] = 0.2
-        return client.messages.create(**kwargs)
-
-    last_exc = None
+    model_chain = list(dict.fromkeys([model, *claude_params.REBUILD_FALLBACK_MODELS]))
+    max_tokens = 64000
+    last_exc: Optional[BaseException] = None
     resp = None
-    used_model = None
-    used_thinking = None
     for attempt_model in model_chain:
-        for use_thinking in (True, False):
-            try:
-                resp = _try_call(attempt_model, use_thinking)
-                used_model = attempt_model
-                used_thinking = use_thinking
-                break
-            except Exception as e:
-                msg = str(e).lower()
-                last_exc = e
-
-                logger.warning(
-                    "Claude API call failed (model=%s, thinking=%s): %s",
-                    attempt_model, use_thinking, e,
-                )
-
-
-                if use_thinking and any(s in msg for s in (
-                    "thinking", "extended_thinking", "budget_tokens",
-                    "temperature", "invalid_request", "400",
-                )):
-                    logger.info("Retrying without extended thinking…")
-                    continue
-
-                if any(s in msg for s in (
-                    "404", "not_found", "model_not_found",
-                    "overloaded", "rate_limit", "503", "500", "529",
-                )):
-                    break
-
-                raise
-        if resp is not None:
+        try:
+            resp = claude_params.create_message(
+                client,
+                model=attempt_model,
+                max_tokens=max_tokens,
+                messages=messages,
+                **claude_params.request_params(attempt_model, max_tokens=max_tokens, thinking=True),
+            )
             break
+        except anthropic.APIError as e:
+            last_exc = e
+            if not claude_params.is_fallback_error(e):
+                raise
+            logger.warning(
+                "Claude API call failed (model=%s), trying next model: %s",
+                attempt_model, e,
+            )
 
     if resp is None:
         raise RuntimeError(
             f"All Claude models in fallback chain failed: {last_exc}"
         )
 
-    logger.info(
-        "Claude succeeded with model=%s, thinking=%s",
-        used_model, used_thinking,
-    )
-
-
-
-    text_blocks = []
-    for block in resp.content or []:
-        if getattr(block, "type", None) == "text":
-            text_blocks.append(getattr(block, "text", "") or "")
+    claude_params.log_usage("Authored rebuild", resp)
+    text_blocks = [
+        getattr(block, "text", "") or ""
+        for block in resp.content or []
+        if getattr(block, "type", None) == "text"
+    ]
     raw = "\n".join(text_blocks)
     logger.info(
-        "Claude (%s, thinking=%s) returned %d chars (usage in=%d out=%d)",
-        used_model, used_thinking, len(raw),
-        getattr(resp.usage, "input_tokens", -1),
-        getattr(resp.usage, "output_tokens", -1),
+        "Claude (%s) returned %d chars, stop_reason=%s",
+        getattr(resp, "model", model), len(raw), getattr(resp, "stop_reason", None),
     )
     return raw
 
@@ -1241,9 +1192,7 @@ def _run_script_in_sandbox(
 ) -> bytes:
     """Run Claude's script in a subprocess and return the DOCX bytes.
 
-    We prepend a small preamble that NULs out the obvious escape
-    modules. The subprocess inherits the worker's PYTHONPATH so it
-    can find python-docx. stdout/stderr are captured for logging.
+    See script_sandbox for the isolation layers.
     """
     work_dir = Path(tempfile.mkdtemp(prefix="claude_authored_"))
 
@@ -1259,32 +1208,12 @@ def _run_script_in_sandbox(
         logger.warning("Failed to mirror images into work_dir: %s", e)
 
     try:
-        script_path = work_dir / "rebuild.py"
-
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(_SANDBOX_PREAMBLE)
-            f.write(script)
-            f.write("\n")
-
-        cmd = [sys.executable, str(script_path)]
-
-
-
-
-        env = {
-            "PATH": "/usr/bin:/bin",
-            "PYTHONPATH": os.pathsep.join(sys.path),
-            "LANG": "C.UTF-8",
-            "LC_ALL": "C.UTF-8",
-        }
-
         logger.info("Running authored-rebuild script in %s", work_dir)
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            env=env,
-            cwd=str(work_dir),
-            timeout=timeout_seconds,
+        proc = script_sandbox.run_script(
+            script,
+            work_dir=work_dir,
+            write_dirs=[Path(output_path).parent],
+            timeout_seconds=timeout_seconds,
         )
 
         if proc.returncode != 0:
@@ -1386,6 +1315,48 @@ def _strip_rotation_from_docx(docx_bytes: bytes) -> bytes:
     except Exception:
         logger.exception("Rotation strip failed — returning original bytes")
         return docx_bytes
+
+
+_TABLE_STYLE_RE = re.compile(r'<w:style\b[^>]*\bw:type="table"[^>]*>.*?</w:style>', re.S)
+_STYLE_BORDERS_RE = re.compile(
+    r"<w:(tblBorders|tcBorders)\b[^>]*/>|<w:(tblBorders|tcBorders)\b[^>]*>.*?</w:\2>", re.S
+)
+_NIL_TBL_BORDERS = "<w:tblBorders>" + "".join(
+    f'<w:{edge} w:val="nil"/>'
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV")
+) + "</w:tblBorders>"
+# Schema order: tblBorders must precede these tblPr children.
+_AFTER_TBL_BORDERS_RE = re.compile(r"<w:(shd|tblLayout|tblCellMar|tblLook|tblCaption|tblDescription)\b")
+
+
+def _force_borderless_table_styles(styles_xml: str, w_ns: str) -> tuple[str, int]:
+    """Nil out the borders of every table style in styles.xml; returns (xml, styles_changed)."""
+    changed = 0
+
+    def _fix(match: re.Match) -> str:
+        nonlocal changed
+        block = _STYLE_BORDERS_RE.sub("", match.group(0))
+        cond = block.find("<w:tblStylePr")
+        head, tail = (block, "") if cond == -1 else (block[:cond], block[cond:])
+        self_closing = re.search(r"<w:tblPr\s*/>", head)
+        opening = re.search(r"<w:tblPr\b[^>]*>", head)
+        if self_closing:
+            head = head[:self_closing.start()] + f"<w:tblPr>{_NIL_TBL_BORDERS}</w:tblPr>" + head[self_closing.end():]
+        elif opening:
+            close = head.index("</w:tblPr>", opening.end())
+            later = _AFTER_TBL_BORDERS_RE.search(head, opening.end(), close)
+            at = later.start() if later else close
+            head = head[:at] + _NIL_TBL_BORDERS + head[at:]
+        else:
+            anchor = re.search(r"<w:(trPr|tcPr)\b|</w:style>", head)
+            at = anchor.start() if anchor else len(head)
+            head = head[:at] + f"<w:tblPr>{_NIL_TBL_BORDERS}</w:tblPr>" + head[at:]
+        new_block = head + tail
+        if new_block != match.group(0):
+            changed += 1
+        return new_block
+
+    return _TABLE_STYLE_RE.sub(_fix, styles_xml), changed
 
 
 def _strip_layout_table_borders(docx_bytes: bytes) -> bytes:
@@ -1907,31 +1878,39 @@ def _replace_image_placeholders(docx_bytes: bytes, work_dir: Path) -> bytes:
         return docx_bytes
 
 
+_CERT_STRONG_PATTERNS = (
+    re.compile(r"^\s*CERTIFIED\s+TRANSLATION\b[^\n]{0,60}$", re.I),
+    re.compile(
+        r"\bI\s+hereby\s+certify\b(?=.*\btranslat)"
+        r"(?=.*\b(?:accura|complete|true|faithful|correct|competen|fluent|qualified))",
+        re.I | re.S,
+    ),
+    re.compile(r"^\s*Translator\s*:\s*\S+@\S+", re.I),
+    re.compile(r"\bthis\s+translation\s+is\s+(?:an?\s+)?(?:accurate|true|faithful|complete)\b", re.I),
+    re.compile(r"\bNote\s*:\s*This\s+(?:is|document)\s+(?:an|a)?\s*\w*\s*translation\b", re.I),
+    re.compile(r"\bThis\s+document\s+is\s+(?:an|a)\s+\w+\s+translation\s+of\s+the\s+original\b", re.I),
+    re.compile(r"\bcrest,?\s+seal\s+and\s+signature\s+are\s+reproduced\s+from\s+the\s+original\b", re.I),
+)
+_CERT_WEAK_PATTERNS = (
+    re.compile(r"^\s*Signature\s*:\s*_+\s*$", re.I),
+    re.compile(r"^\s*Date\s*:\s*\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?(?:\s*UTC)?\s*$", re.I),
+    re.compile(r"^\s*(?:Translator|Translated\s+by)\s*:", re.I),
+)
+
+
+def is_translator_cert_text(text: str) -> bool:
+    """True for the translator-certification wording the prompts forbid; source-document attestations don't match."""
+    return any(p.search(text or "") for p in _CERT_STRONG_PATTERNS)
+
+
 def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
-    """Remove certification-style paragraphs that Claude may have
-    written INSIDE the translation body.
+    """Remove a translator-certification block Claude wrote into the body despite the prompt.
 
-    Claude sometimes generates a "CERTIFIED TRANSLATION" affidavit
-    at the start of its output despite the prompt rule, mimicking
-    the hardcoded cert format. The wrapper appends the real cert
-    AFTER the body, so any cert-style text inside Claude's body is a
-    duplicate that needs to be stripped.
-
-    Matches paragraphs whose text contains any of:
-      - "CERTIFIED TRANSLATION" (case-insensitive, as a heading)
-      - "I hereby certify"
-      - "Translator: <email>"
-      - "Signature: ___"
-      - "Date: YYYY-MM-DD HH:MM UTC"
-
-    Strips the matched paragraph PLUS any contiguous block of
-    paragraphs around it that look like the affidavit boilerplate.
-
-    Failures are non-fatal — returns the original bytes on any error.
+    Only paragraphs matching the translator-cert wording trigger removal; signature/date/translator
+    lines go too, but only when contiguous with such a paragraph. Returns the input on any error.
     """
     try:
         import io as _io
-        import re as _re
         import zipfile as _zip
         from xml.etree import ElementTree as ET
 
@@ -1939,21 +1918,6 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
         ET.register_namespace("w", W_NS)
         P_TAG = "{%s}p" % W_NS
         T_TAG = "{%s}t" % W_NS
-
-        FORBIDDEN_PATTERNS = [
-            _re.compile(r"\bCERTIFIED\s+TRANSLATION\b", _re.I),
-            _re.compile(r"\bI\s+hereby\s+certify\b", _re.I),
-            _re.compile(r"^\s*Translator\s*:\s*\S+@\S+", _re.I),
-            _re.compile(r"^\s*Signature\s*:\s*_+", _re.I),
-            _re.compile(r"^\s*Date\s*:\s*\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+UTC", _re.I),
-            _re.compile(r"this\s+translation\s+is\s+accurate\s+and\s+complete", _re.I),
-
-
-            _re.compile(r"\bNote\s*:\s*This\s+(is|document)\s+(an|a)?\s*\w*\s*translation\b", _re.I),
-            _re.compile(r"\bThis\s+document\s+is\s+(an|a)\s+\w+\s+translation\s+of\s+the\s+original\b", _re.I),
-            _re.compile(r"\bcrest,?\s+seal\s+and\s+signature\s+are\s+reproduced\s+from\s+the\s+original\b", _re.I),
-        ]
-
         TBL_TAG = "{%s}tbl" % W_NS
         TR_TAG = "{%s}tr" % W_NS
         TC_TAG = "{%s}tc" % W_NS
@@ -1961,11 +1925,8 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
         def _para_text(el):
             return "".join(t.text or "" for t in el.iter(T_TAG)).strip()
 
-        def _matches_forbidden(text):
-            return any(p.search(text) for p in FORBIDDEN_PATTERNS)
-
-        def _build_parent_map(root):
-            return {child: parent for parent in root.iter() for child in parent}
+        def _is_weak(text):
+            return any(p.search(text) for p in _CERT_WEAK_PATTERNS)
 
         in_buf = _io.BytesIO(docx_bytes)
         out_buf = _io.BytesIO()
@@ -1978,124 +1939,55 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
                     if item.filename == "word/document.xml":
                         try:
                             root = ET.fromstring(data)
-                            removed = 0
-
-
-
-
-
-
-
-                            parent_map = _build_parent_map(root)
-                            paras_to_remove = []
+                            parent_map = {c: p for p in root.iter() for c in p}
+                            to_remove = set()
                             for p in root.iter(P_TAG):
-                                txt = _para_text(p)
-                                if not txt:
+                                if not is_translator_cert_text(_para_text(p)):
                                     continue
-                                if _matches_forbidden(txt):
-                                    paras_to_remove.append(p)
-
-
-
-
-
-
-
-
-                            extra = set()
-                            for p in paras_to_remove:
+                                to_remove.add(p)
                                 parent = parent_map.get(p)
                                 if parent is None:
                                     continue
                                 sibs = list(parent)
-                                try:
-                                    idx = sibs.index(p)
-                                except ValueError:
-                                    continue
+                                idx = sibs.index(p)
+                                for step in (-1, 1):
+                                    j = idx + step
+                                    while 0 <= j < len(sibs) and sibs[j].tag == P_TAG:
+                                        t = _para_text(sibs[j])
+                                        if t and not (_is_weak(t) or is_translator_cert_text(t)):
+                                            break
+                                        to_remove.add(sibs[j])
+                                        j += step
 
-                                j = idx - 1
-                                while j >= 0 and sibs[j].tag == P_TAG:
-                                    t = _para_text(sibs[j])
-                                    if not t:
-                                        extra.add(sibs[j])
-                                        j -= 1
-                                        continue
-                                    if _matches_forbidden(t):
-                                        extra.add(sibs[j])
-                                        j -= 1
-                                    else:
-                                        break
-
-                                k = idx + 1
-                                while k < len(sibs) and sibs[k].tag == P_TAG:
-                                    t = _para_text(sibs[k])
-                                    if not t:
-                                        extra.add(sibs[k])
-                                        k += 1
-                                        continue
-                                    if _matches_forbidden(t):
-                                        extra.add(sibs[k])
-                                        k += 1
-                                    else:
-                                        break
-
-                            all_to_remove = set(paras_to_remove) | extra
-                            for p in all_to_remove:
+                            touched_rows = set()
+                            for p in to_remove:
                                 parent = parent_map.get(p)
                                 if parent is None:
                                     continue
-                                try:
-                                    parent.remove(p)
-                                    removed += 1
-                                except ValueError:
-                                    pass
+                                parent.remove(p)
+                                anc = parent
+                                while anc is not None and anc.tag != TR_TAG:
+                                    anc = parent_map.get(anc)
+                                if anc is not None:
+                                    touched_rows.add(anc)
 
-
-
-
-
-
-
-
-
-
-
-                            parent_map = _build_parent_map(root)
-
-                            for tr in list(root.iter(TR_TAG)):
-                                has_meaningful = False
-                                for tc in tr.iter(TC_TAG):
-                                    for p in tc.iter(P_TAG):
-                                        if _para_text(p):
-                                            has_meaningful = True
-                                            break
-                                    if has_meaningful:
-                                        break
-                                if not has_meaningful:
-                                    parent = parent_map.get(tr)
-                                    if parent is not None:
-                                        try:
-                                            parent.remove(tr)
-                                        except ValueError:
-                                            pass
-
-                            parent_map = _build_parent_map(root)
-                            for tbl in list(root.iter(TBL_TAG)):
-                                rows = list(tbl.iter(TR_TAG))
-                                if not rows:
-                                    parent = parent_map.get(tbl)
-                                    if parent is not None:
-                                        try:
-                                            parent.remove(tbl)
-                                        except ValueError:
-                                            pass
-
+                            for tr in touched_rows:
+                                if any(_para_text(p) for p in tr.iter(P_TAG)):
+                                    continue
+                                tbl = parent_map.get(tr)
+                                if tbl is None:
+                                    continue
+                                tbl.remove(tr)
+                                if tbl.tag == TBL_TAG and tbl.find(TR_TAG) is None:
+                                    holder = parent_map.get(tbl)
+                                    if holder is not None:
+                                        holder.remove(tbl)
 
                             for tc in root.iter(TC_TAG):
                                 if tc.find(P_TAG) is None:
                                     tc.append(ET.Element(P_TAG))
 
-                            if removed:
+                            if to_remove:
                                 data = ET.tostring(
                                     root,
                                     xml_declaration=True,
@@ -2103,8 +1995,8 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
                                     short_empty_elements=True,
                                 )
                                 logger.info(
-                                    "Stripped %d inline cert paragraph(s) from authored body (recursive)",
-                                    removed,
+                                    "Stripped %d inline cert paragraph(s) from authored body",
+                                    len(to_remove),
                                 )
                                 modified = True
                         except Exception as e:
@@ -2119,36 +2011,36 @@ def _strip_inline_cert_blocks(docx_bytes: bytes) -> bytes:
         return docx_bytes
 
 
+_HTML_TAG_NAMES = (
+    "a", "b", "big", "blockquote", "br", "center", "code", "div", "em", "font",
+    "h1", "h2", "h3", "h4", "h5", "h6", "hr", "i", "li", "ol", "p", "pre", "s",
+    "small", "span", "strike", "strong", "sub", "sup", "table", "tbody", "td",
+    "th", "thead", "tr", "u", "ul",
+)
+_HTML_TAG_RE = re.compile(
+    r"<\s*/?\s*(?:" + "|".join(_HTML_TAG_NAMES) + r")"
+    r"(?:\s+[\w:-]+\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s\"'<>]+))*\s*/?\s*>",
+    re.I,
+)
+_TEMPLATE_TOKEN_RE = re.compile(r"\{\{\s*[A-Za-z_][\w.]*\s*\}\}|\{[a-z_][a-z0-9_]*\}")
+
+
+def _clean_markup_artifacts(text: str) -> str:
+    cleaned = _HTML_TAG_RE.sub(" ", text)
+    cleaned = _TEMPLATE_TOKEN_RE.sub("", cleaned)
+    if cleaned == text:
+        return text
+    return re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+
+
 def _strip_html_and_bracket_artifacts(docx_bytes: bytes) -> bytes:
-    """Strip literal HTML tags and bracketed image placeholders that
-    Claude sometimes emits as text inside the body.
+    """Strip literal HTML tags (known tag names only) and unfilled {template} tokens Claude typed as text.
 
-    User reports a recurring class of bug where Claude's authored
-    DOCX contains text like
-        '<p style="text-align: center;">AUSTRIAN EMBASSY<br>LONDON</p>'
-    rendered as visible text, plus '[Coat of Arms]', '[Stamp: ...]',
-    '[Signature: ...]'. The bracketed markers violate the TEXT-ONLY
-    rule in the prompt; the HTML tags happen when Claude
-    misinterprets "center the masthead" in HTML terms instead of
-    using python-docx alignment.
-
-    Strategy:
-      * Walk every paragraph (including those inside tables).
-      * Concatenate text from ALL <w:t> elements across runs into
-        one string — Claude often splits a single tag across
-        runs (p.add_run("<p>") + p.add_run("text") + p.add_run("</p>")),
-        so per-<w:t> scanning misses them.
-      * Strip HTML tags via regex (keeping inner text).
-      * Drop bracketed image markers entirely.
-      * Write cleaned text back into the FIRST run; blank the rest.
-      * If the paragraph ends up empty, drop the whole paragraph
-        in pass 2.
-
-    Best-effort; failures return the original bytes unchanged.
+    Bracketed notations such as [Stamp: ...] or [Signature] are standard in certified
+    translations and are kept. Returns the input unchanged on any error.
     """
     try:
         import io as _io
-        import re as _re2
         import zipfile as _zip
         from xml.etree import ElementTree as ET
 
@@ -2159,20 +2051,17 @@ def _strip_html_and_bracket_artifacts(docx_bytes: bytes) -> bytes:
         R_TAG = "{%s}r" % W_NS
         T_TAG = "{%s}t" % W_NS
 
-        TAG_RE = _re2.compile(r"<\s*/?\s*[a-zA-Z][a-zA-Z0-9]*\b[^>]*>")
-        BRACKET_RE = _re2.compile(
-            r"\[\s*(?:Coat of Arms|Stamp(?:\s*:\s*[^\]]+)?|Signature"
-            r"(?:\s*:\s*[^\]]+)?|Photo|Seal|Logo|QR\s*Code|Barcode|"
-            r"Crest)\s*\]",
-            _re2.I,
-        )
-        SUSPECT = ("<", ">", "[")
+        def _keeps_layout(p):
+            if any(True for _ in p.iter("{%s}drawing" % W_NS)):
+                return True
+            if any(b.get("{%s}type" % W_NS) == "page" for b in p.iter("{%s}br" % W_NS)):
+                return True
+            return p.find("{%s}pPr/{%s}sectPr" % (W_NS, W_NS)) is not None
 
         in_buf = _io.BytesIO(docx_bytes)
         out_buf = _io.BytesIO()
         modified = False
         paras_cleaned = 0
-        chars_removed = 0
         empty_paras_removed = 0
 
         with _zip.ZipFile(in_buf, "r") as zin:
@@ -2182,114 +2071,55 @@ def _strip_html_and_bracket_artifacts(docx_bytes: bytes) -> bytes:
                     if item.filename == "word/document.xml":
                         try:
                             root = ET.fromstring(data)
-                            body = root.find("{%s}body" % W_NS)
-                            if body is not None:
+                            parent_map = {c: p for p in root.iter() for c in p}
+                            emptied = []
+                            for p in root.iter(P_TAG):
+                                t_elems = [t for r in p.findall(R_TAG) for t in r.findall(T_TAG)]
+                                full = "".join(t.text or "" for t in t_elems)
+                                if not full or _clean_markup_artifacts(full) == full:
+                                    continue
+                                for t in t_elems:
+                                    if t.text:
+                                        t.text = _clean_markup_artifacts(t.text)
+                                joined = "".join(t.text or "" for t in t_elems)
+                                cleaned = _clean_markup_artifacts(joined)
+                                if cleaned != joined:
+                                    # A tag split across runs: collapse the paragraph text into the first run.
+                                    t_elems[0].text = cleaned
+                                    for t in t_elems[1:]:
+                                        t.text = ""
+                                for t in t_elems:
+                                    t.set("{%s}space" % XML_NS, "preserve")
+                                paras_cleaned += 1
+                                modified = True
+                                if not "".join(t.text or "" for t in t_elems).strip():
+                                    emptied.append(p)
 
-                                for p in root.iter(P_TAG):
-                                    runs = list(p.findall(R_TAG))
-                                    if not runs:
-                                        continue
-                                    full = "".join(
-                                        (t.text or "")
-                                        for r in runs
-                                        for t in r.findall(T_TAG)
-                                    )
-                                    if not full or not any(c in full for c in SUSPECT):
-                                        continue
-                                    cleaned = full
-                                    if "<" in cleaned and ">" in cleaned:
-                                        cleaned = TAG_RE.sub(" ", cleaned)
-                                    if "[" in cleaned:
-                                        cleaned = BRACKET_RE.sub("", cleaned)
+                            for p in emptied:
+                                parent = parent_map.get(p)
+                                if parent is not None and not _keeps_layout(p):
+                                    parent.remove(p)
+                                    empty_paras_removed += 1
 
-                                    if "<" in cleaned or ">" in cleaned:
-                                        cleaned = _re2.sub(
-                                            r"<\s*/?\s*[a-zA-Z][^<>]*$",
-                                            "",
-                                            cleaned,
-                                        )
-                                        cleaned = _re2.sub(
-                                            r"^[^<>]*?>",
-                                            "",
-                                            cleaned,
-                                        )
-                                    cleaned = _re2.sub(
-                                        r"[ \t]{2,}", " ", cleaned
-                                    ).strip()
-                                    if cleaned == full:
-                                        continue
-                                    chars_removed += len(full) - len(cleaned)
-                                    paras_cleaned += 1
-                                    modified = True
-                                    if not cleaned:
-                                        for r in runs:
-                                            for t in r.findall(T_TAG):
-                                                t.text = ""
-                                        continue
-                                    first_run = runs[0]
-                                    first_t = first_run.find(T_TAG)
-                                    if first_t is None:
-                                        first_t = ET.SubElement(
-                                            first_run, T_TAG
-                                        )
-                                    first_t.text = cleaned
-                                    first_t.set(
-                                        "{%s}space" % XML_NS, "preserve"
-                                    )
-                                    for r in runs[1:]:
-                                        for t in r.findall(T_TAG):
-                                            t.text = ""
-
-
-                                parent_map = {
-                                    c: p2 for p2 in body.iter() for c in p2
-                                }
-                                for p in list(body.iter(P_TAG)):
-                                    has_text = any(
-                                        (t.text or "").strip()
-                                        for t in p.iter(T_TAG)
-                                    )
-                                    has_drawing = any(
-                                        True for _ in p.iter("{%s}drawing" % W_NS)
-                                    )
-                                    has_pb = any(
-                                        b.get("{%s}type" % W_NS) == "page"
-                                        for b in p.iter("{%s}br" % W_NS)
-                                    )
-                                    has_sectpr = (
-                                        p.find("{%s}pPr/{%s}sectPr"
-                                               % (W_NS, W_NS)) is not None
-                                    )
-                                    if not (has_text or has_drawing or has_pb or has_sectpr):
-                                        parent = parent_map.get(p)
-                                        if parent is not None:
-                                            try:
-                                                parent.remove(p)
-                                                empty_paras_removed += 1
-                                            except Exception:
-                                                pass
-
-                                if modified:
-                                    data = ET.tostring(
-                                        root,
-                                        xml_declaration=True,
-                                        encoding="UTF-8",
-                                        standalone=True,
-                                    )
+                            if modified:
+                                data = ET.tostring(
+                                    root,
+                                    xml_declaration=True,
+                                    encoding="UTF-8",
+                                    short_empty_elements=True,
+                                )
                         except Exception:
                             logger.exception(
                                 "strip_html_and_bracket_artifacts: "
-                                "failed to parse document.xml \u2014 "
-                                "leaving untouched"
+                                "failed to parse document.xml — leaving untouched"
                             )
+                            modified = False
                     zout.writestr(item, data)
 
         if modified:
             logger.info(
-                "strip_html_and_bracket_artifacts: cleaned %d paras "
-                "(removed %d chars), dropped %d empty paras",
+                "strip_html_and_bracket_artifacts: cleaned %d paras, dropped %d emptied paras",
                 paras_cleaned,
-                chars_removed,
                 empty_paras_removed,
             )
             return out_buf.getvalue()
@@ -2418,7 +2248,7 @@ def _merge_adjacent_compatible_tables(docx_bytes: bytes) -> bytes:
                                         root,
                                         xml_declaration=True,
                                         encoding="UTF-8",
-                                        standalone=True,
+                                        short_empty_elements=True,
                                     )
                         except Exception:
                             logger.exception(
@@ -2556,7 +2386,7 @@ def _auto_landscape_wide_tables(docx_bytes: bytes) -> bytes:
                                         root,
                                         xml_declaration=True,
                                         encoding="UTF-8",
-                                        standalone=True,
+                                        short_empty_elements=True,
                                     )
                         except Exception:
                             logger.exception(
@@ -2665,7 +2495,7 @@ def _collapse_pre_section_whitespace(docx_bytes: bytes) -> bytes:
                                         root,
                                         xml_declaration=True,
                                         encoding="UTF-8",
-                                        standalone=True,
+                                        short_empty_elements=True,
                                     )
                         except Exception:
                             logger.exception(
@@ -2827,20 +2657,18 @@ def author_rebuild_docx(
         os.getenv("REBUILD_MULTITURN", "1").strip().lower()
         not in ("", "0", "false", "no", "off")
     )
+    model = claude_params.rebuild_model(model)
     if use_multiturn:
         try:
             from app.services.claude_multiturn_rebuild import (
                 author_rebuild_docx_multiturn,
             )
-            logger.info(
-                "Using multi-turn rebuild loop (model=%s)",
-                model or "claude-opus-4-8",
-            )
+            logger.info("Using multi-turn rebuild loop (model=%s)", model)
             return author_rebuild_docx_multiturn(
                 pdf_bytes,
                 source_lang,
                 target_lang,
-                model=model or "claude-opus-4-8",
+                model=model,
             )
         except Exception:
             logger.exception(
@@ -2873,7 +2701,7 @@ def author_rebuild_docx(
             output_path=output_path,
             images=images,
             tables=tables,
-            model=model or "claude-opus-4-8",
+            model=model,
         )
         script = _strip_code_fence(raw)
         _validate_script(script, output_path)

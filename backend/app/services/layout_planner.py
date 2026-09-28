@@ -33,6 +33,7 @@ import re
 from typing import Any
 
 from app.config import settings
+from app.services import claude_params
 
 logger = logging.getLogger(__name__)
 
@@ -253,12 +254,13 @@ def plan_layout(
     }
 
     client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    model = settings.ANTHROPIC_VISION_MODEL
 
     try:
         resp = client.messages.create(
-            model=settings.ANTHROPIC_VISION_MODEL,
+            model=model,
             max_tokens=8192,
-            system=_SYSTEM_PROMPT,
+            system=claude_params.system_param(model, _SYSTEM_PROMPT),
             messages=[
                 {
                     "role": "user",
@@ -275,9 +277,10 @@ def plan_layout(
                 }
             ],
         )
-    except Exception as e:
+    except anthropic.APIError as e:
         logger.warning("Layout planner API call failed: %s", e)
         return None
+    claude_params.log_usage("Layout planner", resp)
 
     try:
         raw = ""

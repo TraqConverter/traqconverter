@@ -7,6 +7,8 @@ from sqlalchemy import update
 from app.config import settings
 import re
 
+from app.services import claude_params
+
 from app.services.translation_memory_service import get_tm_entries
 from app.services.glossary_service import build_glossary_prompt, get_glossary
 from app.models.glossary import Glossary
@@ -65,7 +67,7 @@ MODEL_OPTIONS: dict[str, dict] = {
 
 def _resolve_model(model_key: str | None) -> dict:
     """Return the catalog entry for the given key, falling back to
-    'balanced' (gpt-4.1-mini) when the key is unknown / empty."""
+    'balanced' (Claude Sonnet 4.6) when the key is unknown / empty."""
     key = (model_key or "balanced").strip()
     return MODEL_OPTIONS.get(key, MODEL_OPTIONS["balanced"])
 
@@ -106,13 +108,13 @@ def _call_model(
     system: str,
     user: str,
     max_tokens: int = 8192,
+    cache_prefix: str = "",
 ) -> str:
     """Route a translation call to the right provider+model.
 
-    Returns the generated text. Both providers honour the same
-    system+user message split — for OpenAI we map system→system
-    role, for Anthropic we use the `system` parameter and a single
-    user message.
+    Returns the generated text. `cache_prefix` is stable instruction text
+    placed before `user`; on Anthropic it gets a prompt-cache breakpoint
+    when it is long enough to be cached.
     """
     cfg = _resolve_model(model_key)
     provider = cfg["provider"]
@@ -123,20 +125,28 @@ def _call_model(
             model=model,
             messages=[
                 {"role": "system", "content": system},
-                {"role": "user", "content": user},
+                {"role": "user", "content": cache_prefix + user},
             ],
             temperature=0,
         )
         return (resp.choices[0].message.content or "").strip()
 
     if provider == "anthropic":
+        if cache_prefix and claude_params.worth_caching(model, system + cache_prefix):
+            content = [
+                claude_params.cached_text_block(cache_prefix),
+                {"type": "text", "text": user},
+            ]
+        else:
+            content = cache_prefix + user
         resp = _get_anthropic().messages.create(
             model=model,
             max_tokens=max_tokens,
-            temperature=0,
             system=system,
-            messages=[{"role": "user", "content": user}],
+            messages=[{"role": "user", "content": content}],
+            **claude_params.request_params(model, max_tokens=max_tokens, temperature=0),
         )
+        claude_params.log_usage("Translation", resp)
         parts: list[str] = []
         for block in resp.content:
             if getattr(block, "type", None) == "text":
@@ -479,27 +489,26 @@ ABSOLUTE RULES — these are non-negotiable for legal and identity documents:
             f"{glossary_prompt}\n"
         )
 
-    if tm_context:
-        rules += (
-            "\nREFERENCE TRANSLATIONS (use these verbatim if the segment matches):\n"
-            f"{tm_context}\n"
-        )
-
     rules += (
         f"\nINPUT FORMAT: Segments are separated by the literal delimiter `{DELIM}`."
         f"\nOUTPUT FORMAT: Return only the translated segments separated by the same `{DELIM}` delimiter, in the same order."
         " No numbering, no labels, no commentary. The number of segments in your output must match the input exactly.\n"
     )
 
-    prompt = rules + "\nINPUT:\n" + ("\n" + DELIM + "\n").join(texts)
-
-
+    prompt = ""
+    if tm_context:
+        prompt += (
+            "\nREFERENCE TRANSLATIONS (use these verbatim if the segment matches):\n"
+            f"{tm_context}\n"
+        )
+    prompt += "\nINPUT:\n" + ("\n" + DELIM + "\n").join(texts)
 
     output = _call_model(
         model_key=getattr(project, "model", None) if project else None,
         system="You translate certified-quality documents. Return ONLY the translated segments separated by the configured delimiter — no commentary.",
         user=prompt,
         max_tokens=8192,
+        cache_prefix=rules,
     )
 
     raw = [chunk.strip("\n").strip() for chunk in output.split(DELIM)]
