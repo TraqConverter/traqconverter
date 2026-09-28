@@ -75,7 +75,9 @@ compared with the source, do it only if the user is explicit, and say so in the 
 
 
 class ChatEditError(RuntimeError):
-    pass
+    def __init__(self, message: str, technical: str = ""):
+        super().__init__(message)
+        self.technical = technical
 
 
 def _download(key: str) -> bytes:
@@ -268,7 +270,11 @@ def chat_edit(
             )
         except anthropic.APIError as e:
             logger.exception("Chat edit call failed (project=%s)", project.id)
-            raise ChatEditError("Claude couldn't process the request; try again") from e
+            status = getattr(e, "status_code", "")
+            raise ChatEditError(
+                "Claude couldn't process the request; try again",
+                technical=f"{type(e).__name__} {status}: {getattr(e, 'message', str(e))}"[:500],
+            ) from e
         claude_params.log_usage("doc_chat", resp)
         if resp.stop_reason == "refusal":
             raise ChatEditError("Claude declined this request")
