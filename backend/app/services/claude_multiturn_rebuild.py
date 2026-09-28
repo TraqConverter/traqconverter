@@ -353,7 +353,7 @@ def _classify_document(pdf_bytes: bytes) -> str:
     except Exception:
         return "CERTIFICATE"
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = claude_params.api_key()
     if not api_key:
         return "CERTIFICATE"
     try:
@@ -475,7 +475,7 @@ def _extract_form_fields_via_vision(pdf_bytes: bytes) -> list:
     except Exception:
         return []
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = claude_params.api_key()
     if not api_key:
         return []
 
@@ -1121,7 +1121,7 @@ def _author_rebuild_docx_multiturn_core(
     except ImportError as e:
         raise RuntimeError("anthropic SDK not installed") from e
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = claude_params.api_key()
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY not set")
     client = anthropic.Anthropic(api_key=api_key)

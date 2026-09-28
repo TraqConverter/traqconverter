@@ -752,7 +752,7 @@ def _extract_tables_via_vision(
         logger.warning("Vision table extraction unavailable (missing dep)")
         return []
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = claude_params.api_key()
     if not api_key:
         return []
 
@@ -901,7 +901,7 @@ def _call_claude_to_author(
             "anthropic SDK not installed — cannot run authored rebuild"
         ) from e
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = claude_params.api_key()
     if not api_key:
         raise RuntimeError(
             "ANTHROPIC_API_KEY not set — cannot run authored rebuild"
