@@ -83,6 +83,9 @@ Save the final DOCX to exactly: r"{output_path}"
 Sandbox rules for every script:
 {sandbox_rules}
 
+NON-TEXT ELEMENTS:
+{notation_rules}
+
 Translate from {source_lang} into {target_lang}.
 
 Match the source's structure faithfully. Use python-docx tables
@@ -124,16 +127,9 @@ decision is your judgment call):
   * No HTML tags as visible text. If you want centered text use
     `paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER`, never
     write `<center>` / `<p style="...">` / `<br>`.
-  * No bracketed image placeholders like [Coat of Arms],
-    [Stamp: ...], [Signature: ...], [Photo], [Logo].
-    Type out names; the wrapper embeds original source pages
-    as the visual reference for stamps/signatures.
-  * Do NOT call doc.add_picture(...) anywhere in your script.
-    The wrapper provides the original source pages BEFORE your
-    body, so coat of arms / logos / stamps / signatures are
-    already shown in their proper form. Inserting images from
-    ./images/ here usually produces a desk-background or
-    paper-edge crop where the official symbol should be.
+  * Signatures, stamps, seals, logos, photos and unreadable parts
+    follow the NON-TEXT ELEMENTS rules below. Never call
+    doc.add_picture(...).
   * A4 page size unless the source is obviously different.
 
 Helper recipes you can paste at the top of your script:
@@ -940,7 +936,7 @@ def _inspect_docx(
     if not media and len(drawings) > 0:
         warnings.append(
             "Drawings reference images but no media files exist in the "
-            "zip. Use existing files in ./images/ via doc.add_picture()."
+            "zip. Remove the picture and use a bracketed notation instead."
         )
 
 
@@ -1132,8 +1128,8 @@ def _author_rebuild_docx_multiturn_core(
 
     try:
         from app.services.claude_authored_rebuild import (
+            NOTATION_RULES,
             SANDBOX_RULES,
-            _extract_pdf_images,
             _extract_tables_via_vision,
             _format_image_list,
             _format_table_list,
@@ -1174,42 +1170,9 @@ def _author_rebuild_docx_multiturn_core(
     out_dir = Path(tempfile.mkdtemp(prefix="claude_multiturn_"))
     output_path = str(out_dir / "rebuild.docx")
 
-    images = []
+    # Graphics are rendered as bracketed notations, so no image crops are extracted.
+    images: list = []
     _vision_image_list_text = None
-    try:
-        from app.services.claude_vision_image_extractor import (
-            extract_image_regions_via_vision,
-            format_vision_image_list,
-        )
-        vision_manifest = extract_image_regions_via_vision(
-            pdf_bytes, out_dir
-        )
-        if vision_manifest:
-            images = [
-                {
-                    "kind": m["kind"],
-                    "filename": m["filename"],
-                    "page": m["page"],
-                    "width_px": m["width_px"],
-                    "height_px": m["height_px"],
-                    "suggested_width_cm": m["suggested_width_cm"],
-                    "description": m.get("description", ""),
-                    "_vision_source": True,
-                }
-                for m in vision_manifest
-            ]
-            _vision_image_list_text = format_vision_image_list(
-                vision_manifest
-            )
-    except Exception:
-        logger.exception("Vision image extraction failed — falling back")
-
-    if not images:
-        try:
-            images = _extract_pdf_images(pdf_bytes, out_dir)
-        except Exception:
-            logger.exception("Image pre-extraction failed — continuing")
-            images = []
     try:
         tables = _extract_tables_via_vision(pdf_bytes)
     except Exception:
@@ -1255,6 +1218,7 @@ def _author_rebuild_docx_multiturn_core(
         ),
         form_fields_section=form_fields_section,
         sandbox_rules=SANDBOX_RULES,
+        notation_rules=NOTATION_RULES,
     )
     initial_prompt = prompt_template.format(**format_kwargs)
 
