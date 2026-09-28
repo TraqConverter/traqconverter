@@ -116,8 +116,9 @@ def test_author_prompt_has_no_real_personal_data_and_valid_recipe():
         source_lang="Italian", target_lang="English", output_path="/tmp/out/rebuild.docx",
         image_list="", table_list="", sandbox_rules=car.SANDBOX_RULES,
     )
-    for leaked in ("XXXX", "XXXX", "0000000", "0000000000", "XXXX", "FIRENZE"):
-        assert leaked not in prompt
+    assert "MARIO ROSSI" in prompt
+    # Example IDs must be zeroed placeholders, never real-looking numbers.
+    assert not re.search(r"\b[1-9]\d{6,}\b", prompt)
     assert "Import only: docx" in prompt
     recipe = re.search(r"```python\n(.*?)```", prompt, re.S).group(1)
     script_sandbox.validate_script(recipe)
