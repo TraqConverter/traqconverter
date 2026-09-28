@@ -5,6 +5,7 @@ import ast
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import sysconfig
@@ -125,6 +126,9 @@ def run_script(
     write_roots = sorted({os.path.realpath(str(p)) for p in [work_dir, *write_dirs]})
     lib_paths = _library_paths()
 
+    # The runner is copied in because the unprivileged child may not be able to read the app directory.
+    runner_path = work_dir / "_sandbox_runner.py"
+    shutil.copyfile(_RUNNER, runner_path)
     script_path = work_dir / "rebuild.py"
     script_path.write_text(script + "\n", encoding="utf-8")
     config_path = work_dir / "sandbox.json"
@@ -150,7 +154,7 @@ def run_script(
 
     env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "HOME": str(work_dir)}
     return subprocess.run(
-        [sys.executable, "-I", "-S", str(_RUNNER), str(config_path)],
+        [sys.executable, "-I", "-S", str(runner_path), str(config_path)],
         capture_output=True,
         env=env,
         cwd=str(work_dir),
