@@ -319,8 +319,11 @@ def team_terms(db: Session, project: TranslationProject, source_text: str) -> li
 
 
 def team_terminology(db: Session, project: TranslationProject, source_text: Optional[str] = None) -> str:
+    from app.services import batch_terms
+
     text = source_text if source_text is not None else source_text_of(db, project)
-    return terminology_block(team_terms(db, project, text))
+    blocks = [terminology_block(team_terms(db, project, text)), batch_terms.terminology_block(db, project, text or None)]
+    return "\n".join(b for b in blocks if b)
 
 
 

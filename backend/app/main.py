@@ -258,6 +258,7 @@ from app.routers import certifications
 from app.routers import ws
 from app.routers import learning as learning_router
 from app.routers import usage as usage_router
+from app.routers import batches as batches_router
 
 app.include_router(settings_router.router)
 app.include_router(stripe.router)
@@ -277,6 +278,7 @@ app.include_router(certifications.router)
 app.include_router(ws.router)
 app.include_router(learning_router.router)
 app.include_router(usage_router.router)
+app.include_router(batches_router.router)
 
 logger.info("All routers registered successfully")
 

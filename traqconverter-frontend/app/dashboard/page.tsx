@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
+import BatchBadge, { type BatchRef } from "@/components/BatchBadge"
 
 type ProjectUser = {
   id: string
@@ -32,6 +33,7 @@ type Project = {
   team?: string[]
   assignee?: ProjectUser | null
   owner?: ProjectUser | null
+  batch?: BatchRef | null
 }
 
 function effectiveStatus(p: { status?: string; review_status?: string }) {
@@ -490,6 +492,12 @@ export default function DashboardPage() {
                         {p.domain && p.words
                           ? ` · ${p.words.toLocaleString()} words`
                           : ""}
+                        {p.batch && (
+                          <>
+                            {" "}
+                            · <BatchBadge batch={p.batch} />
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>

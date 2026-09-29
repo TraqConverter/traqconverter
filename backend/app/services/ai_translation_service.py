@@ -305,6 +305,15 @@ def get_project_scope(project):
 
 
 
+def _batch_terms_prompt(db, project, text: str) -> str:
+    if not db or not getattr(project, "batch_id", None):
+        return ""
+    from app.services.batch_terms import terminology_block
+
+    block = terminology_block(db, project, text)
+    return f"\n{block}" if block else ""
+
+
 def translate_text(
     text: str,
     source_lang: str,
@@ -358,7 +367,7 @@ STRICT RULES:
 - The entire output must be in {tgt_name}.
 
 {glossary_prompt}
-
+{_batch_terms_prompt(db, project, text)}
 Return ONLY the translated text — no preamble, no quotes, no commentary."""
 
     return _call_model(
@@ -489,6 +498,7 @@ ABSOLUTE RULES — these are non-negotiable for legal and identity documents:
             "\nMANDATORY GLOSSARY (these mappings override any other choice):\n"
             f"{glossary_prompt}\n"
         )
+    rules += _batch_terms_prompt(db, project, "\n".join(texts))
 
     rules += (
         f"\nINPUT FORMAT: Segments are separated by the literal delimiter `{DELIM}`."
