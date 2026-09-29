@@ -273,9 +273,13 @@ export default function NewProjectPage() {
     api
       .get("/certifications")
       .then((res) => {
-        const items: { id: string; file_name: string }[] = res.data?.items || []
+        const items: { id: string; file_name: string; is_template?: boolean; is_default?: boolean }[] =
+          res.data?.items || []
+        const templates = items.filter((c) => c.is_template ?? c.file_name.toLowerCase().endsWith(".docx"))
         setCertsEnabled(true)
-        setCertTemplates(items.map((c) => ({ id: c.id, file_name: c.file_name })))
+        setCertTemplates(templates.map((c) => ({ id: c.id, file_name: c.file_name })))
+        const preferred = templates.find((c) => c.is_default)
+        if (preferred) setCertTemplateId(preferred.id)
       })
       .catch(() => {
         setCertsEnabled(false)
@@ -488,7 +492,7 @@ export default function NewProjectPage() {
               <div className="text-sm mb-8" style={{ color: "#8a8270" }}>
                 {file
                   ? "Drop or browse to add more documents from the same client"
-                  : "or click to browse · PDF, DOCX, PPTX · up to 200 MB · several files make a batch"}
+                  : "or click to browse · PDF, DOCX, JPG, PNG · up to 20 MB · several files make a batch"}
               </div>
 
               <div className="flex items-center gap-3">
@@ -517,7 +521,7 @@ export default function NewProjectPage() {
               type="file"
               multiple
               className="hidden"
-              accept=".pdf,.docx,.pptx,.xlsx,.png,.jpg,.jpeg"
+              accept=".pdf,.docx,.png,.jpg,.jpeg"
               onChange={(e) => {
                 addFiles(e.target.files)
                 e.target.value = ""
