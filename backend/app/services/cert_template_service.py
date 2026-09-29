@@ -234,7 +234,11 @@ def substitute_in_docx(
     """
     from docx import Document
 
-    doc = Document(io.BytesIO(docx_bytes))
+    from app.services.docx_cert_template import flatten_merge_fields
+
+    by_field = _field_values(values)
+    values = {**{k: v for k, v in by_field.items() if k not in values}, **values}
+    doc = Document(io.BytesIO(flatten_merge_fields(docx_bytes, by_field)))
 
     for para in doc.paragraphs:
         _substitute_paragraph(para, values)
@@ -261,6 +265,24 @@ def substitute_in_docx(
     return buf.getvalue()
 
 
+def _field_values(values: dict[str, str]) -> dict[str, str]:
+    """Legacy token values keyed by certification field name (cert_fields)."""
+    return {
+        "translator": values.get("translator_name", ""),
+        "date": values.get("date_long", ""),
+        "source_language": values.get("source_language", ""),
+        "target_language": values.get("target_language", ""),
+        "document": values.get("document_name", ""),
+        "pages": values.get("page_count", ""),
+        "client": values.get("client", ""),
+        "translator_email": values.get("translator_email", ""),
+        "company": values.get("team_name", ""),
+        "company_address": values.get("company_address", ""),
+        "certificate_number": values.get("certificate_number", ""),
+        "file_name": values.get("document_name", ""),
+    }
+
+
 def _substitute_paragraph(paragraph, values: dict[str, str]) -> None:
     """Replace every supported placeholder in a paragraph, even when
     Word has split the placeholder across multiple runs."""
@@ -268,10 +290,15 @@ def _substitute_paragraph(paragraph, values: dict[str, str]) -> None:
     if "{{" not in full_text:
         return
 
+    from app.services.cert_fields import resolve
+
     def _replace(match: re.Match) -> str:
         token = match.group(1)
         if token in values:
             return values[token]
+        field = resolve(token)
+        if field and field in values:
+            return values[field]
 
         return match.group(0)
 

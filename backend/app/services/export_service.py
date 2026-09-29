@@ -236,10 +236,6 @@ def _resolve_cert_template(project, tmp_dir):
     bound to, with {{tokens}} already substituted. Returns None when
     the project has no template, or when fetching/substituting fails
     (callers fall back to the hardcoded cert block in that case)."""
-    template_id = getattr(project, "certification_template_id", None)
-    if not template_id:
-        return None
-
     try:
         from app.database import SessionLocal
         from app.models.certification import Certification
@@ -248,19 +244,19 @@ def _resolve_cert_template(project, tmp_dir):
             build_substitution_values,
         )
 
+        from app.services.cert_page import team_default
+
         db = SessionLocal()
         try:
+            template_id = getattr(project, "certification_template_id", None)
             cert = (
                 db.query(Certification)
                 .filter(Certification.id == template_id)
                 .first()
+                if template_id
+                else team_default(db, project.team_id)
             )
             if not cert:
-                logger.info(
-                    "Cert template %s not found — falling back to "
-                    "hardcoded block",
-                    template_id,
-                )
                 return None
             if not (cert.file_name or "").lower().endswith(".docx"):
                 logger.info(

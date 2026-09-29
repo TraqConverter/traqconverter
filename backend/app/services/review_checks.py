@@ -539,7 +539,8 @@ def check_certification(ctx: _Ctx, data: bytes, enabled: bool) -> list[dict]:
     if fields is None:
         return [_item("certification", "missing", "warning", "No certification page yet; Certify & deliver adds it")]
     labels = {"translator": "translator", "date": "date", "document": "document", "source_language": "source language", "target_language": "target language"}
-    empty = [labels[k] for k in labels if not (fields.get(k) or "").strip()]
+    # A translator's own template may leave some of these fields out; only flag the ones it has.
+    empty = [labels[k] for k in labels if k in fields and not (fields.get(k) or "").strip()]
     if not empty:
         return []
     first = ctx.cert_paras[0]["id"] if ctx.cert_paras else None
