@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
+import BatchBadge, { type BatchRef } from "@/components/BatchBadge"
 
 type Assignee = {
   id: string
@@ -23,6 +24,7 @@ type Project = {
   created_at: string
   assignee_id: string | null
   assignee: Assignee | null
+  batch?: BatchRef | null
 }
 
 function effectiveStatus(p: { status?: string; review_status?: string }) {
@@ -513,6 +515,11 @@ export default function JobsPage() {
                         {p.id.slice(0, 8)}
                       </span>
                     </div>
+                    {p.batch && (
+                      <div className="mt-1">
+                        <BatchBadge batch={p.batch} />
+                      </div>
+                    )}
                   </div>
                 </div>
 
