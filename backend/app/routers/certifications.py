@@ -5,6 +5,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from pydantic import BaseModel
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -61,6 +62,8 @@ def _serialize(c: Certification, uploader_email: Optional[str] = None) -> dict:
         "uploaded_at": c.uploaded_at.isoformat() if c.uploaded_at else None,
         "uploaded_by": str(c.uploaded_by) if c.uploaded_by else None,
         "uploader_email": uploader_email,
+        "is_default": bool(c.is_default),
+        "is_template": (c.file_name or "").lower().endswith(".docx"),
     }
 
 
@@ -190,6 +193,133 @@ async def upload_certification(
 
 
 
+def _team_cert(db: Session, user: User, cert_id: str) -> tuple[Team, Certification]:
+    team = _resolve_team(db, user)
+    try:
+        cert_uuid = uuid.UUID(cert_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    cert = (
+        db.query(Certification)
+        .filter(Certification.id == cert_uuid, Certification.team_id == team.id)
+        .first()
+    )
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certification not found")
+    return team, cert
+
+
+@router.get("/{cert_id}/download-url")
+def certification_download_url(
+    cert_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """A signed storage link the browser navigates to; an XHR can't follow the storage redirect (CORS)."""
+    from app.services.s3_service import generate_presigned_download_url
+
+    _, cert = _team_cert(db, current_user, cert_id)
+    if not cert.file_path:
+        raise HTTPException(status_code=410, detail="File missing")
+    if os.path.isfile(cert.file_path):
+        return {"url": None, "file_name": cert.file_name}
+    try:
+        url = generate_presigned_download_url(cert.file_path, filename=cert.file_name)
+    except Exception:
+        logger.exception("Couldn't sign certification download")
+        raise HTTPException(status_code=500, detail="Couldn't generate download link")
+    return {"url": url, "file_name": cert.file_name}
+
+
+class _DefaultFlag(BaseModel):
+    is_default: bool = True
+
+
+@router.put("/{cert_id}/default")
+def set_default_template(
+    cert_id: str,
+    payload: _DefaultFlag,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    team, cert = _team_cert(db, current_user, cert_id)
+    make_default = payload.is_default
+    if make_default and not (cert.file_name or "").lower().endswith(".docx"):
+        raise HTTPException(status_code=400, detail="Only Word (.docx) templates can be the default")
+    if make_default:
+        db.query(Certification).filter(
+            Certification.team_id == team.id, Certification.id != cert.id, Certification.is_default.is_(True)
+        ).update({Certification.is_default: False}, synchronize_session=False)
+        db.flush()
+    cert.is_default = make_default
+    db.commit()
+    return _serialize(cert)
+
+
+def _template_check(db: Session, user: User, cert_id: str):
+    from app.services import cert_page, docx_cert_template, docx_certification
+    from app.services.docx_blocks import DocxEditError
+
+    team, cert = _team_cert(db, user, cert_id)
+    if not (cert.file_name or "").lower().endswith(".docx"):
+        raise HTTPException(status_code=400, detail="Only Word (.docx) templates can be checked")
+    try:
+        raw = cert_page.load_bytes(cert)
+    except Exception:
+        logger.exception("Couldn't load certification template %s", cert.id)
+        raise HTTPException(status_code=502, detail="Couldn't load the template from storage")
+    content = cert_page.example_content(db, user, team, raw)
+    report = docx_cert_template.TemplateReport()
+    try:
+        preview = docx_certification.standalone(content, report, page_break=False)
+    except DocxEditError as e:
+        raise HTTPException(status_code=422, detail=str(e) or "The template couldn't be read")
+    return content, report, preview
+
+
+@router.get("/{cert_id}/check")
+def check_template(
+    cert_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services import cert_fields
+
+    content, report, _ = _template_check(db, current_user, cert_id)
+    return {
+        "fields": [
+            {
+                **f,
+                "label": cert_fields.LABELS.get(f["field"], f["field"]),
+                "value": content.values.get(f["field"], content.extra_tokens.get(f["field"], "")),
+            }
+            for f in report.fields
+        ],
+        "unknown": report.unknown,
+        "dropped": [{"what": k, "count": v} for k, v in report.dropped.items()],
+        "notes": report.notes,
+        "example": {"document": content.values["document"], "file_name": content.values["file_name"]},
+    }
+
+
+@router.get("/{cert_id}/preview")
+def preview_template(
+    cert_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from fastapi.responses import Response
+
+    from app.services.docx_blocks import strip_blocks
+
+    _, _, preview = _template_check(db, current_user, cert_id)
+    return Response(
+        content=strip_blocks(preview),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get("/{cert_id}/download")
 def download_certification(
     cert_id: str,
@@ -303,20 +433,34 @@ def scan_certification(
 
 
 
+_FIELD_HELP = {
+    "translator": "Your name (Settings)",
+    "date": "Today, written in the certification language",
+    "source_language": "The project's source language",
+    "target_language": "The project's target language",
+    "document": "The document title found in the translation",
+    "pages": "Source page count",
+    "client": "The batch (client) name",
+    "translator_email": "Your email",
+    "company": "Your team or company name",
+    "company_address": "Company address (Settings)",
+    "certificate_number": "CERT-year-code, one per project",
+    "file_name": "The uploaded file name",
+}
+
+
 @router.get("/template-fields")
 def template_fields():
+    from app.services.cert_fields import ALIASES, LABELS
     from app.services.cert_template_service import SUPPORTED_FIELDS
 
     return {
         "fields": [
-            {"name": name, "description": desc}
-            for name, desc in SUPPORTED_FIELDS
-        ]
+            {"field": f, "label": LABELS[f], "names": list(ALIASES[f][:4]), "description": _FIELD_HELP[f]}
+            for f in LABELS
+        ],
+        "tokens": [{"name": name, "description": desc} for name, desc in SUPPORTED_FIELDS],
     }
-
-
-
-
 
 
 @router.delete("/{cert_id}")
