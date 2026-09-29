@@ -71,8 +71,10 @@ changes (make columns, rebuild a table, reorder), never for a wording change.
 - delete: remove a top-level block ("content": "").
 
 Rules:
-- XML uses the w: prefix (already declared). Top level may only be <w:p> or <w:tbl>. No images, \
-drawings, hyperlinks, relationship ids or <w:sectPr>.
+- XML uses the w: prefix (already declared). Top level may only be <w:p> or <w:tbl>. No hyperlinks \
+or <w:sectPr>. Never create images; an existing <w:drawing> (picture, stamp, logo) may only be kept \
+or moved by copying it unchanged, including its r:embed id. Keep <w:sdt> content controls \
+(certification fields) and edit only the text inside them.
 - Change only what the request asks. Keep every other character, number, name and formatting \
 exactly as it is, and keep the <w:bookmarkStart w:name="_b..."/>/<w:bookmarkEnd/> pair of each \
 paragraph you keep. New paragraphs don't need bookmarks.

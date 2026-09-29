@@ -615,9 +615,14 @@ def generate_docx(segments, user_email, project=None, user=None):
                 except Exception:
                     pass
                 from app.services.docx_blocks import strip_blocks
+                from app.services.docx_certification import has_certification
 
+                # A certification page authored in the editor replaces the one the wrapper would append.
                 wrapped = build_full_export_docx(
-                    strip_blocks(authored_bytes), project, user
+                    strip_blocks(authored_bytes),
+                    project,
+                    user,
+                    append_certification=not has_certification(authored_bytes),
                 )
                 return wrapped
             except Exception:
