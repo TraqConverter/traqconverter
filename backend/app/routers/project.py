@@ -171,6 +171,7 @@ async def upload_project(
     apply_glossary: bool = Form(True),
     request_certification: bool = Form(False),
     certification_template_id: Optional[str] = Form(None),
+    batch_id: Optional[UUID] = Form(None),
 
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
@@ -233,6 +234,12 @@ async def upload_project(
         if not team:
             raise HTTPException(status_code=400, detail="Team not found")
 
+        if batch_id:
+            from app.models.batch import Batch
+
+            if not db.query(Batch.id).filter(Batch.id == batch_id, Batch.team_id == team.id).first():
+                raise HTTPException(status_code=404, detail="Batch not found")
+
 
 
 
@@ -278,6 +285,7 @@ async def upload_project(
 
             status=ProjectStatus.PENDING,
             progress_percent=0,
+            batch_id=batch_id,
         )
 
         db.add(project)
@@ -340,6 +348,7 @@ async def upload_project(
         "pages": page_count,
         "credits_used": credits_required,
         "remaining_credits": new_balance,
+        "batch_id": str(batch_id) if batch_id else None,
     }
 
 
@@ -418,6 +427,11 @@ def list_projects(
                 (src or "").split()
             )
 
+    from app.models.batch import Batch
+
+    batch_ids = {p.batch_id for p in projects if p.batch_id}
+    batch_names = dict(db.query(Batch.id, Batch.name).filter(Batch.id.in_(batch_ids)).all()) if batch_ids else {}
+
     result = []
     for p in projects:
         progress = 0
@@ -445,6 +459,7 @@ def list_projects(
             "words": word_counts.get(str(p.id), 0),
             "credits_used": p.credits_used,
             "created_at": p.created_at,
+            "batch": {"id": str(p.batch_id), "name": batch_names.get(p.batch_id, "")} if p.batch_id else None,
             "assignee_id": str(p.assignee_id) if p.assignee_id else None,
             "assignee": (
                 {
@@ -719,6 +734,9 @@ def approve_segment(
 
 
 
+REVIEW_STATUSES = {"DRAFT", "IN_REVIEW", "CERTIFIED"}
+
+
 class _ReviewStatusPayload(BaseModel):
     status: str
 
@@ -731,9 +749,8 @@ def update_review_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    allowed = {"DRAFT", "IN_REVIEW", "CERTIFIED"}
     new_status = (data.status or "").strip().upper()
-    if new_status not in allowed:
+    if new_status not in REVIEW_STATUSES:
         raise HTTPException(status_code=400, detail="Invalid review status")
 
 

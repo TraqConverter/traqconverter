@@ -143,6 +143,12 @@ class TranslationProject(Base):
         ForeignKey("document_templates.id", ondelete="SET NULL", use_alter=True),
         nullable=True,
     )
+    batch_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("batches.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+        index=True,
+    )
 
 
 
@@ -159,3 +165,4 @@ class TranslationProject(Base):
 
 # Registers document_templates so the template_id foreign key resolves.
 import app.models.learning  # noqa: E402,F401
+import app.models.batch  # noqa: E402,F401
