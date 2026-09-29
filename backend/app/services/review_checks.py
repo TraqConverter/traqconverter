@@ -163,10 +163,23 @@ class _Ctx:
         self.text_of = {p["id"]: p["text"] for p in self.paras}
 
     def block_for(self, seg: Optional[dict]) -> Optional[str]:
-        if not seg:
+        if not seg or "toks" not in seg:
             return None
         bid = self.seg_to_block.get(seg["index"])
-        return bid if bid in self.text_of else None
+        if bid in self.text_of:
+            return bid
+        # No mapped paragraph (e.g. a scan mapped by vision): take the paragraph sharing most of the segment's words.
+        base = seg["base"]
+        wb = source_map._w(base)
+        best, best_score = None, 0.5
+        for p in self.paras:
+            score = source_map._w(source_map.tokens(p["text"]) & seg["toks"]) / wb if wb else 0
+            if score > best_score:
+                best, best_score = p["id"], score
+        return best
+
+    def ref_for(self, seg: Optional[dict], bid: Optional[str]) -> Optional[dict]:
+        return _source_ref(seg) or (self.source_for_block(bid) if bid else None)
 
     def source_for_block(self, bid: str) -> Optional[dict]:
         e = self.blocks.get(bid)
@@ -196,7 +209,8 @@ def check_numbers(ctx: _Ctx) -> list[dict]:
             if len(digits) < 2 or tok in exact:
                 continue
             core = digits.lstrip("0") or "0"
-            ref, bid = _source_ref(seg), ctx.block_for(seg)
+            bid = ctx.block_for(seg)
+            ref = ctx.ref_for(seg, bid)
             date = _parse_date(tok)
             if date:
                 if date in dates:
@@ -218,7 +232,8 @@ def check_numbers(ctx: _Ctx) -> list[dict]:
 
 
 def _number_missing(ctx: _Ctx, kind: str, tok: str, message: str, seg: dict) -> dict:
-    bid, ref = ctx.block_for(seg), _source_ref(seg)
+    bid = ctx.block_for(seg)
+    ref = ctx.ref_for(seg, bid)
     if not bid:
         seg_toks = source_map.tokens(seg.get("src", "")) | source_map.tokens(seg.get("tgt", ""))
         near = [(len(seg_toks & source_map.tokens(p["text"])), p["id"]) for p in ctx.paras if _ILLEGIBLE_RE.search(p["text"])]
@@ -333,7 +348,8 @@ def check_names(ctx: _Ctx, names: Optional[list[dict]]) -> list[dict]:
         if name_words and all(w in t_words for w in name_words):
             continue
         seg = _segment_for(ctx.segments, src, fold_match=True)
-        ref, bid = _source_ref(seg), ctx.block_for(seg)
+        bid = ctx.block_for(seg)
+        ref = ctx.ref_for(seg, bid)
         close = []
         for w in name_words:
             if w in t_words:
@@ -500,7 +516,7 @@ def check_glossary(ctx: _Ctx) -> list[dict]:
         items.append(_item(
             "glossary", f"{g.source_term}|{g.target_term}", "warning",
             f"Team term: {g.source_term} → {g.target_term} isn't used",
-            ctx.block_for(seg), _source_ref(seg), origin=g.origin,
+            ctx.block_for(seg), ctx.ref_for(seg, ctx.block_for(seg)), origin=g.origin,
         ))
     return items
 

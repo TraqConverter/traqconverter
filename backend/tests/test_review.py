@@ -98,7 +98,10 @@ def review_project(db, storage, make_user):
                 segment_index=i,
                 source_text=src,
                 translated_text=tgt,
-                layout_meta=layout if boxes else {"kind": "pdf_claude_line", "page": 0},
+                layout_meta=layout if boxes == True else (
+                    {"kind": "pdf_claude_line", "page": 0, "ocr_source": "claude", "bbox": [10, 10 + 20 * i, 900, 30 + 20 * i], "page_width_pt": 595, "page_height_pt": 842}
+                    if boxes == "claude" else {"kind": "pdf_claude_line", "page": 0}
+                ),
             ))
         db.commit()
         return owner, project
@@ -220,6 +223,19 @@ def test_map_from_segments_on_a_digital_pdf_needs_no_model_call(client, review_p
     assert box["bbox"][0] == pytest.approx(72 / 595, abs=0.01)
     title = view["blocks"][ids["CERTIFICATE OF RESIDENCE"]]
     assert title["bbox"][1] < box["bbox"][1]
+
+
+def test_claude_ocr_boxes_are_replaced_by_the_text_layer(client, review_project, fake):
+    f = fake()
+    owner, project = review_project(boxes="claude")
+    data, _ = _doc(client, owner, project)
+    ids = _ids_by_text(data)
+    view = client.get(f"/projects/{project.id}/source/map", headers=owner["headers"]).json()
+    assert "vision" not in f.kinds()
+    box = view["blocks"][ids["that Mr. BIANCHI LUCA, born in Bari on 12/03/1987,"]]["bbox"]
+    line = fitz.open(stream=_source_pdf()[0], filetype="pdf")[0].search_for("BIANCHI LUCA")[0]
+    assert box[1] <= line.y0 / 842 <= box[3]
+    assert box[0] == pytest.approx(72 / 595, abs=0.01)
 
 
 def test_scan_runs_one_vision_call_per_page_and_surfaces_uncertain_readings(client, review_project, fake):
@@ -476,3 +492,25 @@ def test_segment_matching_prefers_reading_order_and_skips_weak_matches():
     out = source_map.match_segments(paras, segs)
     assert out["_b00000001"]["bbox"][1] == 0.1
     assert "_b00000002" not in out
+
+
+def test_model_boxes_snap_to_stamp_ink_and_text_rows():
+    from PIL import ImageDraw
+
+    img = Image.new("RGB", (800, 1000), (250, 248, 242))
+    d = ImageDraw.Draw(img)
+    d.ellipse((500, 600, 700, 800), outline=(40, 60, 170), width=8)
+    d.rectangle((100, 300, 500, 318), fill=(20, 20, 20))
+    buf = io.BytesIO()
+    img.save(buf, "JPEG")
+    jpeg = buf.getvalue()
+
+    comps, w, h = source_map._ink_components(jpeg)
+    stamp = source_map.snap_to_ink([0.6, 0.52, 0.85, 0.72], comps, w, h)
+    assert stamp[0] == pytest.approx(0.625, abs=0.02) and stamp[1] == pytest.approx(0.6, abs=0.02)
+    assert stamp[3] == pytest.approx(0.8, abs=0.02)
+
+    dark, (w, h) = source_map._dark_mask(jpeg)
+    line = source_map.snap_to_text([0.15, 0.29, 0.5, 0.305], dark, w, h)
+    assert line[1] == pytest.approx(0.3, abs=0.004) and line[3] == pytest.approx(0.318, abs=0.004)
+    assert line[0] == pytest.approx(0.125, abs=0.01) and line[2] == pytest.approx(0.625, abs=0.01)

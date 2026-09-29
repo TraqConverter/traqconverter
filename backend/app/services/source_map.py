@@ -109,7 +109,8 @@ def segment_boxes(db: Session, project: TranslationProject, info: dict) -> list[
         layout = s.layout_meta or {}
         page = int(layout.get("page") or 0)
         box = None
-        if info.get("available") and 0 <= page < info["count"]:
+        # Claude OCR boxes are unreliable (the model reads a downscaled image); only engine-measured boxes are kept.
+        if info.get("available") and 0 <= page < info["count"] and layout.get("ocr_source") != "claude":
             box = _frac_box(layout, info["pages"][page])
         src, tgt = s.source_text or "", s.translated_text or ""
         out.append({
@@ -119,11 +120,67 @@ def segment_boxes(db: Session, project: TranslationProject, info: dict) -> list[
             "src": src,
             "tgt": tgt,
             "placeholder": layout.get("placeholder_kind") if layout.get("claude_kind") == "placeholder" else None,
-            "ocr": layout.get("ocr_source") == "claude" or layout.get("kind") in ("pdf_ocr_line", "image_line"),
+            "src_toks": tokens(src),
             "toks": tokens(tgt) | tokens(src),
             "base": tokens(tgt) or tokens(src),
         })
+    if info.get("available") and any(s["bbox"] is None and s["src_toks"] for s in out):
+        _rebox_from_text_layer(out, text_layer_lines(project))
     return out
+
+
+def text_layer_lines(project) -> list[dict]:
+    """Lines of the source's text layer with exact boxes (page fractions); empty for scans."""
+    pdf = source_pages.source_pdf(project)
+    if not pdf:
+        return []
+    import fitz
+
+    lines = []
+    with fitz.open(stream=pdf, filetype="pdf") as doc:
+        for page_index, page in enumerate(doc):
+            w, h = page.rect.width or 1, page.rect.height or 1
+            for block in page.get_text("dict").get("blocks", []):
+                if block.get("type") != 0:
+                    continue
+                for line in block.get("lines", []):
+                    text = "".join(s.get("text", "") for s in line.get("spans", [])).strip()
+                    toks = tokens(text)
+                    if not toks:
+                        continue
+                    x0, y0, x1, y1 = line.get("bbox", (0, 0, 0, 0))
+                    box = [max(0.0, x0 / w), max(0.0, y0 / h), min(1.0, x1 / w), min(1.0, y1 / h)]
+                    if box[2] > box[0] and box[3] > box[1]:
+                        lines.append({"page": page_index, "bbox": [round(v, 4) for v in box], "toks": toks})
+    return lines
+
+
+def _rebox_from_text_layer(segs: list[dict], lines: list[dict]) -> None:
+    """Give boxless segments the union of the text-layer lines whose words they contain."""
+    if not lines:
+        return
+    claimed: dict[int, list[dict]] = {}
+    for line in lines:
+        wl = _w(line["toks"])
+        if wl < 1:
+            continue
+        best, best_cov = None, 0.6
+        for s in segs:
+            if s["bbox"] is not None or not s["src_toks"]:
+                continue
+            cov = _w(line["toks"] & s["src_toks"]) / wl
+            if cov > best_cov:
+                best, best_cov = s, cov
+        if best is not None:
+            claimed.setdefault(best["index"], []).append(line)
+    for s in segs:
+        found = claimed.get(s["index"])
+        if not found:
+            continue
+        pages = [line["page"] for line in found]
+        page = max(set(pages), key=pages.count)
+        s["page"] = page
+        s["bbox"] = [round(v, 4) for v in _union([line["bbox"] for line in found if line["page"] == page])]
 
 
 def _union(boxes: list[list[float]]) -> list[float]:
@@ -213,7 +270,9 @@ bracketed note such as [Stamp: ...] or [Signature] describes). Tight but complet
 - reading: "high" when the original there is crisp printed text; "medium" when it is small or faint but every \
 character is still certain; "low" when any digit, letter, date or name there cannot be read with certainty: \
 smudged, blurred or covered digits, faded or partial stamp text, hard handwriting, text under a stamp, a \
-low-resolution area. A translator signs for every character, so when in doubt choose low.
+low-resolution area. A translator signs for every character, so when in doubt choose low. A note for a \
+signature, emblem, logo or photo describes a picture, not text: rate it high unless it quotes text from the \
+original (such as the words on a stamp) that is uncertain.
 - reason: for medium or low, a few words saying exactly what is uncertain (e.g. "digits after 55 smudged", \
 "stamp ring text faded"); "" for high.
 
@@ -273,6 +332,148 @@ def _norm_box(item: dict, width: int, height: int) -> Optional[list[float]]:
     if box[2] - box[0] < 0.003 or box[3] - box[1] < 0.003:
         return None
     return box
+
+
+_MARK_RE = re.compile(r"^\s*\[[^\]]*(stamp|seal|signature|timbr|firma|sello|sigill|cachet|stempel|siegel|bollo|carimbo|assinatura|unterschrift)", re.I)
+INK_CELL = 6
+
+
+def _ink_components(jpeg: bytes) -> tuple[list[tuple[int, int, int, int, int]], int, int]:
+    """Bounding boxes (x0, y0, x1, y1, cells) in pixels of connected coloured-ink areas: stamps, seals, pen signatures."""
+    import io
+
+    from PIL import Image
+
+    img = Image.open(io.BytesIO(jpeg)).convert("HSV")
+    width, height = img.size
+    _, sat, val = img.split()
+    mask = Image.eval(sat, lambda v: 255 if v > 70 else 0)
+    mask = Image.composite(mask, Image.new("L", img.size, 0), Image.eval(val, lambda v: 255 if v > 50 else 0))
+    gw, gh = max(1, width // INK_CELL), max(1, height // INK_CELL)
+    grid = list(mask.resize((gw, gh), Image.BOX).getdata())
+    on = [v > 18 for v in grid]
+    seen = [False] * len(on)
+    comps = []
+    for start in range(len(on)):
+        if not on[start] or seen[start]:
+            continue
+        stack, cells = [start], 0
+        seen[start] = True
+        x0 = x1 = start % gw
+        y0 = y1 = start // gw
+        while stack:
+            i = stack.pop()
+            cells += 1
+            x, y = i % gw, i // gw
+            x0, x1, y0, y1 = min(x0, x), max(x1, x), min(y0, y), max(y1, y)
+            # Two-cell reach bridges the gaps between the letters of a stamp ring.
+            for dy in (-2, -1, 0, 1, 2):
+                for dx in (-2, -1, 0, 1, 2):
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < gw and 0 <= ny < gh:
+                        j = ny * gw + nx
+                        if on[j] and not seen[j]:
+                            seen[j] = True
+                            stack.append(j)
+        if cells >= 6:
+            comps.append((x0 * INK_CELL, y0 * INK_CELL, (x1 + 1) * INK_CELL, (y1 + 1) * INK_CELL, cells))
+    return comps, width, height
+
+
+def snap_to_ink(box: list[float], comps, width: int, height: int) -> list[float]:
+    """Move a model-estimated box onto the nearby coloured-ink area it most likely means."""
+    bx0, by0, bx1, by1 = box[0] * width, box[1] * height, box[2] * width, box[3] * height
+    bw, bh = bx1 - bx0, by1 - by0
+    reach = max(bw, bh)
+    best, best_score = None, 0.0
+    for x0, y0, x1, y1, _ in comps:
+        area = (x1 - x0) * (y1 - y0)
+        if area > 0.25 * width * height or area < 0.1 * bw * bh or area > 10 * bw * bh:
+            continue
+        if x1 < bx0 - reach or x0 > bx1 + reach or y1 < by0 - reach or y0 > by1 + reach:
+            continue
+        ix = max(0.0, min(x1, bx1) - max(x0, bx0))
+        iy = max(0.0, min(y1, by1) - max(y0, by0))
+        overlap = ix * iy / max(area, 1)
+        dist = abs((x0 + x1) / 2 - (bx0 + bx1) / 2) + abs((y0 + y1) / 2 - (by0 + by1) / 2)
+        score = overlap + 1 / (1 + dist / max(reach, 1))
+        if score > best_score:
+            best, best_score = (x0, y0, x1, y1), score
+    if not best:
+        return box
+    x0, y0, x1, y1 = best
+    return [round(x0 / width, 4), round(y0 / height, 4), round(min(x1, width) / width, 4), round(min(y1, height) / height, 4)]
+
+
+def snap_to_text(box: list[float], dark, width: int, height: int) -> list[float]:
+    """Align a model-estimated text box vertically with the ink rows it overlaps (model boxes often sit half a line off)."""
+    from PIL import Image
+
+    x0, y0, x1, y1 = int(box[0] * width), int(box[1] * height), int(box[2] * width), int(box[3] * height)
+    h = max(4, y1 - y0)
+    if x1 - x0 < 4:
+        return box
+    wy0, wy1 = max(0, y0 - h // 2 - 2), min(height, y1 + h // 2 + 2)
+    rows = list(dark.crop((x0, wy0, x1, wy1)).resize((1, wy1 - wy0), Image.BOX).getdata())
+    ink = [v > 6 for v in rows]
+    runs, start = [], None
+    for i, on in enumerate(ink + [False]):
+        if on and start is None:
+            start = i
+        elif not on and start is not None:
+            runs.append([start, i])
+            start = None
+    merged: list[list[int]] = []
+    for r in runs:
+        if merged and r[0] - merged[-1][1] <= max(2, h // 4):
+            merged[-1][1] = r[1]
+        else:
+            merged.append(r)
+    best, best_overlap = None, 0
+    for a, b in merged:
+        overlap = min(b + wy0, y1) - max(a + wy0, y0)
+        if overlap > best_overlap and 0.4 * h <= b - a <= 2.5 * h:
+            best, best_overlap = (a + wy0, b + wy0), overlap
+    if not best:
+        return box
+    ny0, ny1 = best
+    lh = ny1 - ny0
+    bw = x1 - x0
+    wx0, wx1 = max(0, x0 - bw // 2), min(width, x1 + bw // 2)
+    cols = [v > 4 for v in dark.crop((wx0, ny0, wx1, ny1)).resize((wx1 - wx0, 1), Image.BOX).getdata()]
+    inside = [i for i in range(x0 - wx0, x1 - wx0) if cols[i]]
+    nx0, nx1 = x0, x1
+    if inside:
+        gap_max = max(4, int(1.5 * lh))
+        lo, hi = inside[0], inside[-1]
+        i, gap = lo - 1, 0
+        while i >= 0 and gap <= gap_max:
+            gap = 0 if cols[i] else gap + 1
+            if cols[i]:
+                lo = i
+            i -= 1
+        i, gap = hi + 1, 0
+        while i < len(cols) and gap <= gap_max:
+            gap = 0 if cols[i] else gap + 1
+            if cols[i]:
+                hi = i
+            i += 1
+        nx0, nx1 = wx0 + lo - 1, wx0 + hi + 2
+    return [
+        round(max(0, nx0) / width, 4),
+        round(max(0, ny0 - 1) / height, 4),
+        round(min(width, nx1) / width, 4),
+        round(min(height, ny1 + 1) / height, 4),
+    ]
+
+
+def _dark_mask(jpeg: bytes):
+    import io
+
+    from PIL import Image
+
+    gray = Image.open(io.BytesIO(jpeg)).convert("L")
+    return Image.eval(gray, lambda v: 255 if v < 110 else 0), gray.size
 
 
 def vision_page(project: TranslationProject, page: int, paras: list[dict], model: Optional[str] = None) -> dict:
@@ -337,6 +538,21 @@ def vision_page(project: TranslationProject, page: int, paras: list[dict], model
             "reading": el.get("reading") if el.get("reading") in READINGS else "high",
             "block_id": el.get("block_id") if el.get("block_id") in known else "",
         })
+    marks = {p["id"] for p in paras if _MARK_RE.match(p["text"])}
+    try:
+        to_snap = [b for bid, b in blocks.items() if bid in marks and b["bbox"]] + [e for e in elements if e["kind"] != "handwriting"]
+        if to_snap:
+            comps, w_px, h_px = _ink_components(jpeg)
+            for item in to_snap:
+                item["bbox"] = snap_to_ink(item["bbox"], comps, w_px, h_px)
+        notes = {p["id"] for p in paras if p["text"].lstrip().startswith("[")}
+        texts = [b for bid, b in blocks.items() if bid not in marks and bid not in notes and b["bbox"]]
+        if texts:
+            dark, (w_px, h_px) = _dark_mask(jpeg)
+            for b in texts:
+                b["bbox"] = snap_to_text(b["bbox"], dark, w_px, h_px)
+    except Exception:
+        logger.exception("Box snapping failed (project=%s page=%s)", project.id, page)
     usage = getattr(resp, "usage", None)
     return {
         "blocks": blocks,
