@@ -61,11 +61,10 @@ type ConfirmState = {
   onConfirm: () => void
 }
 
-function revisionCostText(freeLeft: number | undefined) {
-  if (freeLeft && freeLeft > 0) {
-    return `${freeLeft} free revision${freeLeft === 1 ? "" : "s"} left on this project, so this one is free.`
-  }
-  return "No free revisions left on this project. This will cost credits equal to the document's page count."
+function revisionCostText(left: number | undefined) {
+  if (left === undefined) return "Regenerate is limited to 2 per document."
+  if (left <= 0) return "You've used both regenerations for this document. Use Ask AI for further changes."
+  return `${left} of 2 regenerations left for this document.`
 }
 
 type Tab = "learning" | "status"
