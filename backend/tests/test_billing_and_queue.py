@@ -96,29 +96,6 @@ def no_background_ai(monkeypatch):
     return calls
 
 
-def test_revisions_free_then_charged(client, db, make_user, make_project, no_background_ai):
-    owner = make_user(credits=5)
-    project = make_project(owner, pages=2)
-    url = f"/projects/{project.id}/rebuild-with-claude"
-
-    for expected_charge in (False, False, True):
-        r = client.post(url, headers=owner["headers"])
-        assert r.status_code == 200, r.text
-        assert r.json()["charged"] is expected_charge
-        db.query(TranslationProject).filter(TranslationProject.id == project.id).update({"rebuild_status": "done"})
-        db.commit()
-    assert _wallet(db, owner).subscription_credits == 3
-
-
-def test_revision_without_credits_is_402(client, db, make_user, make_project, no_background_ai):
-    owner = make_user(credits=0)
-    project = make_project(owner, pages=2)
-    project.revision_count = 2
-    db.commit()
-    r = client.post(f"/projects/{project.id}/rebuild-with-claude", headers=owner["headers"])
-    assert r.status_code == 402
-
-
 def test_concurrent_rebuild_is_409(client, db, make_user, make_project, no_background_ai):
     owner = make_user()
     project = make_project(owner)

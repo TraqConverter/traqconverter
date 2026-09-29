@@ -10,3 +10,4 @@ from .segment_comment import SegmentComment
 from app.models.document_version import DocumentVersion
 from app.models.glossary import Glossary
 from app.models.learning import DocumentTemplate, PendingLearning
+from app.models.ai_usage import AiUsage
