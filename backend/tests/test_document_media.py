@@ -473,3 +473,21 @@ def test_export_without_certification_page_keeps_the_appended_one(client, projec
     _get(client, owner, project)
     texts = _texts(_export(client, owner, project))
     assert texts.count("CERTIFIED TRANSLATION") == 1
+
+
+def test_certification_title_prefers_document_heading_over_issuer_lines():
+    from docx import Document
+    from docx.shared import Pt
+
+    from app.services import docx_blocks, docx_certification
+
+    doc = Document()
+    for text in ("ITALIAN REPUBLIC", "MUNICIPALITY OF ESEMPIO", "CERTIFICATE OF RESIDENCE", "Mr Luca Bianchi resides in Esempio."):
+        run = doc.add_paragraph().add_run(text)
+        run.bold = text.isupper()
+        run.font.size = Pt(14)
+    buf = __import__("io").BytesIO()
+    doc.save(buf)
+    data = docx_blocks.tag_blocks(buf.getvalue())
+    assert docx_certification.guess_document_title(data, "x") == "CERTIFICATE OF RESIDENCE"
+    assert docx_certification.guess_document_title(data, "x", "residence certificate") == "CERTIFICATE OF RESIDENCE"

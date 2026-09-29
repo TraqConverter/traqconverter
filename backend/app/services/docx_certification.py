@@ -452,17 +452,46 @@ def update_fields(data: bytes, fields: dict[str, str], lang: str) -> tuple[bytes
     return images._finish(doc), changed
 
 
-def guess_document_title(data: bytes, fallback: str) -> str:
-    """The translation's own heading (e.g. 'CERTIFICATE OF RESIDENCE') names the document better than a file name."""
+_ISSUER_WORDS = {
+    "republic", "repubblica", "república", "république", "republik", "kingdom", "state", "ministry", "ministero",
+    "municipality", "comune", "province", "provincia", "region", "regione", "government", "office", "ufficio",
+    "department", "prefecture", "prefettura", "embassy", "consulate", "university", "università",
+}
+
+
+def guess_document_title(data: bytes, fallback: str, doc_type: str = "") -> str:
+    """Pick the translation's own title among its opening headings (country and authority lines rank lower)."""
     doc = _Doc.load(data)
     cert = {id(u) for u in _marker_units(doc)}
+    type_words = {x for x in re.findall(r"[a-z]{4,}", (doc_type or "").lower())}
+    best, best_score = None, 0.0
+    seen = 0
     for unit in _body(doc):
         if unit.tag != w("p") or id(unit) in cert:
             continue
         text = " ".join(blocks.paragraph_text(unit).split())
-        letters = sum(ch.isalpha() for ch in text)
-        if 3 <= len(text) <= 90 and letters >= 0.6 * len(text):
-            return text
-        if text:
+        if not text:
+            continue
+        seen += 1
+        if seen > 12:
             break
-    return fallback
+        letters = sum(ch.isalpha() for ch in text)
+        if not (3 <= len(text) <= 90 and letters >= 0.6 * len(text)) or text.startswith("["):
+            continue
+        sizes = [int(v) for v in (el.get(w("val")) for el in unit.iter(w("sz"))) if v and v.isdigit()]
+        score = max(sizes, default=22) / 2.0
+        if any(True for _ in unit.iter(w("b"))):
+            score += 2
+        if any(el.get(w("val")) == "center" for el in unit.iter(w("jc"))):
+            score += 2
+        if text.isupper():
+            score += 1
+        if words_generic := set(re.findall(r"[a-z]{4,}", text.lower())) & _ISSUER_WORDS:
+            score -= 6 * len(words_generic)
+        # The detected document type ('residence certificate') is the strongest signal when it matches.
+        words = set(re.findall(r"[a-z]{4,}", text.lower()))
+        if type_words and words & type_words:
+            score += 20 * len(words & type_words) / len(type_words)
+        if score > best_score:
+            best, best_score = text, score
+    return best or fallback
