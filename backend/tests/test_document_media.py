@@ -464,6 +464,8 @@ def test_export_contains_exactly_one_certification_and_the_images(client, db, st
     assert not [b for b in body.iter(f"{{{W}}}bookmarkStart") if (b.get(f"{{{W}}}name") or "").startswith(("_b", "_img_", "_cert_"))]
     tags = {t.get(f"{{{W}}}val") for t in body.iter(f"{{{W}}}tag")}
     assert "cert.date" in tags
+    with zipfile.ZipFile(io.BytesIO(out)) as z:
+        assert docx_certification.PAGE_STYLE_ID.encode() in z.read("word/styles.xml")
 
 
 def test_export_without_certification_page_keeps_the_appended_one(client, project_with_doc):

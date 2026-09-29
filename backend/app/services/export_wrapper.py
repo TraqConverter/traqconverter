@@ -150,6 +150,23 @@ def _detect_source_page_orientation(source_path) -> str:
         return "portrait"
 
 
+def _copy_missing_styles(src_doc: Document, dst_doc: Document, children) -> None:
+    """Bring over paragraph/run styles the merged body uses but the destination lacks (e.g. the certification page break)."""
+    try:
+        used = set()
+        for child in children:
+            for el in child.iter(qn("w:pStyle"), qn("w:rStyle")):
+                used.add(el.get(qn("w:val")))
+        dst_styles = dst_doc.styles.element
+        have = {s.get(qn("w:styleId")) for s in dst_styles.findall(qn("w:style"))}
+        for style in src_doc.styles.element.findall(qn("w:style")):
+            sid = style.get(qn("w:styleId"))
+            if sid in used and sid not in have:
+                dst_styles.append(deepcopy(style))
+    except Exception:
+        logger.warning("Couldn't copy styles into the export", exc_info=True)
+
+
 def _append_body_from(src_doc: Document, dst_doc: Document):
     """Copy paragraphs and tables from `src_doc.body` into `dst_doc.body`,
     preserving formatting at the XML level.
@@ -250,6 +267,8 @@ def _append_body_from(src_doc: Document, dst_doc: Document):
                     logger.warning(
                         "Failed to re-register image rel %s during merge", rid
                     )
+
+    _copy_missing_styles(src_doc, dst_doc, children)
 
     if images_copied:
         logger.info(
