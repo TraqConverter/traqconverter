@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { api, apiErrorDetail, fetchObjectUrl } from "@/lib/api"
+import LearningPanel from "@/components/learning/LearningPanel"
 import DocumentEditor, { type DocumentEditorHandle } from "@/components/editor/DocumentEditor"
 
 type Segment = {
@@ -67,7 +68,7 @@ function revisionCostText(freeLeft: number | undefined) {
   return "No free revisions left on this project. This will cost credits equal to the document's page count."
 }
 
-type Tab = "glossary" | "status"
+type Tab = "learning" | "status"
 
 const REVIEW_STATUSES = [
   { value: "DRAFT", label: "Draft", bg: "#ede3cc", dot: "#9a9178", text: "#6b6558" },
@@ -136,7 +137,7 @@ export default function EditorPage() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null)
-  const [tab, setTab] = useState<Tab>("status")
+  const [tab, setTab] = useState<Tab>("learning")
   const [compareReloadKey, setCompareReloadKey] = useState(0)
 
   const [busy, setBusy] = useState<string | null>(null)
@@ -1119,10 +1120,9 @@ export default function EditorPage() {
           style={{ borderBottom: "1px solid #f1e8d1" }}
         >
           <SideTab
-            label="Glossary"
-            count={glossaryCount}
-            active={tab === "glossary"}
-            onClick={() => setTab("glossary")}
+            label="Learning"
+            active={tab === "learning"}
+            onClick={() => setTab("learning")}
           />
           <SideTab
             label="Status"
@@ -1132,24 +1132,7 @@ export default function EditorPage() {
         </div>
 
         <div className="p-5">
-            {tab === "glossary" && (
-              <>
-                <div
-                  className="text-[10px] font-semibold tracking-[0.14em] mb-3"
-                  style={{ color: "#9a9178" }}
-                >
-                  GLOSSARY
-                </div>
-                <div
-                  className="text-sm text-center py-8"
-                  style={{ color: "#8a8270" }}
-                >
-                  {glossaryCount > 0
-                    ? `${glossaryCount} approved term${glossaryCount === 1 ? "" : "s"} available across the team.`
-                    : "No glossary terms yet — add them from the Glossary page."}
-                </div>
-              </>
-            )}
+            {tab === "learning" && <LearningPanel projectId={String(id)} />}
 
             {tab === "status" && (
               <>
