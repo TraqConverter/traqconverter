@@ -160,7 +160,7 @@ function Hero() {
                   background: TEAL,
                 }}
               />
-              AI DOCUMENT TRANSLATION · PDF · DOCX · SCANS
+              FOR PROFESSIONAL TRANSLATORS · PDF · DOCX · SCANS
             </div>
             <h1
               style={{
@@ -172,8 +172,8 @@ function Hero() {
                 marginBottom: 20,
               }}
             >
-              Translate any document.{" "}
-              <span style={{ color: TEAL }}>Keep the layout.</span>
+              The first draft of every certified translation.{" "}
+              <span style={{ color: TEAL }}>Layout included.</span>
             </h1>
             <p
               style={{
@@ -184,10 +184,11 @@ function Hero() {
                 maxWidth: 560,
               }}
             >
-              Upload a PDF, Word file, scan, or photo. TraqConverter reads the
-              text with AI vision, translates it, and rebuilds the document
-              with its tables, logos, and stamps in place. You review every
-              segment in the editor, then export DOCX or PDF.
+              Upload your client&apos;s scan, PDF, or Word file. TraqConverter
+              reads it, translates it, and rebuilds the page layout, marking
+              signatures, stamps, and unreadable parts the way you would. Correct
+              it in place or ask Claude to fix a highlighted passage, then export
+              it with your own certification page.
             </p>
             <div className="flex flex-wrap items-center gap-3 mb-8">
               <Link
@@ -229,7 +230,7 @@ function Hero() {
               {[
                 "No credit card required",
                 "7-day trial with 1 free page",
-                "You approve every segment",
+                "You review and sign every document",
               ].map((t) => (
                 <div
                   key={t}
@@ -390,7 +391,7 @@ function HeroVisual() {
               boxShadow: "0 6px 14px rgba(10,120,112,0.25)",
             }}
           >
-            ✓ approved
+            Ready for your review
           </div>
         </div>
       </div>
@@ -471,7 +472,7 @@ function ValueProps() {
           <FeatureCard
             icon={<IconLayout />}
             title="Layout-preserving rebuilds"
-            body="Tables, two-column forms, logos, and stamps are rebuilt where they were in the original, so you don't retype the translation into a Word template."
+            body="Tables, two-column forms, and signature blocks come back where they were in the original, so you don't retype the translation into a Word template."
           />
           <FeatureCard
             icon={<IconShield />}
@@ -481,22 +482,22 @@ function ValueProps() {
           <FeatureCard
             icon={<IconBrain />}
             title="AI extraction and translation"
-            body="Vision models read scans, photos, and IDs. Language models translate with the whole document as context. You review and approve every segment in the editor."
+            body="Vision models read scans, photos, and IDs, including faded stamps and handwriting. The translation uses the whole document as context. Nothing leaves until you've reviewed it."
           />
           <FeatureCard
             icon={<IconLock />}
             title="You control deletion"
-            body="Delete a project at any time from your projects list. Its segments, comments, and translation memory entries are removed with it. We don't train models on your documents."
+            body="Delete a project at any time from your projects list. Its files, text, and translation memory entries are removed with it. We don't train models on your documents."
           />
           <FeatureCard
             icon={<IconUsers />}
             title="Team workspaces"
-            body="Invite teammates with roles, assign projects, and leave comments on individual segments. On Pro, the team shares one translation memory and glossary."
+            body="Invite teammates with roles and assign projects to them. On Pro, the team shares one translation memory and glossary."
           />
           <FeatureCard
             icon={<IconBolt />}
-            title="Revise with instructions"
-            body="Not happy with the draft? Tell the model what to change, such as tone or terminology, and it re-translates the segments and rebuilds the document."
+            title="Signatures, stamps, and illegible parts"
+            body="Never pasted as images. Each is noted where it appears, in the target language: [Signature], [Stamp: …], [Revenue stamp: €16.00], and [illegible] on exactly the part that can't be read."
           />
         </div>
       </div>
@@ -559,24 +560,24 @@ function HowItWorks() {
       <div className="max-w-[1200px] mx-auto">
         <SectionHeader
           eyebrow="HOW IT WORKS"
-          title="From scanned PDF to reviewed translation in three steps"
+          title="From the client's scan to a translation you can sign"
         />
         <div className="grid md:grid-cols-3 gap-5 mt-12">
           {[
             {
               n: "01",
-              t: "Upload your document",
+              t: "Upload the client's document",
               b: "Drag in a PDF, DOCX, JPG, or PNG. Pick the target language and either pick the source or let auto-detect choose.",
             },
             {
               n: "02",
-              t: "Review the AI draft",
-              b: "Our AI extracts every block of text, then translates it with full document context. You review side-by-side in the editor and tweak anything you want.",
+              t: "Correct the draft",
+              b: "The source stays on the left, the translated document on the right. Type corrections directly, or highlight a passage and ask Claude to change it.",
             },
             {
               n: "03",
-              t: "Export & deliver",
-              b: "Download DOCX or PDF with the original layout. On Pro, add your certification statement page with your logo.",
+              t: "Certify & deliver",
+              b: "Export DOCX or PDF with the original layout. On Pro, your certification page with your details, logo, and stamp is added for you to sign.",
             },
           ].map((s, i) => (
             <div
@@ -621,15 +622,15 @@ function DeepFeatures() {
       <div className="max-w-[1200px] mx-auto">
         <SectionHeader
           eyebrow="THE EDITOR"
-          title="A CAT-style workbench, not a black box"
-          subtitle="Every segment is yours to review, edit, comment on, and approve. No translations leave the system until you say so."
+          title="Edit the document, not a list of segments"
+          subtitle="The translation is a real Word document. Type where something's wrong, or highlight it and ask Claude. Every change can be undone."
         />
         <div className="grid md:grid-cols-2 gap-12 items-center mt-14">
           <FeatureList
             items={[
-              { t: "Side-by-side compare", b: "See the original document and the rebuilt translation in the same view." },
-              { t: "Segment-level comments", b: "Loop in a reviewer for tricky lines. Comments live with the segment, not in email." },
-              { t: "Translation memory (Pro)", b: "Approved segments are stored and reused as matches in later projects for the same language pair." },
+              { t: "Side by side with the source", b: "The original stays next to the translation while you work, page for page." },
+              { t: "Highlight and ask Claude", b: "Select a line, a table, or a signature block and say what's off: a term, a number, or the layout. Most fixes take a few seconds." },
+              { t: "Translation memory (Pro)", b: "Your translations are stored and offered as matches in later projects for the same language pair." },
               { t: "Glossary (Pro)", b: "Keep product names, legal terms, and proper nouns consistent with your house style." },
             ]}
           />
@@ -691,6 +692,9 @@ function FeatureList({
 }
 
 function EditorMock() {
+  const line = (text: string, extra: Record<string, string | number> = {}) => (
+    <div style={{ fontSize: 11, color: TEXT, lineHeight: 1.6, ...extra }}>{text}</div>
+  )
   return (
     <div
       style={{
@@ -712,48 +716,63 @@ function EditorMock() {
           letterSpacing: "0.1em",
         }}
       >
-        EDITOR · 42 / 42 SEGMENTS APPROVED
+        TRANSLATION · CERTIFICATE OF RESIDENCE
       </div>
-      <div style={{ padding: 14 }}>
-        {[
-          ["Comune", "Municipality"],
-          ["Cognome", "Surname"],
-          ["Nome", "Name"],
-          ["Codice Fiscale", "Tax Code"],
-          ["Cittadinanza", "Citizenship"],
-        ].map(([src, tgt], i) => (
-          <div
-            key={i}
-            className="grid grid-cols-[24px_1fr_1fr_24px] items-center gap-3"
-            style={{
-              padding: "10px 8px",
-              borderBottom:
-                i < 4 ? `1px solid ${CREAM_DARK}` : "none",
-              fontSize: 12,
-            }}
-          >
-            <div style={{ color: SUBTLE, fontFamily: "monospace", fontSize: 10 }}>
-              {String(i).padStart(2, "0")}
-            </div>
-            <div style={{ color: TEXT }}>{src}</div>
-            <div style={{ color: TEAL, fontWeight: 500 }}>{tgt}</div>
-            <div
-              style={{
-                width: 18,
-                height: 18,
-                borderRadius: "50%",
-                background: TEAL,
-                color: "#fff",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 10,
-              }}
-            >
-              ✓
-            </div>
+      <div style={{ padding: "16px 18px 6px" }}>
+        {line("MUNICIPALITY OF ESEMPIO", { fontWeight: 700, textAlign: "center" })}
+        {line("CERTIFICATE OF RESIDENCE", { fontWeight: 700, textAlign: "center", marginBottom: 8 })}
+        {line("Mr BIANCHI LUCA, born in Bari (BA) on 12/03/1987, is resident in this Municipality…", { color: MUTED })}
+        {line("Esempio, 14/09/2026 — protocol no. 55[illegible]9/2026", { color: MUTED, marginBottom: 8 })}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 8,
+            padding: 8,
+            borderRadius: 8,
+            background: TEAL_SOFT,
+            outline: `2px solid ${TEAL}`,
+          }}
+        >
+          <div style={{ fontSize: 10, fontStyle: "italic", color: TEXT }}>[Round stamp: Municipality of Esempio – Registry Office]</div>
+          <div style={{ fontSize: 10, color: TEXT }}>
+            The Registrar
+            <br />
+            Dr Maria Verdi
+            <br />
+            <span style={{ fontStyle: "italic" }}>[Signature]</span>
           </div>
-        ))}
+        </div>
+      </div>
+      <div style={{ padding: "10px 18px 16px", display: "grid", gap: 8 }}>
+        <div
+          style={{
+            justifySelf: "end",
+            maxWidth: "85%",
+            background: CREAM_DARK,
+            borderRadius: 12,
+            padding: "8px 12px",
+            fontSize: 11,
+            color: TEXT,
+          }}
+        >
+          Put the stamp beside the signature, like the original.
+        </div>
+        <div
+          style={{
+            justifySelf: "start",
+            maxWidth: "85%",
+            background: "#ffffff",
+            border: `1px solid ${TEAL_SOFT}`,
+            borderRadius: 12,
+            padding: "8px 12px",
+            fontSize: 11,
+            color: TEXT,
+          }}
+        >
+          <span style={{ color: TEAL, fontWeight: 600 }}>Claude · </span>
+          Done: stamp on the left, name and signature on the right, in a borderless table.
+        </div>
       </div>
     </div>
   )
@@ -1146,8 +1165,12 @@ function FAQ() {
   const [open, setOpen] = useState<number | null>(0)
   const items = [
     {
-      q: "Can I submit these translations officially?",
-      a: "TraqConverter produces the translation; legal validity depends on who certifies it and on the receiving authority's rules. On Pro you can add a certification statement page with your details, logo, and stamp, which you sign as the translator. Check the requirements of the office you're submitting to.",
+      q: "Is the output ready to certify?",
+      a: "It's a draft for you to review, not a certified translation. You check it, correct it, and sign your statement; TraqConverter never certifies anything itself. On Pro, your certification page with your details, logo, and stamp is added to the export. Acceptance still depends on your credentials and the receiving authority's rules.",
+    },
+    {
+      q: "How are signatures, stamps, and unreadable parts handled?",
+      a: "They are never copied as images. Each is noted where it appears, in the target language: [Signature], [Round stamp: Municipality of Rome – Registry Office], [Revenue stamp: €16.00]. Anything unreadable is marked [illegible] on exactly that word or number; names, dates, and figures are never guessed.",
     },
     {
       q: "What file formats do you support?",
@@ -1155,7 +1178,7 @@ function FAQ() {
     },
     {
       q: "Will the layout look like the original?",
-      a: "That's the goal of the rebuild: text blocks, tables, logos, and stamps are placed where they were in the original. Complex pages can need touch-ups, which is why the editor shows the original and the rebuild side by side.",
+      a: "That's the goal of the rebuild: text blocks, tables, and signature blocks are placed where they were in the original. Complex pages can need touch-ups, which you make in the editor by typing or by asking Claude.",
     },
     {
       q: "Which languages do you handle?",
@@ -1167,11 +1190,11 @@ function FAQ() {
     },
     {
       q: "What happens to my files?",
-      a: "Projects stay in your account until you delete them, which you can do at any time. Deleting a project removes its segments, comments, and translation memory entries. We don't train models on your documents.",
+      a: "Projects stay in your account until you delete them, which you can do at any time. Deleting a project removes its files, text, and translation memory entries. We don't train models on your documents.",
     },
     {
       q: "Can my team work together?",
-      a: "Paid plans include team members with roles (admin, PM, reviewer, member), project assignment, and segment comments. Pro adds a shared translation memory and glossary.",
+      a: "Paid plans include team members with roles (admin, PM, reviewer, member), and project assignment. Pro adds a shared translation memory and glossary.",
     },
   ]
   return (
@@ -1179,7 +1202,7 @@ function FAQ() {
       <div className="max-w-[820px] mx-auto">
         <SectionHeader
           eyebrow="QUESTIONS"
-          title="Things people ask before signing up"
+          title="Questions translators ask"
         />
         <div className="space-y-3 mt-12">
           {items.map((it, i) => (
@@ -1276,7 +1299,7 @@ function FinalCTA() {
             lineHeight: 1.15,
           }}
         >
-          Translate your first document
+          Draft your next certified translation
         </h2>
         <p
           style={{
@@ -1287,7 +1310,7 @@ function FinalCTA() {
             margin: "0 auto 30px",
           }}
         >
-          Sign up, upload a page, and review the translation next to the original. No credit card needed for the trial.
+          Upload one page, correct it next to the original, and export it with your certification page. No credit card needed for the trial.
         </p>
         <div className="flex items-center justify-center gap-3 flex-wrap">
           <Link

@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "TraqConverter",
-  description: "AI Translation Platform",
+  description: "AI first drafts of certified translations for professional translators: layout rebuilt, signatures and stamps noted, your certification page added.",
 }
 
 export default function RootLayout({
