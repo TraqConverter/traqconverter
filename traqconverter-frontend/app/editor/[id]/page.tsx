@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { api, apiErrorDetail, fetchObjectUrl } from "@/lib/api"
-import DocumentEditor from "@/components/editor/DocumentEditor"
+import DocumentEditor, { type DocumentEditorHandle } from "@/components/editor/DocumentEditor"
 
 type Segment = {
   id: string
@@ -43,6 +43,14 @@ type ProjectInfo = {
   rebuild_error?: string | null
   revision_count?: number
   free_revisions_left?: number
+}
+
+type DocStatus = {
+  version: number
+  updated_at: string | null
+  certification: boolean
+  images: number
+  pages: number
 }
 
 type ConfirmState = {
@@ -86,6 +94,26 @@ function langCode(raw?: string) {
   return map[s.toLowerCase()] || s.slice(0, 2).toLowerCase()
 }
 
+function languageName(raw?: string) {
+  const s = (raw || "").trim()
+  if (!s || s.toLowerCase() === "auto") return "Auto-detected"
+  const code = langCode(s).split("-")[0]
+  try {
+    const name = new Intl.DisplayNames(["en"], { type: "language" }).of(code)
+    if (name && s.length <= 5) return name
+  } catch {}
+  return s
+}
+
+function editedAgo(iso: string | null) {
+  if (!iso) return ""
+  const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
+  if (seconds < 60) return "just now"
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`
+  return new Date(iso).toLocaleDateString()
+}
+
 function initialsFor(p: { full_name: string | null; email: string }) {
   const name = (p.full_name || "").trim()
   if (name) {
@@ -102,7 +130,8 @@ export default function EditorPage() {
   const id = params?.id as string
 
   const [project, setProject] = useState<ProjectInfo | null>(null)
-  const [segments, setSegments] = useState<Segment[]>([])
+  const [docStatus, setDocStatus] = useState<DocStatus | null>(null)
+  const editorRef = useRef<DocumentEditorHandle>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -113,12 +142,6 @@ export default function EditorPage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [glossaryCount, setGlossaryCount] = useState<number>(0)
   const [showStatusMenu, setShowStatusMenu] = useState(false)
-  const [showApproveAllConfirm, setShowApproveAllConfirm] =
-    useState<boolean>(false)
-  const [approveAllProgress, setApproveAllProgress] = useState<{
-    done: number
-    total: number
-  } | null>(null)
 
   const [chatOpen, setChatOpen] = useState(false)
   const [sourcePreview, setSourcePreview] = useState<{
@@ -450,22 +473,14 @@ export default function EditorPage() {
 
   const fetchProject = useCallback(async () => {
     try {
-      const [projRes, segRes] = await Promise.all([
-        api.get(`/projects/${id}`),
-        api.get(`/projects/${id}/segments`),
-      ])
+      const projRes = await api.get(`/projects/${id}`)
       setProject(projRes.data)
-      const segs = (segRes.data || []) as Segment[]
-
-      segs.sort((a, b) => a.segment_index - b.segment_index)
-      setSegments(segs)
     } catch (err: any) {
       console.error("EDITOR ERROR:", err)
       setError(
         err?.response?.data?.detail ||
           "Couldn't load this project — it may have been deleted or you don't have access."
       )
-      setSegments([])
       setProject(null)
     } finally {
       setLoading(false)
@@ -530,75 +545,16 @@ export default function EditorPage() {
       .catch(() => setGlossaryCount(0))
   }, [])
 
-  const approveAllTranslated = async () => {
-
-    const candidates = segments.filter(
-      (s) => !s.approved && s.translated_text && s.translated_text.trim()
-    )
-    if (candidates.length === 0) {
-      setShowApproveAllConfirm(false)
-      setError(
-        "Nothing to approve — every translated segment is already approved."
-      )
-      return
-    }
-
-    setShowApproveAllConfirm(false)
-    setBusy("approve-all")
-    setApproveAllProgress({ done: 0, total: candidates.length })
-
-    const CONCURRENCY = 8
-    const approvedIds = new Set<string>()
-    let cursor = 0
-    let done = 0
-
-    const worker = async () => {
-      while (true) {
-        const i = cursor++
-        if (i >= candidates.length) return
-        const seg = candidates[i]
-        try {
-          await api.patch(
-            `/projects/${id}/segments/${seg.id}/approve`,
-            { approved: true }
-          )
-          approvedIds.add(seg.id)
-        } catch {
-
-        }
-        done += 1
-        setApproveAllProgress({ done, total: candidates.length })
-      }
-    }
-
+  const statusSeqRef = useRef(0)
+  const refreshDocStatus = useCallback(async () => {
+    const seq = ++statusSeqRef.current
     try {
-      await Promise.all(
-        Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, worker)
-      )
-      setSegments((xs) =>
-        xs.map((x) => (approvedIds.has(x.id) ? { ...x, approved: true } : x))
-      )
-      setProject((p) =>
-        p
-          ? {
-              ...p,
-              stats: {
-                ...p.stats,
-                approved_segments: p.stats.approved_segments + approvedIds.size,
-              },
-            }
-          : p
-      )
-      if (approvedIds.size < candidates.length) {
-        setError(
-          `Approved ${approvedIds.size} of ${candidates.length} segments — some failed and can be re-approved individually.`
-        )
-      }
-    } finally {
-      setApproveAllProgress(null)
-      setBusy(null)
+      const res = await api.get<DocStatus>(`/projects/${id}/document/status`)
+      if (seq === statusSeqRef.current) setDocStatus(res.data)
+    } catch {
+      // The strip keeps its last known values; the editor reports real failures.
     }
-  }
+  }, [id])
 
   const updateReviewStatus = async (status: string) => {
     try {
@@ -621,14 +577,19 @@ export default function EditorPage() {
     }
     try {
       setBusy("certify")
-      await api.post(`/projects/${id}/certify`)
-      setProject((p) => (p ? { ...p, review_status: "CERTIFIED" } : p))
-    } catch (err: any) {
-
-      if (err?.response?.status === 403) {
+      setError(null)
+      const ready = await editorRef.current?.ensureCertification()
+      if (!ready) return
+      if (project.review_status !== "CERTIFIED") {
+        await api.post(`/projects/${id}/certify`)
+        setProject((p) => (p ? { ...p, review_status: "CERTIFIED" } : p))
+      }
+      setNotice("Certified. The certification page is at the end of the document; Export DOCX or PDF to deliver.")
+    } catch (err: unknown) {
+      if ((err as { response?: { status?: number } })?.response?.status === 403) {
         setError("Certification is a Pro feature. Upgrade in Billing to unlock.")
       } else {
-        setError(err?.response?.data?.detail || "Couldn't certify the project.")
+        setError(apiErrorDetail(err, "Couldn't certify the project."))
       }
     } finally {
       setBusy(null)
@@ -675,8 +636,7 @@ export default function EditorPage() {
         )
       } else if (err?.response?.status === 400) {
         setError(
-          detail ||
-            "Couldn't export — no approved segments yet. Approve segments in the editor before exporting."
+          detail || "Couldn't export this project."
         )
       } else {
         setError(detail || "Couldn't export this project.")
@@ -685,23 +645,6 @@ export default function EditorPage() {
       setBusy(null)
     }
   }
-
-  const stats = useMemo(() => {
-    if (!project) {
-      return {
-        total: segments.length,
-        translated: 0,
-        approved: 0,
-        tmAvg: 0,
-      }
-    }
-    return {
-      total: project.stats.total_segments || segments.length,
-      translated: project.stats.translated_segments,
-      approved: project.stats.approved_segments,
-      tmAvg: project.stats.tm_average_pct,
-    }
-  }, [project, segments])
 
   const teamAvatars = useMemo(() => {
     const list: Assignee[] = []
@@ -989,16 +932,32 @@ export default function EditorPage() {
         <LangChip text={langCode(project.source_language)} />
         <span style={{ color: "#cfc6ad" }}>→</span>
         <LangChip text={langCode(project.target_language)} />
+        <span className="text-[12px]" style={{ color: "#6b6558" }}>
+          {languageName(project.source_language)} to {languageName(project.target_language)}
+        </span>
         <div className="h-6 w-px mx-1" style={{ background: "#f1e8d1" }} />
-        <Stat
-          label="translated"
-          value={`${stats.total === 0 ? 0 : Math.round((stats.translated / stats.total) * 100)}%`}
-        />
-        <Stat
-          label="approved"
-          value={`${stats.approved} of ${stats.total}`}
-        />
-        <Stat label="TM" value={`${stats.tmAvg}%`} accent />
+        <Stat label={(docStatus?.pages ?? 0) === 1 ? "page" : "pages"} value={String(docStatus?.pages ?? "—")} />
+        {docStatus && docStatus.version > 0 && (
+          <Stat
+            label={docStatus.updated_at ? `edited ${editedAgo(docStatus.updated_at)}` : "version"}
+            value={`v${docStatus.version}`}
+          />
+        )}
+        <span
+          className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full transition-colors"
+          style={
+            docStatus?.certification
+              ? { background: "#d8ead6", color: "#2d5a24" }
+              : { background: "#f3ecdb", color: "#6b6558" }
+          }
+          title={docStatus?.certification ? "The certification page is part of the document" : "Add it from Certification in the translation toolbar"}
+        >
+          <span
+            className="w-1.5 h-1.5 rounded-full"
+            style={{ background: docStatus?.certification ? "#4a8a3a" : "#b5ab93" }}
+          />
+          {docStatus?.certification ? "Certification page added" : "No certification page"}
+        </span>
         <div className="flex-1" />
 
         {}
@@ -1059,7 +1018,8 @@ export default function EditorPage() {
         <button
           type="button"
           onClick={certify}
-          disabled={busy === "certify" || project.review_status === "CERTIFIED"}
+          disabled={busy === "certify"}
+          title="Adds the certification page if it's missing, then marks the project certified"
           className="px-4 py-2 rounded-full text-sm font-semibold flex items-center gap-1.5 transition"
           style={{
             background: project.review_status === "CERTIFIED" ? "#9bc9c5" : "#0a7870",
@@ -1097,7 +1057,7 @@ export default function EditorPage() {
               }}
             >
               <div className="text-[12px]" style={{ color: "#8a8270" }}>
-                Type in the translation to edit it. Select text and use Ask AI for bigger changes.
+                Type to edit. Drag pictures and stamps anywhere. Select text and press Ask AI for bigger changes.
               </div>
               <div
                 className="flex items-center gap-2 relative"
@@ -1140,9 +1100,11 @@ export default function EditorPage() {
                 emptyHint="The source file isn't available."
               />
               <DocumentEditor
+                ref={editorRef}
                 projectId={String(id)}
                 reloadKey={compareReloadKey}
                 onChatOpenChange={setChatOpen}
+                onVersionChange={refreshDocStatus}
               />
             </div>
           </div>
@@ -1201,14 +1163,17 @@ export default function EditorPage() {
                   <StatusRow label="Translation" value={project.status} />
                   <StatusRow label="Review" value={stStyle.label} />
                   <StatusRow
-                    label="Translated"
-                    value={`${stats.translated} / ${stats.total} segments`}
+                    label="Document version"
+                    value={docStatus ? `v${docStatus.version}` : "—"}
                   />
                   <StatusRow
-                    label="Approved"
-                    value={`${stats.approved} / ${stats.total} segments`}
+                    label="Certification page"
+                    value={docStatus?.certification ? "Added" : "Not added"}
                   />
-                  <StatusRow label="Avg. TM match" value={`${stats.tmAvg}%`} />
+                  <StatusRow
+                    label="Pictures and stamps"
+                    value={String(docStatus?.images ?? 0)}
+                  />
                 </div>
               </>
             )}

@@ -429,7 +429,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             >
               <span style={{ color: "#9a9178" }}>{IconSearch}</span>
               <input
-                placeholder="Search projects, segments..."
+                placeholder="Search projects…"
                 className="flex-1 bg-transparent outline-none text-sm"
                 style={{ color: "#1f2a2e" }}
               />
