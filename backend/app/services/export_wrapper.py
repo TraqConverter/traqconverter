@@ -150,6 +150,23 @@ def _detect_source_page_orientation(source_path) -> str:
         return "portrait"
 
 
+def _copy_missing_styles(src_doc: Document, dst_doc: Document, children) -> None:
+    """Bring over paragraph/run styles the merged body uses but the destination lacks (e.g. the certification page break)."""
+    try:
+        used = set()
+        for child in children:
+            for el in child.iter(qn("w:pStyle"), qn("w:rStyle")):
+                used.add(el.get(qn("w:val")))
+        dst_styles = dst_doc.styles.element
+        have = {s.get(qn("w:styleId")) for s in dst_styles.findall(qn("w:style"))}
+        for style in src_doc.styles.element.findall(qn("w:style")):
+            sid = style.get(qn("w:styleId"))
+            if sid in used and sid not in have:
+                dst_styles.append(deepcopy(style))
+    except Exception:
+        logger.warning("Couldn't copy styles into the export", exc_info=True)
+
+
 def _append_body_from(src_doc: Document, dst_doc: Document):
     """Copy paragraphs and tables from `src_doc.body` into `dst_doc.body`,
     preserving formatting at the XML level.
@@ -251,11 +268,22 @@ def _append_body_from(src_doc: Document, dst_doc: Document):
                         "Failed to re-register image rel %s during merge", rid
                     )
 
+    _copy_missing_styles(src_doc, dst_doc, children)
+
     if images_copied:
         logger.info(
             "Carried over %d image(s) from authored DOCX into wrapper",
             images_copied,
         )
+
+    docpr_tag = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}docPr"
+    docpr_ids = [0]
+    for el in dst_body.iter(docpr_tag):
+        try:
+            docpr_ids.append(int(el.get("id", "0")))
+        except ValueError:
+            pass
+    next_docpr = max(docpr_ids) + 1
 
     for child in children:
         try:
@@ -265,6 +293,10 @@ def _append_body_from(src_doc: Document, dst_doc: Document):
                     rid = el.get(EMBED_ATTR)
                     if rid and rid in rid_map:
                         el.set(EMBED_ATTR, rid_map[rid])
+            # Word rejects files whose drawings share an id with the wrapper's own pictures.
+            for el in copied.iter(docpr_tag):
+                el.set("id", str(next_docpr))
+                next_docpr += 1
             if final_sectpr is not None:
                 final_sectpr.addprevious(copied)
             else:
@@ -380,6 +412,7 @@ def build_full_export_docx(
     translated_docx_bytes: bytes,
     project,
     user,
+    append_certification: bool = True,
 ) -> BytesIO:
     """Compose the final export DOCX from a translated DOCX:
 
@@ -496,10 +529,11 @@ def build_full_export_docx(
             )
 
 
-        try:
-            _append_certification(out, project, user, work_dir)
-        except Exception:
-            logger.exception("Certification append failed")
+        if append_certification:
+            try:
+                _append_certification(out, project, user, work_dir)
+            except Exception:
+                logger.exception("Certification append failed")
 
 
         buf = BytesIO()
