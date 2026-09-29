@@ -323,7 +323,7 @@ export default function DocumentEditor({
         if (blocks.length !== 1) {
           e.preventDefault()
           if (blocks.length > 1) {
-            setNotice("Edit one paragraph at a time. For bigger changes, ask Claude.")
+            setNotice("Edit one paragraph at a time. For bigger changes, use Ask AI.")
           }
           return
         }
@@ -585,7 +585,7 @@ export default function DocumentEditor({
       } else if (status === 429) {
         setChatError(apiErrorDetail(err, "Too many requests. Wait a moment and try again."))
       } else if (status === 502) {
-        setChatError(apiErrorDetail(err, "Claude couldn't make that change. Try again."))
+        setChatError(apiErrorDetail(err, "The assistant couldn't make that change. Try again."))
       } else {
         setChatError(apiErrorDetail(err, "Something went wrong. Try again."))
       }
@@ -670,11 +670,11 @@ export default function DocumentEditor({
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => openChat(ask ? { blockIds: ask.blockIds, text: ask.text } : null)}
               disabled={!hasDocument}
-              aria-label={ask ? "Ask Claude about the selection" : "Ask Claude about the whole document"}
+              aria-label={ask ? "Ask AI about the selection" : "Ask AI about the whole document"}
               className="text-[10px] font-semibold tracking-[0.08em] px-2 py-1 rounded-md transition disabled:opacity-50"
               style={{ background: "#0a7870", color: "#ffffff", border: "1px solid #0a7870" }}
             >
-              Ask Claude
+              Ask AI
             </button>
           </div>
         </div>
@@ -717,7 +717,7 @@ export default function DocumentEditor({
               className="absolute right-3 bottom-3 text-[11px] rounded-full px-3 py-1.5"
               style={{ background: "#ffffff", color: "#0a5e58", border: "1px solid #cfe6e2" }}
             >
-              {busy === "chat" ? "Claude is editing…" : "Undoing…"}
+              {busy === "chat" ? "Editing…" : "Undoing…"}
             </div>
           )}
 
@@ -729,7 +729,7 @@ export default function DocumentEditor({
               className="absolute -translate-x-1/2 text-[12px] font-semibold px-3 py-1.5 rounded-full shadow-md"
               style={{ top: ask.top, left: ask.left, background: "#0a7870", color: "#ffffff", zIndex: 5 }}
             >
-              Ask Claude
+              Ask AI
             </button>
           )}
         </div>
@@ -737,7 +737,7 @@ export default function DocumentEditor({
 
       {chatOpen && (
         <aside
-          aria-label="Chat with Claude"
+          aria-label="AI assistant"
           className="rounded-2xl overflow-hidden flex flex-col shrink-0"
           style={{ width: 360, background: "#ffffff", border: "1px solid #e7ddc5", minHeight: 0 }}
         >
@@ -795,7 +795,7 @@ export default function DocumentEditor({
               </div>
             ))}
             {busy === "chat" && (
-              <div className="flex justify-start" aria-label="Claude is typing">
+              <div className="flex justify-start" aria-label="Assistant is typing">
                 <div className="px-3 py-2.5 rounded-2xl flex gap-1" style={{ background: "#f3ecdb", borderBottomLeftRadius: 6 }}>
                   {[0, 1, 2].map((d) => (
                     <span
@@ -852,7 +852,7 @@ export default function DocumentEditor({
                   }
                 }}
                 rows={2}
-                aria-label="Message Claude"
+                aria-label="Message the assistant"
                 placeholder="Describe the change…"
                 className="flex-1 bg-transparent outline-none resize-none text-[13px] leading-relaxed"
                 style={{ color: "#1f2a2e", maxHeight: 160 }}

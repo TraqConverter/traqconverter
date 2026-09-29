@@ -258,7 +258,7 @@ def chat_edit(
 
     key = claude_params.api_key()
     if not key:
-        raise ChatEditError("Claude is not configured")
+        raise ChatEditError("The AI assistant is not configured")
     client = anthropic.Anthropic(api_key=key)
     model = claude_params.rebuild_model()
     system = _SYSTEM.format(target_lang=project.target_language or "the target language", notation_rules=NOTATION_RULES)
@@ -290,17 +290,17 @@ def chat_edit(
             logger.exception("Chat edit call failed (project=%s)", project.id)
             status = getattr(e, "status_code", "")
             raise ChatEditError(
-                "Claude couldn't process the request; try again",
+                "The assistant couldn't process the request; try again",
                 technical=f"{type(e).__name__} {status}: {getattr(e, 'message', str(e))}"[:500],
             ) from e
         claude_params.log_usage("doc_chat", resp)
         if resp.stop_reason == "refusal":
-            raise ChatEditError("Claude declined this request")
+            raise ChatEditError("The assistant declined this request")
         raw = next((b.text for b in resp.content if b.type == "text"), "")
         try:
             result = json.loads(raw)
         except json.JSONDecodeError as e:
-            raise ChatEditError("Claude returned an unreadable answer; try again") from e
+            raise ChatEditError("The assistant returned an unreadable answer; try again") from e
         operations = result.get("operations") or []
         if not operations:
             return data, result.get("reply", ""), []
@@ -314,4 +314,4 @@ def chat_edit(
                 {"role": "assistant", "content": resp.content},
                 {"role": "user", "content": f"Those operations could not be applied: {e}. Return corrected JSON."},
             ]
-    raise ChatEditError(f"Claude's edit couldn't be applied ({last_error}); try rephrasing")
+    raise ChatEditError(f"The edit couldn't be applied ({last_error}); try rephrasing")

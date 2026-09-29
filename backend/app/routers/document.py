@@ -156,7 +156,7 @@ def chat_document(
     project = _locked_project(db, project_id, user)
     _require_version(project, payload.version)
     if changed or new_data is not data:
-        document_editor.save_version(db, project, new_data, f"Claude: {payload.message[:150]}", user)
+        document_editor.save_version(db, project, new_data, f"AI: {payload.message[:150]}", user)
     db.commit()
     return {"version": project.document_version, "reply": reply, "changed_block_ids": changed}
 
