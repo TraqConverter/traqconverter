@@ -163,6 +163,9 @@ def run_job(job: dict) -> None:
 
 
 def start_worker():
+    from app.services.ai_usage import install_hooks
+
+    install_hooks()
     logger.info("Translation worker started (id=%s)", WORKER_ID)
     while True:
         job = _claim_next_job()

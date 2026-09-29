@@ -18,7 +18,7 @@ from app.models.glossary import Glossary
 from app.models.learning import DocumentTemplate, PendingLearning
 from app.models.project import ProjectStatus, TranslationProject
 from app.models.translation_segment import TranslationSegment
-from app.services import claude_params, docx_blocks
+from app.services import ai_usage, claude_params, docx_blocks
 from app.services.glossary_service import (
     fold_text,
     get_glossary,
@@ -155,7 +155,8 @@ def classify_document(data: bytes, file_name: str, text_hint: str = "") -> Optio
 def profile_project(db: Session, project: TranslationProject, data: bytes, text_hint: str = "") -> Optional[dict]:
     """Classify and store the profile on the project; any failure is logged and ignored."""
     try:
-        profile = classify_document(data, project.file_name or "", text_hint)
+        with ai_usage.ai_context(action="classify", project_id=project.id, team_id=project.team_id):
+            profile = classify_document(data, project.file_name or "", text_hint)
     except Exception:
         logger.exception("Document profile failed (project=%s)", project.id)
         return None
@@ -435,14 +436,15 @@ def extract_terms(project: TranslationProject, source_text: str, pairs: list[tup
         changes=changes,
     )
     model = claude_params.CLASSIFIER_MODEL
-    resp = claude_params.create_message(
-        anthropic.Anthropic(api_key=key),
-        model=model,
-        max_tokens=2000,
-        messages=[{"role": "user", "content": prompt}],
-        output_config={"format": {"type": "json_schema", "schema": TERMS_SCHEMA}},
-        **claude_params.request_params(model, max_tokens=2000),
-    )
+    with ai_usage.ai_context(action="learning", project_id=project.id, team_id=project.team_id):
+        resp = claude_params.create_message(
+            anthropic.Anthropic(api_key=key),
+            model=model,
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}],
+            output_config={"format": {"type": "json_schema", "schema": TERMS_SCHEMA}},
+            **claude_params.request_params(model, max_tokens=2000),
+        )
     claude_params.log_usage("learn_terms", resp)
     if resp.stop_reason == "refusal":
         return []

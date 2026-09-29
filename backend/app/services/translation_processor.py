@@ -61,7 +61,7 @@ from app.services.layout_translator import (
     rebuild_output,
 )
 from app.routers.ws import broadcast_progress
-from app.services import learning
+from app.services import ai_usage, learning
 from app.services.glossary_service import project_source_language
 from concurrent.futures import ThreadPoolExecutor
 
@@ -214,7 +214,7 @@ def _start_template_fill(db, project, source_kind, source_bytes, source_text, te
 
     logger.info("Template fill starting (project=%s template=%s)", project.id, template.id)
     pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="template-fill")
-    future = pool.submit(run)
+    future = pool.submit(ai_usage.bind(run, action="template_fill", project_id=project.id, team_id=project.team_id))
     pool.shutdown(wait=False)
     return template.id, future
 
@@ -243,6 +243,7 @@ def _finish_template_fill(db, project, job, temp_dir) -> bool:
     return True
 
 
+@ai_usage.project_task("translation")
 def process_translation_job(project_id: str):
     logger.info(f"Worker starting processing for {project_id}")
 
