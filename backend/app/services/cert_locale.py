@@ -166,3 +166,28 @@ def format_date(d: date, lang: str) -> str:
     if lang == "de":
         return f"{d.day}. {month} {d.year}"
     return f"{d.day} {month} {d.year}"
+
+
+_FUNCTION_WORDS = {
+    "en": {"the", "of", "and", "that", "this", "is", "to", "in", "translation", "certify", "hereby", "from", "into"},
+    "it": {"il", "la", "di", "del", "della", "che", "e", "è", "traduzione", "dichiaro", "sottoscritto", "dal", "al", "conforme"},
+    "es": {"el", "la", "de", "del", "que", "y", "es", "traducción", "certifico", "suscrito", "fiel", "al", "los"},
+    "fr": {"le", "la", "de", "du", "des", "que", "et", "est", "traduction", "certifie", "soussigné", "conforme", "au"},
+    "de": {"der", "die", "das", "und", "ist", "dass", "übersetzung", "bestätige", "hiermit", "von", "aus", "ins"},
+    "pt": {"o", "a", "de", "do", "da", "que", "e", "é", "tradução", "certifico", "abaixo", "fiel", "para"},
+}
+
+
+def detect_language(text: str) -> str | None:
+    """The certification language a text is written in, from its function words; None when unclear."""
+    import re
+
+    words = re.findall(r"[^\W\d_]+", (text or "").lower())
+    if len(words) < 8:
+        return None
+    scores = {lang: sum(1 for w in words if w in vocab) for lang, vocab in _FUNCTION_WORDS.items()}
+    best = max(scores, key=scores.get)
+    ranked = sorted(scores.values(), reverse=True)
+    if ranked[0] < 3 or ranked[0] < 1.4 * ranked[1]:
+        return None
+    return best

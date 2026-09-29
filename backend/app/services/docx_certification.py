@@ -9,31 +9,16 @@ from datetime import date
 
 from lxml import etree
 
-from app.services import cert_locale, docx_blocks as blocks, docx_images as images
-from app.services.docx_blocks import A_NS, PIC_NS, R_NS, DocxEditError, _Doc, w
+from app.services import cert_fields, cert_locale, docx_blocks as blocks, docx_images as images
+from app.services.docx_blocks import DocxEditError, _Doc, w
 
-FIELDS = ("translator", "date", "source_language", "target_language", "document")
+FIELDS = cert_fields.FIELDS
 TAG_PREFIX = "cert."
 START, END = blocks.CERT_MARKERS
 PAGE_STYLE_ID = "TQCertificationPage"
 LOGO_WIDTH_CM = 3.5
 STAMP_WIDTH_CM = 3.8
 _TOKEN_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
-_TOKEN_FIELDS = {
-    "translator_name": "translator",
-    "date": "date",
-    "date_long": "date",
-    "source_language": "source_language",
-    "target_language": "target_language",
-    "document_name": "document",
-}
-_ALIASES = {
-    "translator": "Translator",
-    "date": "Date",
-    "source_language": "Source language",
-    "target_language": "Target language",
-    "document": "Document",
-}
 _DOCUMENT = "word/document.xml"
 
 
@@ -128,7 +113,7 @@ def _sdt(name: str, value: str, rpr, lang: str, date_iso: str | None = None):
     pr = etree.SubElement(sdt, w("sdtPr"))
     if rpr is not None and len(rpr):
         pr.append(copy.deepcopy(rpr))
-    etree.SubElement(pr, w("alias")).set(w("val"), _ALIASES[name])
+    etree.SubElement(pr, w("alias")).set(w("val"), cert_fields.LABELS[name])
     etree.SubElement(pr, w("tag")).set(w("val"), TAG_PREFIX + name)
     etree.SubElement(pr, w("id")).set(w("val"), str(secrets.randbelow(2**31 - 1) + 1))
     if name == "date":
@@ -166,7 +151,7 @@ def _fill_with_tokens(p, text: str, content: CertContent, rpr) -> None:
         if m.start() > pos:
             p.append(_run(text[pos:m.start()], rpr))
         token = m.group(1)
-        name = _TOKEN_FIELDS.get(token)
+        name = cert_fields.resolve(token)
         if name:
             p.append(_sdt(name, content.values.get(name, ""), rpr, content.lang, content.day.isoformat() if name == "date" else None))
         elif token in content.extra_tokens:
@@ -214,72 +199,6 @@ def _default_units(content: CertContent) -> tuple[list, object]:
     name = _paragraph(after=0)
     name.append(_sdt("translator", content.values.get("translator", ""), None, content.lang))
     units.append(name)
-    return units, signature
-
-
-def _unwrap(el) -> None:
-    parent = el.getparent()
-    index = parent.index(el)
-    for child in list(el):
-        parent.insert(index, child)
-        index += 1
-    parent.remove(el)
-
-
-def _import_template(doc: _Doc, template: bytes, content: CertContent) -> tuple[list, object | None]:
-    """Body of an uploaded certification template, made safe for the editor, with tokens as content controls."""
-    try:
-        src = _Doc.load(template)
-    except Exception as e:
-        raise DocxEditError("The certification template couldn't be read") from e
-    src_body = src.trees[_DOCUMENT].find(w("body"))
-    src_rels = {r.get("Id"): r for r in src.rels(_DOCUMENT)}
-    embed = f"{{{R_NS}}}embed"
-    units = []
-    for child in src_body:
-        if child.tag not in (w("p"), w("tbl")):
-            continue
-        unit = copy.deepcopy(child)
-        blocks._strip_rsids(unit)
-        for el in list(unit.iter(w("bookmarkStart"), w("bookmarkEnd"), w("sectPr"), w("pict"), w("object"), w("fldSimple"))):
-            el.getparent().remove(el)
-        for el in list(unit.iter(w("hyperlink"), w("smartTag"))):
-            _unwrap(el)
-        for drawing in list(unit.iter(w("drawing"))):
-            run = blocks.drawing_run(drawing)
-            blips = list(drawing.iter(f"{{{A_NS}}}blip"))
-            ok = bool(blips) and next(drawing.iter(f"{{{PIC_NS}}}pic"), None) is not None
-            for blip in blips:
-                rel = src_rels.get(blip.get(embed) or "")
-                raw = src.files.get(images._media_path(_DOCUMENT, rel.get("Target") or "")) if rel is not None else None
-                try:
-                    blip.set(embed, images.add_image_part(doc, images.prepare_image(raw or b"")))
-                except DocxEditError:
-                    ok = False
-                for attr in [x for x in blip.attrib if x != embed and etree.QName(x).namespace == R_NS]:
-                    del blip.attrib[attr]
-            if not ok and run is not None and run.getparent() is not None:
-                run.getparent().remove(run)
-        for el in list(unit.iter()):
-            if isinstance(el.tag, str) and el.getparent() is not None and el.tag != f"{{{A_NS}}}blip":
-                if any(etree.QName(x).namespace == R_NS for x in el.attrib):
-                    el.getparent().remove(el)
-        for p in unit.iter(w("p")) if unit.tag == w("tbl") else [unit]:
-            text = blocks.paragraph_text(p)
-            if "{{" not in text:
-                continue
-            first = next((r for r in p.iter(w("r")) if r.find(w("t")) is not None), None)
-            rpr = copy.deepcopy(first.find(w("rPr"))) if first is not None and first.find(w("rPr")) is not None else None
-            for r in [r for r in p if r.tag == w("r") and r.find(w("drawing")) is None]:
-                p.remove(r)
-            _fill_with_tokens(p, text, content, rpr)
-        units.append(unit)
-    if not units:
-        raise DocxEditError("The certification template is empty")
-    signature = next(
-        (u for u in reversed(units) if u.tag == w("p") and "_____" in blocks.paragraph_text(u)),
-        next((u for u in reversed(units) if u.tag == w("p") and blocks.paragraph_text(u).strip()), None),
-    )
     return units, signature
 
 
@@ -351,13 +270,20 @@ def _remove_units(doc: _Doc) -> bool:
     return bool(units)
 
 
-def add_certification(data: bytes, content: CertContent) -> bytes:
+def add_certification(data: bytes, content: CertContent, report=None) -> bytes:
     """Append the certification page (replacing an existing one) at the end of the document."""
+    from app.services import docx_cert_template
+
     doc = _Doc.load(data)
     _remove_units(doc)
     if content.template_docx:
-        units, signature = _import_template(doc, content.template_docx, content)
+        report = report if report is not None else docx_cert_template.TemplateReport()
+        units, signature = docx_cert_template.import_template(doc, content.template_docx, content, report)
         has_own_images = any(next(u.iter(w("drawing")), None) is not None for u in units)
+        if has_own_images and content.logo is not None:
+            report.note("Your saved logo isn't added because the template has its own pictures.")
+        if content.stamp is not None and signature is not None:
+            report.note("Your saved stamp is placed over the signature line.")
         opening = _opening_paragraph(doc, content, with_logo=not has_own_images)
     else:
         units, signature = _default_units(content)
@@ -380,6 +306,27 @@ def add_certification(data: bytes, content: CertContent) -> bytes:
     _ensure_page_style(doc)
     images._prune_unused_media(doc)
     return images._finish(doc)
+
+
+def standalone(content: CertContent, report=None, page_break: bool = True) -> bytes:
+    """The certification page alone, as its own DOCX (preview, export wrapper)."""
+    import io
+
+    from docx import Document
+
+    buf = io.BytesIO()
+    Document().save(buf)
+    data = add_certification(buf.getvalue(), content, report)
+    if page_break:
+        return data
+    doc = _Doc.load(data)
+    first = _marker_units(doc)[0]
+    ppr = first.find(w("pPr"))
+    for tag in ("pageBreakBefore", "pStyle"):
+        el = ppr.find(w(tag)) if ppr is not None else None
+        if el is not None:
+            ppr.remove(el)
+    return doc.dump()
 
 
 def remove_certification(data: bytes) -> bytes:
@@ -495,3 +442,15 @@ def guess_document_title(data: bytes, fallback: str, doc_type: str = "") -> str:
         if score > best_score:
             best, best_score = text, score
     return best or fallback
+
+
+def page_text(data: bytes) -> str:
+    """Text of the certification page in a document, empty when there is none."""
+    doc = _Doc.load(data)
+    return " ".join(blocks.paragraph_text(p) for unit in _marker_units(doc) for p in unit.iter(w("p")))
+
+
+def docx_text(data: bytes) -> str:
+    """All body text of a DOCX (used to tell a template's language)."""
+    doc = _Doc.load(data)
+    return " ".join(blocks.paragraph_text(p) for p in _body(doc).iter(w("p")))

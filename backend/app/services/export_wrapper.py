@@ -153,14 +153,23 @@ def _detect_source_page_orientation(source_path) -> str:
 def _copy_missing_styles(src_doc: Document, dst_doc: Document, children) -> None:
     """Bring over paragraph/run styles the merged body uses but the destination lacks (e.g. the certification page break)."""
     try:
+        by_id = {s.get(qn("w:styleId")): s for s in src_doc.styles.element.findall(qn("w:style"))}
+        queue = [
+            el.get(qn("w:val"))
+            for child in children
+            for el in child.iter(qn("w:pStyle"), qn("w:rStyle"), qn("w:tblStyle"))
+        ]
         used = set()
-        for child in children:
-            for el in child.iter(qn("w:pStyle"), qn("w:rStyle")):
-                used.add(el.get(qn("w:val")))
+        while queue:
+            sid = queue.pop()
+            if sid in by_id and sid not in used:
+                used.add(sid)
+                based = by_id[sid].find(qn("w:basedOn"))
+                if based is not None:
+                    queue.append(based.get(qn("w:val")))
         dst_styles = dst_doc.styles.element
         have = {s.get(qn("w:styleId")) for s in dst_styles.findall(qn("w:style"))}
-        for style in src_doc.styles.element.findall(qn("w:style")):
-            sid = style.get(qn("w:styleId"))
+        for sid, style in by_id.items():
             if sid in used and sid not in have:
                 dst_styles.append(deepcopy(style))
     except Exception:
@@ -270,6 +279,20 @@ def _append_body_from(src_doc: Document, dst_doc: Document):
 
     _copy_missing_styles(src_doc, dst_doc, children)
 
+    # Hyperlinks point at relationships of the source part; recreate them on the destination.
+    HYPERLINK_TAG = "{%s}hyperlink" % W_NS
+    RID_ATTR = "{%s}id" % R_NS
+    link_map = {}
+    for child in children:
+        for link in child.iter(HYPERLINK_TAG):
+            rid = link.get(RID_ATTR)
+            if not rid or rid in link_map:
+                continue
+            rel = src_part.rels.get(rid)
+            if rel is None or not rel.is_external:
+                continue
+            link_map[rid] = dst_part.relate_to(rel.target_ref, rel.reltype, is_external=True)
+
     if images_copied:
         logger.info(
             "Carried over %d image(s) from authored DOCX into wrapper",
@@ -293,6 +316,12 @@ def _append_body_from(src_doc: Document, dst_doc: Document):
                     rid = el.get(EMBED_ATTR)
                     if rid and rid in rid_map:
                         el.set(EMBED_ATTR, rid_map[rid])
+            for link in copied.iter(HYPERLINK_TAG):
+                rid = link.get(RID_ATTR)
+                if rid in link_map:
+                    link.set(RID_ATTR, link_map[rid])
+                elif rid:
+                    del link.attrib[RID_ATTR]
             # Word rejects files whose drawings share an id with the wrapper's own pictures.
             for el in copied.iter(docpr_tag):
                 el.set("id", str(next_docpr))
@@ -323,64 +352,28 @@ def _append_certification(dst_doc: Document, project, user, work_dir: Path):
 
 
 
-    dst_doc.add_page_break()
-
-
     try:
-        from app.services.cert_template_service import (
-            build_substitution_values,
-            substitute_in_docx,
-        )
-        from app.services.s3_service import generate_presigned_download_url
-        from app.models.certification import Certification
         from app.database import SessionLocal
-        import requests as _req
+        from app.services import cert_page, docx_certification
+        from app.services.docx_blocks import strip_blocks
 
-        template_id = getattr(project, "certification_template_id", None)
-        if template_id:
-            db = SessionLocal()
-            try:
-                cert = (
-                    db.query(Certification)
-                    .filter(Certification.id == template_id)
-                    .first()
-                )
-
-
-
-
-
-
-                cert_key = getattr(cert, "file_path", None) if cert else None
-                cert_name = (getattr(cert, "file_name", "") or "").lower() if cert else ""
-                if cert and cert_key and cert_name.endswith(".docx"):
-                    url = generate_presigned_download_url(cert_key)
-                    r = _req.get(url, timeout=15)
-                    if r.ok:
-                        team = None
-                        try:
-                            from app.models.team import Team
-                            team = (
-                                db.query(Team)
-                                .filter(Team.id == project.team_id)
-                                .first()
-                            )
-                        except Exception:
-                            pass
-                        values = build_substitution_values(
-                            user=user, project=project, team=team, extra=None
-                        )
-                        templated_bytes = substitute_in_docx(r.content, values)
-                        templated_doc = Document(BytesIO(templated_bytes))
-                        _append_body_from(templated_doc, dst_doc)
-                        return
-            finally:
-                db.close()
+        db = SessionLocal()
+        try:
+            cert = cert_page.template_for(db, project)
+            if cert is not None and cert_page.is_docx(cert):
+                content = cert_page.content_for_project(db, project, user, cert_page.load_bytes(cert))
+                page = strip_blocks(docx_certification.standalone(content))
+                # The page's first paragraph already starts a new page.
+                _append_body_from(Document(BytesIO(page)), dst_doc)
+                return
+        finally:
+            db.close()
     except Exception:
         logger.exception(
-            "Cert-template substitution failed — falling back to hardcoded cert"
+            "Cert-template page failed — falling back to hardcoded cert"
         )
 
+    dst_doc.add_page_break()
 
     from datetime import datetime
 

@@ -82,10 +82,16 @@ def _clear_background(img: Image.Image) -> Image.Image:
     return rgba
 
 
-def prepare_image(raw: bytes, remove_background: bool = False) -> PreparedImage:
+def prepare_image(
+    raw: bytes,
+    remove_background: bool = False,
+    *,
+    max_bytes: int = MAX_UPLOAD_BYTES,
+    formats: tuple[str, ...] = ("PNG", "JPEG", "WEBP"),
+) -> PreparedImage:
     """Validate an upload and re-encode it (drops EXIF/metadata, honours rotation, caps size)."""
-    if len(raw) > MAX_UPLOAD_BYTES:
-        raise ImageError("Images must be 5 MB or smaller")
+    if len(raw) > max_bytes:
+        raise ImageError(f"Images must be {max_bytes // (1024 * 1024)} MB or smaller")
     Image.MAX_IMAGE_PIXELS = MAX_PIXELS
     try:
         probe = Image.open(io.BytesIO(raw))
@@ -95,7 +101,7 @@ def prepare_image(raw: bytes, remove_background: bool = False) -> PreparedImage:
         img.load()
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError, SyntaxError) as e:
         raise ImageError("That file isn't a readable PNG, JPG or WebP image") from e
-    if fmt not in ("PNG", "JPEG", "WEBP"):
+    if fmt not in formats:
         raise ImageError("Use a PNG, JPG or WebP image")
     img = ImageOps.exif_transpose(img)
     if max(img.size) > MAX_SIDE_PX:

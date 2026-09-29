@@ -125,11 +125,19 @@ def download_file_from_s3(key: str, destination: Path):
 
 
 
+def _attachment(filename: str) -> str:
+    from urllib.parse import quote
+
+    ascii_name = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in filename) or "download"
+    return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename, safe="")}'
+
+
 def generate_presigned_download_url(
     key: str,
     expiration: int = 3600,
     *,
     inline: bool = False,
+    filename: str | None = None,
 ) -> str:
     """Generate a temporary secure URL to an object.
 
@@ -150,6 +158,8 @@ def generate_presigned_download_url(
 
 
         params["ResponseContentDisposition"] = "inline"
+    elif filename:
+        params["ResponseContentDisposition"] = _attachment(filename)
 
     try:
         url = s3_client.generate_presigned_url(

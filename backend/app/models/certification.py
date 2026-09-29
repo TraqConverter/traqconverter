@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey
+from sqlalchemy import Boolean, Column, String, Text, Integer, DateTime, ForeignKey, false
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -39,5 +39,7 @@ class Certification(Base):
     size_bytes = Column(Integer, nullable=False)
     mime_type = Column(String, nullable=True)
     uploaded_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    # One per team (partial unique index); used when a project has no template of its own.
+    is_default = Column(Boolean, nullable=False, default=False, server_default=false())
 
     uploader = relationship("User")

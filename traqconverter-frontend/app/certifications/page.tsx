@@ -1,8 +1,9 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { api } from "@/lib/api"
+import { api, apiErrorDetail } from "@/lib/api"
 import ProPaywall from "@/components/ProPaywall"
+import TemplateCheck from "@/components/certifications/TemplateCheck"
 
 type Cert = {
   id: string
@@ -15,6 +16,8 @@ type Cert = {
   uploaded_at: string | null
   uploaded_by: string | null
   uploader_email: string | null
+  is_default?: boolean
+  is_template?: boolean
 }
 
 type KindFilter = "all" | "AFFIDAVIT" | "ISO_17100" | "SWORN_DECLARATION" | "OTHER"
@@ -90,6 +93,7 @@ export default function CertificationsPage() {
   const [uploadNotes, setUploadNotes] = useState("")
   const [dragOver, setDragOver] = useState(false)
   const [gated, setGated] = useState(false)
+  const [checkId, setCheckId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchItems()
@@ -155,9 +159,10 @@ export default function CertificationsPage() {
       fd.append("file", pendingFile)
       fd.append("kind", uploadKind)
       if (uploadNotes.trim()) fd.append("notes", uploadNotes.trim())
-      await api.post("/certifications/upload", fd, {
+      const res = await api.post<Cert>("/certifications/upload", fd, {
         headers: { "Content-Type": "multipart/form-data" },
       })
+      if (res.data?.is_template) setCheckId(res.data.id)
       setFlash(`${pendingFile.name} archived with a tamper-evident hash.`)
       setTimeout(() => setFlash(null), 4500)
       resetUploadForm()
@@ -177,21 +182,44 @@ export default function CertificationsPage() {
   const downloadCert = async (cert: Cert) => {
     try {
       setBusy(`dl:${cert.id}`)
-      const res = await api.get(`/certifications/${cert.id}/download`, {
-        responseType: "blob",
-      })
-      const url = window.URL.createObjectURL(new Blob([res.data]))
+      // Storage links download by themselves (attachment); fetching them via XHR is blocked by CORS.
+      const res = await api.get<{ url: string | null; file_name: string }>(
+        `/certifications/${cert.id}/download-url`,
+      )
+      let href = res.data.url
+      let revoke = false
+      if (!href) {
+        const file = await api.get<Blob>(`/certifications/${cert.id}/download`, { responseType: "blob" })
+        href = window.URL.createObjectURL(file.data)
+        revoke = true
+      }
       const a = document.createElement("a")
-      a.href = url
-      a.download = cert.file_name
+      a.href = href
+      a.rel = "noopener"
+      if (revoke) a.download = cert.file_name
       document.body.appendChild(a)
       a.click()
       a.remove()
-      window.URL.revokeObjectURL(url)
-    } catch (err: any) {
-      setError(
-        err?.response?.data?.detail || "Couldn't download that file."
+      if (revoke) window.URL.revokeObjectURL(href)
+    } catch (err: unknown) {
+      setError(apiErrorDetail(err, "Couldn't download that file."))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const toggleDefault = async (cert: Cert) => {
+    try {
+      setBusy(`def:${cert.id}`)
+      setError(null)
+      const res = await api.put<Cert>(`/certifications/${cert.id}/default`, { is_default: !cert.is_default })
+      setItems((xs) =>
+        xs.map((x) =>
+          x.id === cert.id ? { ...x, is_default: res.data.is_default } : res.data.is_default ? { ...x, is_default: false } : x,
+        ),
       )
+    } catch (err: unknown) {
+      setError(apiErrorDetail(err, "Couldn't change the default template."))
     } finally {
       setBusy(null)
     }
@@ -203,6 +231,7 @@ export default function CertificationsPage() {
       setBusy(`del:${cert.id}`)
       await api.delete(`/certifications/${cert.id}`)
       setItems((xs) => xs.filter((x) => x.id !== cert.id))
+      if (checkId === cert.id) setCheckId(null)
     } catch (err: any) {
       setError(err?.response?.data?.detail || "Couldn't delete that file.")
     } finally {
@@ -233,6 +262,8 @@ export default function CertificationsPage() {
     }
     return xs
   }, [items, kindFilter, query])
+
+  const checkCert = items.find((x) => x.id === checkId) || null
 
   if (gated) {
     return (
@@ -487,8 +518,18 @@ export default function CertificationsPage() {
         </div>
       )}
 
-      {}
-      <TokenLibrary />
+      {checkCert && (
+        <TemplateCheck
+          key={checkCert.id}
+          certId={checkCert.id}
+          fileName={checkCert.file_name}
+          isDefault={!!checkCert.is_default}
+          onClose={() => setCheckId(null)}
+          onToggleDefault={() => toggleDefault(checkCert)}
+        />
+      )}
+
+      <TemplateHelp />
 
       {}
       {!loading && items.length === 0 && !showUpload && (
@@ -589,7 +630,7 @@ export default function CertificationsPage() {
             className="grid items-center text-[11px] font-semibold tracking-[0.14em] px-5 py-3"
             style={{
               gridTemplateColumns:
-                "minmax(260px,2fr) 1fr 1.4fr 0.8fr 1fr 100px",
+                "minmax(260px,2fr) 1fr 1.4fr 0.8fr 1fr 190px",
               background: "#faf5ee",
               borderBottom: "1px solid #f1e8d1",
               color: "#9a9178",
@@ -624,7 +665,7 @@ export default function CertificationsPage() {
                 className="grid items-center px-5 py-4 text-sm group"
                 style={{
                   gridTemplateColumns:
-                    "minmax(260px,2fr) 1fr 1.4fr 0.8fr 1fr 100px",
+                    "minmax(260px,2fr) 1fr 1.4fr 0.8fr 1fr 190px",
                   borderBottom: "1px solid #f4ecd6",
                   color: "#1f2a2e",
                 }}
@@ -650,12 +691,22 @@ export default function CertificationsPage() {
                     </svg>
                   </div>
                   <div className="min-w-0">
-                    <div
-                      className="font-semibold truncate"
-                      style={{ color: "#1f2a2e" }}
-                      title={c.file_name}
-                    >
-                      {c.file_name}
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div
+                        className="font-semibold truncate"
+                        style={{ color: "#1f2a2e" }}
+                        title={c.file_name}
+                      >
+                        {c.file_name}
+                      </div>
+                      {c.is_default && (
+                        <span
+                          className="shrink-0 text-[10px] font-semibold tracking-[0.06em] px-2 py-0.5 rounded-full"
+                          style={{ background: "#cfe6e2", color: "#0a5e58" }}
+                        >
+                          DEFAULT
+                        </span>
+                      )}
                     </div>
                     <div
                       className="text-xs truncate"
@@ -697,6 +748,35 @@ export default function CertificationsPage() {
                   {relativeTime(c.uploaded_at)}
                 </div>
                 <div className="flex justify-end items-center gap-1">
+                  {c.is_template && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setCheckId(checkId === c.id ? null : c.id)}
+                        className="px-2.5 py-1 rounded-full text-[12px] font-semibold"
+                        style={{
+                          color: "#0a7870",
+                          background: checkId === c.id ? "#e7f1ef" : "transparent",
+                          border: "1px solid #cfe6e2",
+                        }}
+                      >
+                        Check
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleDefault(c)}
+                        disabled={busy === `def:${c.id}`}
+                        aria-label={c.is_default ? "Default template" : "Use as default"}
+                        title={c.is_default ? "Default template for the certification page" : "Use as default template"}
+                        className="p-1.5 rounded-full transition"
+                        style={{ color: c.is_default ? "#0a7870" : "#b8ae94" }}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill={c.is_default ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round">
+                          <path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9Z" />
+                        </svg>
+                      </button>
+                    </>
+                  )}
                   <button
                     type="button"
                     onClick={() => downloadCert(c)}
@@ -767,56 +847,35 @@ export default function CertificationsPage() {
   )
 }
 
-const TEMPLATE_TOKENS: { name: string; description: string }[] = [
-  { name: "translator_name", description: "Logged-in user's full name" },
-  { name: "translator_email", description: "Logged-in user's email" },
-  { name: "translator_title", description: "User's role (e.g. Project manager)" },
-  { name: "date", description: "Today's date — 2026-05-27" },
-  { name: "date_long", description: "Today's date — 27 May 2026" },
-  { name: "source_language", description: "Project source language" },
-  { name: "target_language", description: "Project target language" },
-  { name: "document_name", description: "Source file name" },
-  { name: "page_count", description: "Number of source pages" },
-  { name: "word_count", description: "Total source words" },
-  { name: "segment_count", description: "Total segment count" },
-  { name: "project_id", description: "Project unique identifier" },
-  { name: "certificate_number", description: "Auto-generated unique cert number" },
-  { name: "team_name", description: "Your team / company name" },
-  { name: "company_address", description: "Company address (Settings)" },
-]
+type FieldHelp = { field: string; label: string; names: string[]; description: string }
 
-function TokenLibrary() {
-  const [copied, setCopied] = useState<string | null>(null)
+function TemplateHelp() {
   const [collapsed, setCollapsed] = useState(false)
+  const [fields, setFields] = useState<FieldHelp[]>([])
+  const [copied, setCopied] = useState<string | null>(null)
 
-  const copyToken = async (name: string) => {
-    const text = `{{${name}}}`
+  useEffect(() => {
+    if (collapsed || fields.length) return
+    api
+      .get<{ fields: FieldHelp[] }>("/certifications/template-fields")
+      .then((res) => setFields(res.data?.fields || []))
+      .catch(() => setFields([]))
+  }, [collapsed, fields.length])
+
+  const copy = async (name: string) => {
     try {
-      await navigator.clipboard.writeText(text)
+      await navigator.clipboard.writeText(name)
+      setCopied(name)
+      setTimeout(() => setCopied(null), 1400)
     } catch {
-
-      const ta = document.createElement("textarea")
-      ta.value = text
-      document.body.appendChild(ta)
-      ta.select()
-      try {
-        document.execCommand("copy")
-      } catch {}
-      document.body.removeChild(ta)
+      setCopied(null)
     }
-    setCopied(name)
-    setTimeout(() => setCopied(null), 1400)
   }
 
+  const code = { background: "#ede3cc", color: "#1f2a2e", padding: "0 4px", borderRadius: 4 }
+
   return (
-    <section
-      className="rounded-2xl"
-      style={{
-        background: "#ffffff",
-        border: "1px solid #e7ddc5",
-        boxShadow: "0 1px 2px rgba(30,30,20,0.03)",
-      }}
-    >
+    <section className="rounded-2xl" style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}>
       <header
         className="flex items-center justify-between px-6 py-4 cursor-pointer"
         onClick={() => setCollapsed((c) => !c)}
@@ -824,7 +883,7 @@ function TokenLibrary() {
       >
         <div className="flex items-center gap-3">
           <div
-            className="w-9 h-9 rounded-lg flex items-center justify-center"
+            className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
             style={{ background: "#cfe6e2", color: "#0a7870" }}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -832,15 +891,11 @@ function TokenLibrary() {
             </svg>
           </div>
           <div>
-            <div
-              className="text-[15px] font-semibold"
-              style={{ color: "#1f2a2e" }}
-            >
-              Template tokens
+            <div className="text-[15px] font-semibold" style={{ color: "#1f2a2e" }}>
+              Use your own Word certification
             </div>
             <div className="text-xs" style={{ color: "#8a8270" }}>
-              Click any token to copy it. Paste into your DOCX template
-              wherever you want that value substituted at export time.
+              Upload your .docx with merge fields. It becomes the certification page, filled in for each project.
             </div>
           </div>
         </div>
@@ -856,160 +911,58 @@ function TokenLibrary() {
         </span>
       </header>
       {!collapsed && (
-        <div className="px-6 py-5">
-          {}
-          <div
-            className="rounded-xl p-4 mb-5"
-            style={{
-              background: "#fbf6ea",
-              border: "1px solid #f1e8d1",
-            }}
-          >
-            <div
-              className="text-[11px] font-semibold tracking-[0.16em] mb-3"
-              style={{ color: "#9a9178" }}
-            >
-              HOW TEMPLATE TOKENS WORK
-            </div>
-            <p
-              className="text-[13px] mb-3 leading-relaxed"
-              style={{ color: "#4a4638" }}
-            >
-              A template is a regular Word document (.docx) with
-              special placeholders like{" "}
-              <code
-                className="font-mono px-1 rounded"
-                style={{ background: "#ede3cc", color: "#1f2a2e" }}
-              >
-                {"{{translator_name}}"}
-              </code>{" "}
-              and{" "}
-              <code
-                className="font-mono px-1 rounded"
-                style={{ background: "#ede3cc", color: "#1f2a2e" }}
-              >
-                {"{{date}}"}
-              </code>{" "}
-              dropped into the text. At export time TraqConverter
-              automatically replaces each placeholder with the real
-              value from that project — translator name, date,
-              source / target languages, page count, certificate
-              number, and so on.
-            </p>
-            <ol
-              className="text-[13px] leading-relaxed pl-5 list-decimal space-y-1.5"
-              style={{ color: "#4a4638" }}
-            >
-              <li>
-                <strong>Draft your template in Word.</strong> Design
-                it however you like — your letterhead, logo,
-                signature line, table layouts, fonts. Save as{" "}
-                <code
-                  className="font-mono"
-                  style={{ background: "#ede3cc", padding: "0 4px", borderRadius: 4, color: "#1f2a2e" }}
-                >
-                  .docx
-                </code>
-                .
-              </li>
-              <li>
-                <strong>Pick the tokens you want auto-filled.</strong>{" "}
-                Click any token tile below — its placeholder copies
-                to your clipboard automatically.
-              </li>
-              <li>
-                <strong>Paste tokens into your Word document.</strong>{" "}
-                Replace any hand-typed details (your name, today&apos;s
-                date, the language pair) with the matching placeholder
-                so the same template works for every project.
-              </li>
-              <li>
-                <strong>Upload the .docx here.</strong> We scan it,
-                hash it for tamper detection, and list it in the
-                library below.
-              </li>
-              <li>
-                <strong>Attach it to a project.</strong> When you
-                upload a translation, pick this template — at export
-                time the placeholders get filled with that project&apos;s
-                values and the result is appended to the rebuild.
-              </li>
-            </ol>
-            <div
-              className="text-[12px] mt-3 px-3 py-2 rounded-lg"
-              style={{
-                background: "#cfe6e2",
-                color: "#0a5e58",
-                border: "1px solid #b7dad4",
-              }}
-            >
-              <strong>Tip:</strong> need a token that isn&apos;t in the
-              list? Email us — we&apos;ll add it. Unknown placeholders are
-              left in the document as-is so you&apos;ll spot them
-              immediately on export.
-            </div>
-          </div>
-
-          <div
-            className="text-[11px] font-semibold tracking-[0.16em] mb-3"
-            style={{ color: "#9a9178" }}
-          >
-            AVAILABLE TOKENS · CLICK TO COPY
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5">
-            {TEMPLATE_TOKENS.map((t) => {
-              const isCopied = copied === t.name
-              return (
-                <button
-                  key={t.name}
-                  type="button"
-                  onClick={() => copyToken(t.name)}
-                  className="rounded-xl px-3 py-2.5 text-left transition flex items-start gap-2"
-                  style={{
-                    background: isCopied ? "#cfe6e2" : "#faf5ee",
-                    border: `1px solid ${isCopied ? "#0a7870" : "#e7ddc5"}`,
-                    cursor: "pointer",
-                  }}
-                  title={`Click to copy {{${t.name}}}`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <code
-                      className="block text-[12px] font-mono font-semibold truncate"
-                      style={{ color: isCopied ? "#0a5e58" : "#1f2a2e" }}
-                    >
-                      {`{{${t.name}}}`}
-                    </code>
-                    <div
-                      className="text-[10.5px] mt-0.5 leading-tight"
-                      style={{ color: "#8a8270" }}
-                    >
-                      {t.description}
-                    </div>
-                  </div>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: isCopied ? "#0a7870" : "#9a9178",
-                      flexShrink: 0,
-                      marginTop: 2,
-                    }}
-                  >
-                    {isCopied ? "Copied ✓" : "Copy"}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-          <p
-            className="text-[11px] mt-4"
-            style={{ color: "#8a8270" }}
-          >
-            Tokens only work in <strong>.docx</strong> templates. After
-            upload, the system scans your DOCX and tells you which
-            tokens it found.
+        <div className="px-6 py-5 space-y-4">
+          <ol className="text-[13px] leading-relaxed pl-5 list-decimal space-y-1.5" style={{ color: "#4a4638" }}>
+            <li>
+              In Word, put the cursor where the value goes: <strong>Insert › Quick Parts › Field… › MergeField</strong>,
+              type a field name from the list below, OK. On a Mac: <strong>Insert › Field… › MergeField</strong>.
+            </li>
+            <li>
+              Or type a token such as <code style={code}>{"{{Translator}}"}</code> or{" "}
+              <code style={code}>{"{{Data}}"}</code>. Both work.
+            </li>
+            <li>
+              Upload the .docx, check the preview, then star it as the default. The editor&apos;s Certification button
+              and Certify &amp; deliver use the default.
+            </li>
+          </ol>
+          <p className="text-[12px]" style={{ color: "#8a8270" }}>
+            Names match in English or Italian, ignoring case, spaces and underscores. Fonts, tables, pictures, logo and
+            signature images are kept. Filled values stay editable in the editor.
           </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            {fields.map((f) => (
+              <button
+                key={f.field}
+                type="button"
+                onClick={() => copy(f.names[0])}
+                className="rounded-xl px-3 py-2.5 text-left transition"
+                style={{
+                  background: copied === f.names[0] ? "#cfe6e2" : "#faf5ee",
+                  border: `1px solid ${copied === f.names[0] ? "#0a7870" : "#e7ddc5"}`,
+                }}
+                title={`Copy ${f.names[0]}`}
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <code className="text-[12px] font-mono font-semibold truncate" style={{ color: "#1f2a2e" }}>
+                    {f.names[0]}
+                  </code>
+                  <span
+                    className="text-[11px] font-semibold shrink-0"
+                    style={{ color: copied === f.names[0] ? "#0a7870" : "#9a9178" }}
+                  >
+                    {copied === f.names[0] ? "Copied" : "Copy"}
+                  </span>
+                </div>
+                <div className="text-[11px] mt-0.5" style={{ color: "#8a8270" }}>
+                  {f.description}
+                </div>
+                <div className="text-[10.5px] mt-0.5 truncate" style={{ color: "#aaa18a" }}>
+                  also {f.names.slice(1).join(", ")}
+                </div>
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </section>

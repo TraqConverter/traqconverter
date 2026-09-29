@@ -1,6 +1,5 @@
 """Pictures, stamps and the certification page inside the editable translated document."""
 import logging
-from datetime import date
 from pathlib import Path
 from typing import Literal, Optional
 from uuid import UUID
@@ -19,7 +18,7 @@ from app.models.document_version import DocumentVersion
 from app.models.project import TranslationProject
 from app.models.user import User
 from app.routers.document import _initial_builder, _locked_project, _require_version
-from app.services import cert_locale, docx_certification, docx_images, document_editor
+from app.services import cert_locale, cert_page, docx_certification, docx_images, document_editor
 from app.services.docx_blocks import DocxEditError
 
 logger = logging.getLogger(__name__)
@@ -77,6 +76,13 @@ class _CertFields(BaseModel):
     source_language: Optional[str] = Field(default=None, max_length=100)
     target_language: Optional[str] = Field(default=None, max_length=100)
     document: Optional[str] = Field(default=None, max_length=300)
+    pages: Optional[str] = Field(default=None, max_length=20)
+    client: Optional[str] = Field(default=None, max_length=200)
+    translator_email: Optional[str] = Field(default=None, max_length=200)
+    company: Optional[str] = Field(default=None, max_length=200)
+    company_address: Optional[str] = Field(default=None, max_length=300)
+    certificate_number: Optional[str] = Field(default=None, max_length=100)
+    file_name: Optional[str] = Field(default=None, max_length=300)
 
 
 class _CertUpdate(BaseModel):
@@ -282,66 +288,20 @@ def delete_image(
     return {"version": _edit(db, project_id, user, version, "Deleted an image", change)}
 
 
-def _template_bytes(db: Session, project: TranslationProject, user: User, template_id: Optional[UUID]) -> Optional[bytes]:
-    from app.models.certification import Certification
-
-    template_id = template_id or project.certification_template_id
-    if not template_id:
-        return None
-    cert = (
-        db.query(Certification)
-        .filter(Certification.id == template_id, Certification.team_id == project.team_id)
-        .first()
-    )
-    if cert is None:
+def _template_bytes(db: Session, project: TranslationProject, template_id: Optional[UUID]) -> Optional[bytes]:
+    try:
+        cert = cert_page.template_for(db, project, template_id)
+    except cert_page.TemplateNotFound:
         raise HTTPException(status_code=404, detail="Certification template not found")
-    if not (cert.file_name or "").lower().endswith(".docx"):
+    if cert is None:
+        return None
+    if not cert_page.is_docx(cert):
         raise HTTPException(status_code=400, detail="Only Word (.docx) templates can be placed in the document")
     try:
-        return document_editor._download(cert.file_path)
+        return cert_page.load_bytes(cert)
     except Exception:
         logger.exception("Couldn't load certification template %s", cert.id)
         raise HTTPException(status_code=502, detail="Couldn't load the certification template")
-
-
-def _cert_content(db: Session, project: TranslationProject, user: User, template: Optional[bytes]):
-    from app.models.team import Team
-    from app.services.cert_template_service import build_substitution_values
-
-    lang = cert_locale.cert_language(project.target_language)
-    today = date.today()
-    translator = (user.full_name or "").strip() or (user.email or "").split("@")[0]
-    values = {
-        "translator": translator,
-        "date": cert_locale.format_date(today, lang),
-        "source_language": cert_locale.language_name(project.source_language, lang),
-        "target_language": cert_locale.language_name(project.target_language, lang),
-        "document": Path(project.file_name or "").stem.replace("_", " ").strip(),
-    }
-    team = db.query(Team).filter(Team.id == project.team_id).first()
-    extra = build_substitution_values(user=user, project=project, team=team)
-    logo = stamp = None
-    if getattr(user, "logo_s3_key", None):
-        try:
-            logo = _load_asset(user.logo_s3_key, remove_background=False)
-        except HTTPException:
-            logger.warning("Skipping unreadable logo for the certification page")
-    if team is not None and team.stamp_s3_key:
-        try:
-            stamp = _load_asset(team.stamp_s3_key, remove_background=True)
-        except HTTPException:
-            logger.warning("Skipping unreadable stamp for the certification page")
-    return docx_certification.CertContent(
-        lang=lang,
-        values=values,
-        day=today,
-        pages=project.page_count or 0,
-        logo=logo,
-        stamp=stamp,
-        template_docx=template,
-        statement_override=project.certification_override_text,
-        extra_tokens=extra,
-    )
 
 
 @router.get("/{project_id}/document/certification", dependencies=_cert_feature)
@@ -360,8 +320,8 @@ def add_certification(
     user: User = Depends(get_current_user),
 ):
     project = get_user_project_or_404(db, project_id, user)
-    template = _template_bytes(db, project, user, payload.template_id)
-    content = _cert_content(db, project, user, template)
+    template = _template_bytes(db, project, payload.template_id)
+    content = cert_page.content_for_project(db, project, user, template)
 
     def change(data, _project):
         doc_type = (project.doc_profile or {}).get("document_type", "") if isinstance(project.doc_profile, dict) else ""
@@ -383,7 +343,9 @@ def update_certification(
     lang = {}
 
     def change(data, locked_project):
-        lang["code"] = cert_locale.cert_language(locked_project.target_language)
+        lang["code"] = cert_locale.detect_language(docx_certification.page_text(data)) or cert_locale.cert_language(
+            locked_project.target_language
+        )
         out, _ = docx_certification.update_fields(data, payload.fields.model_dump(exclude_none=True), lang["code"])
         return out
 
