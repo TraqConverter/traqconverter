@@ -1,5 +1,7 @@
 "use client"
 
+import Image from "next/image"
+
 import { useState } from "react"
 import Link from "next/link"
 
@@ -68,7 +70,7 @@ function TopBar() {
                 marginTop: -2,
               }}
             >
-              LAYOUT-PRESERVING TRANSLATION
+              <span className="hidden sm:inline">LAYOUT-PRESERVING TRANSLATION</span>
             </div>
           </div>
         </Link>
@@ -78,9 +80,10 @@ function TopBar() {
           <a href="#pricing" style={navLink}>Pricing</a>
           <a href="#faq" style={navLink}>FAQ</a>
         </nav>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1 sm:gap-3 whitespace-nowrap">
           <Link
             href="/login"
+            className="hidden sm:inline-block"
             style={{
               fontSize: 14,
               fontWeight: 500,
@@ -101,7 +104,8 @@ function TopBar() {
               borderRadius: 999,
             }}
           >
-            Start free trial
+            <span className="sm:hidden">Try free</span>
+            <span className="hidden sm:inline">Start free trial</span>
           </Link>
         </div>
       </div>
@@ -254,159 +258,63 @@ function Hero() {
 
 function HeroVisual() {
   return (
+    <div className="relative">
+      <Shot src="/landing/editor.webp" width={1800} height={1204} alt="Source and translation side by side; clicking a translated line highlights it on the original" priority />
+      <div
+        className="hidden md:block"
+        style={{
+          position: "absolute",
+          left: -18,
+          bottom: 28,
+          background: "#ffffff",
+          border: `1px solid ${BORDER}`,
+          borderRadius: 14,
+          padding: "10px 14px",
+          boxShadow: "0 12px 28px rgba(30,30,20,0.12)",
+          fontSize: 12,
+          color: TEXT,
+          maxWidth: 230,
+        }}
+      >
+        <div style={{ color: TEAL, fontWeight: 600, marginBottom: 2 }}>Click a line, see its source</div>
+        <div style={{ color: MUTED }}>Every translated paragraph is linked to where it sits on the original.</div>
+      </div>
+    </div>
+  )
+}
+
+function Shot({
+  src,
+  width,
+  height,
+  alt,
+  priority = false,
+  maxHeight,
+}: {
+  src: string
+  width: number
+  height: number
+  alt: string
+  priority?: boolean
+  maxHeight?: number
+}) {
+  return (
     <div
       style={{
         background: "#ffffff",
         border: `1px solid ${BORDER}`,
-        borderRadius: 24,
-        boxShadow: "0 16px 40px rgba(30,30,20,0.08)",
-        padding: 18,
-        position: "relative",
+        borderRadius: 20,
+        boxShadow: "0 18px 44px rgba(30,30,20,0.10)",
+        overflow: "hidden",
       }}
     >
-      {}
-      <div className="flex items-center gap-1.5 mb-3">
+      <div className="flex items-center gap-1.5" style={{ padding: "10px 14px", borderBottom: `1px solid ${CREAM_DARK}` }}>
         <div style={dot("#ffb8a8")} />
         <div style={dot("#ffd98a")} />
         <div style={dot("#a8d9a3")} />
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        {}
-        <div
-          style={{
-            background: CREAM,
-            borderRadius: 14,
-            padding: 16,
-            border: `1px solid ${BORDER}`,
-            minHeight: 260,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 9,
-              letterSpacing: "0.16em",
-              color: SUBTLE,
-              fontWeight: 600,
-              marginBottom: 10,
-            }}
-          >
-            ORIGINAL · ITALIAN
-          </div>
-          <div style={{ fontSize: 9, color: TEXT, fontWeight: 700 }}>
-            COMUNE DI ESEMPIO
-          </div>
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 700,
-              textAlign: "center",
-              margin: "18px 0 8px",
-              color: TEXT,
-            }}
-          >
-            Certificato di Residenza
-          </div>
-          <div style={{ fontSize: 9, color: MUTED, marginBottom: 14 }}>
-            Si certifica che il sottoscritto risiede al seguente indirizzo…
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, fontSize: 8 }}>
-            {[
-              ["Comune", "MILANO"],
-              ["Cognome", "ROSSI"],
-              ["Nome", "MARIA"],
-              ["Codice Fiscale", "RSSMRA80…"],
-            ].map(([k, v]) => (
-              <div key={k} style={{ display: "contents" }}>
-                <div style={{ color: MUTED }}>{k}</div>
-                <div style={{ fontWeight: 600, color: TEXT }}>{v}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {}
-        <div
-          style={{
-            background: "#ffffff",
-            borderRadius: 14,
-            padding: 16,
-            border: `1px solid ${TEAL_SOFT}`,
-            position: "relative",
-            minHeight: 260,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 9,
-              letterSpacing: "0.16em",
-              color: TEAL,
-              fontWeight: 600,
-              marginBottom: 10,
-            }}
-          >
-            TRANSLATION · ENGLISH
-          </div>
-          <div style={{ fontSize: 9, color: TEXT, fontWeight: 700 }}>
-            MUNICIPALITY OF ESEMPIO
-          </div>
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 700,
-              textAlign: "center",
-              margin: "18px 0 8px",
-              color: TEXT,
-            }}
-          >
-            Certificate of Residence
-          </div>
-          <div style={{ fontSize: 9, color: MUTED, marginBottom: 14 }}>
-            This is to certify that the undersigned resides at the following address…
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, fontSize: 8 }}>
-            {[
-              ["Municipality", "MILAN"],
-              ["Surname", "ROSSI"],
-              ["Name", "MARIA"],
-              ["Tax Code", "RSSMRA80…"],
-            ].map(([k, v]) => (
-              <div key={k} style={{ display: "contents" }}>
-                <div style={{ color: MUTED }}>{k}</div>
-                <div style={{ fontWeight: 600, color: TEXT }}>{v}</div>
-              </div>
-            ))}
-          </div>
-          {}
-          <div
-            style={{
-              position: "absolute",
-              top: -10,
-              right: -10,
-              background: TEAL,
-              color: "#fff",
-              fontSize: 10,
-              fontWeight: 600,
-              padding: "5px 10px",
-              borderRadius: 999,
-              boxShadow: "0 6px 14px rgba(10,120,112,0.25)",
-            }}
-          >
-            Ready for your review
-          </div>
-        </div>
-      </div>
-      <div
-        style={{
-          marginTop: 14,
-          padding: "10px 14px",
-          background: CREAM_DARK,
-          borderRadius: 12,
-          fontSize: 11,
-          color: MUTED,
-          textAlign: "center",
-        }}
-      >
-        Original layout · 1 page · 1 credit
+      <div style={{ maxHeight, overflow: "hidden" }}>
+        <Image src={src} width={width} height={height} alt={alt} priority={priority} sizes="(min-width: 768px) 600px, 100vw" style={{ width: "100%", height: "auto", display: "block" }} />
       </div>
     </div>
   )
@@ -436,7 +344,7 @@ function TrustBar() {
           { n: "28", l: "Languages" },
           { n: "PDF · DOCX · JPG · PNG", l: "Input formats" },
           { n: "DOCX · PDF", l: "Export formats" },
-          { n: "1 credit", l: "Per page" },
+          { n: "10 AI edits", l: "Included per page" },
         ].map((s) => (
           <div key={s.l}>
             <div
@@ -465,39 +373,39 @@ function ValueProps() {
       <div className="max-w-[1200px] mx-auto">
         <SectionHeader
           eyebrow="WHY TRAQCONVERTER"
-          title="Built for translators who review before they deliver"
-          subtitle="AI does the first draft and the layout. You check every line, add your certification statement, and send it."
+          title="Built for translators who sign what they deliver"
+          subtitle="The AI does the first draft and the layout. You stay in control of every line, and the tool gets better at your work each time."
         />
         <div className="grid md:grid-cols-3 gap-5 mt-12">
           <FeatureCard
             icon={<IconLayout />}
-            title="Layout-preserving rebuilds"
-            body="Tables, two-column forms, and signature blocks come back where they were in the original, so you don't retype the translation into a Word template."
+            title="Layout rebuilt, page for page"
+            body="Tables, two-column forms, and signature blocks come back where they were on the original, as an editable Word document, not a text dump."
           />
           <FeatureCard
             icon={<IconShield />}
-            title="Certification statement page"
-            body="On Pro, add a translator's certification statement to the export, or use your own DOCX statement template with your logo and stamp. You sign it; the software doesn't certify anything for you."
-          />
-          <FeatureCard
-            icon={<IconBrain />}
-            title="AI extraction and translation"
-            body="Vision models read scans, photos, and IDs, including faded stamps and handwriting. The translation uses the whole document as context. Nothing leaves until you've reviewed it."
-          />
-          <FeatureCard
-            icon={<IconLock />}
-            title="You control deletion"
-            body="Delete a project at any time from your projects list. Its files, text, and translation memory entries are removed with it. We don't train models on your documents."
-          />
-          <FeatureCard
-            icon={<IconUsers />}
-            title="Team workspaces"
-            body="Invite teammates with roles and assign projects to them. On Pro, the team shares one translation memory and glossary."
+            title="Stamps, signatures, and [illegible]"
+            body="Noted where they appear, in the target language, the way you would: [Signature], [Round stamp: …], [Revenue stamp: €16.00], and [illegible] only on the part that can't be read."
           />
           <FeatureCard
             icon={<IconBolt />}
-            title="Signatures, stamps, and illegible parts"
-            body="Never pasted as images. Each is noted where it appears, in the target language: [Signature], [Stamp: …], [Revenue stamp: €16.00], and [illegible] on exactly the part that can't be read."
+            title="Ask AI on any passage"
+            body="Highlight a line, a table, or a signature block and say what's off. Wording and formatting fixes take seconds; every change can be undone."
+          />
+          <FeatureCard
+            icon={<IconBrain />}
+            title="Learns your templates and terms"
+            body="Your corrections become your team's terminology. A finished document becomes a template, so the next one of the same kind starts from your version."
+          />
+          <FeatureCard
+            icon={<IconLock />}
+            title="Checked before you sign"
+            body="Every number, date, name, and code in the source is compared with your translation, along with untranslated text, missing stamp notes, and your glossary."
+          />
+          <FeatureCard
+            icon={<IconUsers />}
+            title="Your certification page and stamp"
+            body="Your statement, date, languages, logo, and stamp go at the end of the document and export with it as one file. Drag your stamp wherever it belongs."
           />
         </div>
       </div>
@@ -621,35 +529,90 @@ function DeepFeatures() {
     <section style={{ padding: "80px 24px" }}>
       <div className="max-w-[1200px] mx-auto">
         <SectionHeader
-          eyebrow="THE EDITOR"
+          eyebrow="THE WORKBENCH"
           title="Edit the document, not a list of segments"
-          subtitle="The translation is a real Word document. Type where something's wrong, or highlight it and ask the AI. Every change can be undone."
+          subtitle="The translation is a real Word document next to the original. Type where something's wrong, or highlight it and ask the AI."
         />
-        <div className="grid md:grid-cols-2 gap-12 items-center mt-14">
-          <FeatureList
-            items={[
-              { t: "Side by side with the source", b: "The original stays next to the translation while you work, page for page." },
-              { t: "Highlight and ask AI", b: "Select a line, a table, or a signature block and say what's off: a term, a number, or the layout. Most fixes take a few seconds." },
-              { t: "Translation memory (Pro)", b: "Your translations are stored and offered as matches in later projects for the same language pair." },
-              { t: "Glossary (Pro)", b: "Keep product names, legal terms, and proper nouns consistent with your house style." },
-            ]}
+        <ShowcaseRow
+          image={<Shot maxHeight={560} src="/landing/assistant.webp" width={1400} height={1570} alt="Asking the AI to write a date in full; the edited line is highlighted" />}
+          eyebrow="ASK AI"
+          title="Fix anything by asking"
+          items={[
+            { t: "Point at it", b: "Highlight the passage; the assistant sees it, the original, and the rest of the document." },
+            { t: "Say what's off", b: "“Write the date in full”, “put the stamp beside the signature”, “use Registry Office”." },
+            { t: "Seconds, not a re-translation", b: "Only what you pointed at changes. Undo is one click." },
+          ]}
+        />
+        <ShowcaseRow
+          reverse
+          image={<Shot maxHeight={560} src="/landing/checks.webp" width={1100} height={1486} alt="Ready to certify checklist listing what to check before signing" />}
+          eyebrow="READY TO CERTIFY"
+          title="Nothing slips past your signature"
+          items={[
+            { t: "Numbers, dates, codes, names", b: "Compared with the source. A missing digit is flagged before you sign, not after the client does." },
+            { t: "Uncertain readings", b: "Faded stamps, handwriting, and smudged digits are marked for you to look at, with the spot highlighted on the original." },
+            { t: "One click to the problem", b: "Each item jumps to the paragraph and its place on the source." },
+          ]}
+        />
+        <ShowcaseRow
+          image={<Shot maxHeight={560} src="/landing/cert.webp" width={1100} height={1486} alt="Certification page fields: date, languages, translator, document" />}
+          eyebrow="CERTIFICATION"
+          title="Your certification page, built in"
+          items={[
+            { t: "Filled in for you", b: "Translator, date, source and target language, document, and pages, in the target language." },
+            { t: "Edit in place", b: "Change the date or languages without touching the rest of the page." },
+            { t: "One file out", b: "Export DOCX or PDF with the source copy, the translation, and your certification page together." },
+          ]}
+        />
+        <div className="grid md:grid-cols-2 gap-6 mt-20">
+          <HighlightCard
+            eyebrow="LEARNS AS YOU WORK"
+            title="The second driving licence is faster than the first"
+            body="Finished documents become your team's templates. The next document of the same kind is built from your version, changing only names, dates, and numbers, in seconds instead of minutes. The terms you correct are remembered and used next time."
           />
-          <EditorMock />
-        </div>
-
-        <div className="grid md:grid-cols-2 gap-12 items-center mt-20">
-          <CertMock />
-          <FeatureList
-            items={[
-              { t: "Your logo and stamp", b: "Upload them once in Settings. They appear on the certification page." },
-              { t: "Translator's statement", b: "A certification page with the translator, date, and statement text, or your own DOCX template." },
-              { t: "PDF & DOCX exports", b: "Send a PDF for submission or a DOCX for further edits. Both keep the rebuilt layout." },
-              { t: "Certifications library", b: "Store signed affidavits and declarations in one place, with a SHA-256 hash of each file." },
-            ]}
+          <HighlightCard
+            eyebrow="BATCHES"
+            title="One client, many documents, one spelling"
+            body="Upload a client's birth certificate, diploma, and transcripts together. Names, institutions, and places are rendered the same way in every document, and you download the whole batch as one ZIP."
           />
         </div>
       </div>
     </section>
+  )
+}
+
+function ShowcaseRow({
+  image,
+  eyebrow,
+  title,
+  items,
+  reverse = false,
+}: {
+  image: React.ReactNode
+  eyebrow: string
+  title: string
+  items: { t: string; b: string }[]
+  reverse?: boolean
+}) {
+  return (
+    <div className="grid md:grid-cols-2 gap-12 items-center mt-20">
+      <div className={reverse ? "md:order-2" : ""}>{image}</div>
+      <div>
+        <div style={{ fontSize: 11, letterSpacing: "0.16em", color: TEAL, fontWeight: 600, marginBottom: 10 }}>{eyebrow}</div>
+        <h3 style={{ fontSize: 30, lineHeight: 1.15, fontWeight: 700, color: TEXT, letterSpacing: "-0.02em", marginBottom: 22 }}>{title}</h3>
+        <FeatureList items={items} />
+      </div>
+    </div>
+  )
+}
+
+function HighlightCard({ eyebrow, title, body }: { eyebrow: string; title: string; body: string }) {
+  return (
+    <div style={{ background: "#ffffff", border: `1px solid ${BORDER}`, borderRadius: 20, padding: 30 }}>
+      <div style={{ fontSize: 11, letterSpacing: "0.16em", color: TEAL, fontWeight: 600, marginBottom: 10 }}>{eyebrow}</div>
+      <div style={{ fontSize: 22, lineHeight: 1.25, fontWeight: 700, color: TEXT, marginBottom: 12 }}>{title}</div>
+      <div style={{ fontSize: 15, lineHeight: 1.6, color: MUTED }}>{body}</div>
+    </div>
   )
 }
 
@@ -687,153 +650,6 @@ function FeatureList({
           </div>
         </div>
       ))}
-    </div>
-  )
-}
-
-function EditorMock() {
-  const line = (text: string, extra: Record<string, string | number> = {}) => (
-    <div style={{ fontSize: 11, color: TEXT, lineHeight: 1.6, ...extra }}>{text}</div>
-  )
-  return (
-    <div
-      style={{
-        background: "#ffffff",
-        border: `1px solid ${BORDER}`,
-        borderRadius: 20,
-        overflow: "hidden",
-        boxShadow: "0 12px 32px rgba(30,30,20,0.06)",
-      }}
-    >
-      <div
-        style={{
-          padding: "10px 16px",
-          background: CREAM,
-          borderBottom: `1px solid ${BORDER}`,
-          fontSize: 11,
-          color: SUBTLE,
-          fontWeight: 600,
-          letterSpacing: "0.1em",
-        }}
-      >
-        TRANSLATION · CERTIFICATE OF RESIDENCE
-      </div>
-      <div style={{ padding: "16px 18px 6px" }}>
-        {line("MUNICIPALITY OF ESEMPIO", { fontWeight: 700, textAlign: "center" })}
-        {line("CERTIFICATE OF RESIDENCE", { fontWeight: 700, textAlign: "center", marginBottom: 8 })}
-        {line("Mr BIANCHI LUCA, born in Bari (BA) on 12/03/1987, is resident in this Municipality…", { color: MUTED })}
-        {line("Esempio, 14/09/2026 — protocol no. 55[illegible]9/2026", { color: MUTED, marginBottom: 8 })}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: 8,
-            padding: 8,
-            borderRadius: 8,
-            background: TEAL_SOFT,
-            outline: `2px solid ${TEAL}`,
-          }}
-        >
-          <div style={{ fontSize: 10, fontStyle: "italic", color: TEXT }}>[Round stamp: Municipality of Esempio – Registry Office]</div>
-          <div style={{ fontSize: 10, color: TEXT }}>
-            The Registrar
-            <br />
-            Dr Maria Verdi
-            <br />
-            <span style={{ fontStyle: "italic" }}>[Signature]</span>
-          </div>
-        </div>
-      </div>
-      <div style={{ padding: "10px 18px 16px", display: "grid", gap: 8 }}>
-        <div
-          style={{
-            justifySelf: "end",
-            maxWidth: "85%",
-            background: CREAM_DARK,
-            borderRadius: 12,
-            padding: "8px 12px",
-            fontSize: 11,
-            color: TEXT,
-          }}
-        >
-          Put the stamp beside the signature, like the original.
-        </div>
-        <div
-          style={{
-            justifySelf: "start",
-            maxWidth: "85%",
-            background: "#ffffff",
-            border: `1px solid ${TEAL_SOFT}`,
-            borderRadius: 12,
-            padding: "8px 12px",
-            fontSize: 11,
-            color: TEXT,
-          }}
-        >
-          <span style={{ color: TEAL, fontWeight: 600 }}>AI · </span>
-          Done: stamp on the left, name and signature on the right, in a borderless table.
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function CertMock() {
-  return (
-    <div
-      style={{
-        background: "#ffffff",
-        border: `1px solid ${BORDER}`,
-        borderRadius: 20,
-        padding: 26,
-        boxShadow: "0 12px 32px rgba(30,30,20,0.06)",
-      }}
-    >
-      <div
-        style={{
-          width: 64,
-          height: 28,
-          background: CREAM_DARK,
-          borderRadius: 6,
-          marginBottom: 22,
-        }}
-      />
-      <div
-        style={{
-          fontSize: 14,
-          fontWeight: 700,
-          textAlign: "center",
-          marginBottom: 16,
-          color: TEXT,
-          letterSpacing: "0.04em",
-        }}
-      >
-        CERTIFIED TRANSLATION STATEMENT
-      </div>
-      <div style={{ fontSize: 11, lineHeight: 1.6, color: MUTED }}>
-        I hereby certify that the foregoing is a true and complete translation of the attached document.
-      </div>
-      <div style={{ marginTop: 18, fontSize: 11, color: MUTED, lineHeight: 1.8 }}>
-        Translator: translator@example.com
-        <br />
-        Date: 2026-05-26
-        <br />
-        Source language: Italian
-        <br />
-        Target language: English
-      </div>
-      <div
-        style={{
-          marginTop: 22,
-          paddingTop: 18,
-          borderTop: `1px solid ${BORDER}`,
-          fontStyle: "italic",
-          color: SUBTLE,
-          fontSize: 11,
-        }}
-      >
-        [Signature: Jane Doe]
-      </div>
     </div>
   )
 }
@@ -1187,6 +1003,14 @@ function FAQ() {
     {
       q: "How does pricing work?",
       a: "Each page is one credit. Subscriptions include a monthly allowance (19 on Basic, 29 on Pro) that resets each billing period. Credit packs of 10, 25, or 50 don't expire. The 7-day trial includes 1 page.",
+    },
+    {
+      q: "What does a page credit include?",
+      a: "Translating one page, plus 10 AI edits on that document with Ask AI. After that, 1 credit adds 10 more edits. Each document can be regenerated from scratch twice.",
+    },
+    {
+      q: "Does it really learn from my corrections?",
+      a: "Yes. The terms you correct are added to your team's terminology and used in future translations; you can remove any of them. Finished documents become templates, so the next document of the same kind starts from your approved version.",
     },
     {
       q: "What happens to my files?",

@@ -1383,11 +1383,12 @@ export default function DocumentEditor({
         style={{ background: "#e8dfc7", border: "1px solid #e7ddc5", minHeight: 0 }}
       >
         <div
-          className="relative px-4 py-2 flex items-center justify-between gap-2 text-[11px] font-semibold tracking-[0.14em]"
+          className="relative px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-[11px] font-semibold tracking-[0.14em]"
           style={{ color: "#9a9178", background: "#faf5ee", borderBottom: "1px solid #f1e8d1" }}
         >
           <span>TRANSLATION</span>
-          <div className="flex items-center gap-1.5">
+          {/* Buttons keep their labels on one line; the row wraps instead when the assistant narrows the pane. */}
+          <div className="flex flex-wrap items-center justify-end gap-1.5 [&_button]:whitespace-nowrap">
             {saveLabel && (
               <span
                 role="status"
