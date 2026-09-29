@@ -892,6 +892,7 @@ def _call_claude_to_author(
     images: list,
     tables: list,
     model: Optional[str] = None,
+    terminology: str = "",
 ) -> str:
     """Send the PDF + prompt to Claude (falling back down the model chain) and return the raw reply."""
     try:
@@ -919,6 +920,8 @@ def _call_claude_to_author(
         sandbox_rules=SANDBOX_RULES,
         notation_rules=NOTATION_RULES,
     )
+    if terminology:
+        prompt += "\n" + terminology
 
     logger.info(
         "Calling Claude (model=%s) for authored rebuild "
@@ -2287,6 +2290,7 @@ def author_rebuild_docx(
     *,
     model: Optional[str] = None,
     timeout_seconds: int = 300,
+    terminology: str = "",
 ) -> bytes:
     """End-to-end Claude-authored rebuild.
 
@@ -2317,6 +2321,7 @@ def author_rebuild_docx(
                 source_lang,
                 target_lang,
                 model=model,
+                terminology=terminology,
             )
         except Exception:
             logger.exception(
@@ -2351,6 +2356,7 @@ def author_rebuild_docx(
             images=images,
             tables=tables,
             model=model,
+            terminology=terminology,
         )
         script = _strip_code_fence(raw)
         _validate_script(script, output_path)

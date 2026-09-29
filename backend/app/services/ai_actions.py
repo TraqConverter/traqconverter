@@ -84,6 +84,9 @@ def run_rebuild(project_id: str, instructions: str | None, charge_reference: str
             src_path = tmp_dir / "source.pdf"
             download_file_from_s3(project.file_path, src_path)
             pdf_bytes = src_path.read_bytes()
+            from app.services.learning import team_terminology
+
+            terminology = team_terminology(db, project)
             if instructions:
                 from app.services.claude_multiturn_rebuild import author_rebuild_docx_multiturn
 
@@ -92,6 +95,7 @@ def run_rebuild(project_id: str, instructions: str | None, charge_reference: str
                     project.source_language or "",
                     project.target_language or "",
                     extra_instructions=instructions,
+                    terminology=terminology,
                 )
             else:
                 from app.services.claude_authored_rebuild import author_rebuild_docx
@@ -100,6 +104,7 @@ def run_rebuild(project_id: str, instructions: str | None, charge_reference: str
                     pdf_bytes=pdf_bytes,
                     source_lang=project.source_language or "",
                     target_lang=project.target_language or "",
+                    terminology=terminology,
                 )
             out_path = tmp_dir / f"authored_{project.id}.docx"
             out_path.write_bytes(docx_bytes)

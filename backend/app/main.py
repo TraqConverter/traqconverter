@@ -250,6 +250,7 @@ from app.routers import translation_memory
 from app.routers import members
 from app.routers import certifications
 from app.routers import ws
+from app.routers import learning as learning_router
 
 app.include_router(settings_router.router)
 app.include_router(stripe.router)
@@ -266,6 +267,7 @@ app.include_router(translation_memory.router)
 app.include_router(members.router)
 app.include_router(certifications.router)
 app.include_router(ws.router)
+app.include_router(learning_router.router)
 
 logger.info("All routers registered successfully")
 
@@ -279,6 +281,7 @@ import asyncio
 import os
 import threading
 from app.services.watchdog import recover_stalled_jobs
+from app.services.learning import process_pending as process_pending_learning
 
 WATCHDOG_INTERVAL_SECONDS = 60
 
@@ -289,6 +292,11 @@ async def _watchdog_loop():
             recover_stalled_jobs()
         except Exception:
             logger.exception("Watchdog cycle errored")
+        try:
+            # Off the event loop: it can make a model call.
+            await asyncio.to_thread(process_pending_learning)
+        except Exception:
+            logger.exception("Learning cycle errored")
         await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)
 
 

@@ -10,7 +10,12 @@ import re
 from app.services import claude_params
 
 from app.services.translation_memory_service import get_tm_entries
-from app.services.glossary_service import build_glossary_prompt, get_glossary
+from app.services.glossary_service import (
+    build_glossary_prompt,
+    get_glossary,
+    project_source_language,
+    relevant_terms,
+)
 from app.models.glossary import Glossary
 
 logger = logging.getLogger(__name__)
@@ -319,11 +324,9 @@ def translate_text(
         try:
             scope_id = get_project_scope(project)
 
-            glossary_entries = get_glossary(
-                db,
-                scope_id,
-                source_lang,
-                target_lang
+            glossary_entries = relevant_terms(
+                get_glossary(db, scope_id, project_source_language(project) or source_lang, target_lang),
+                text,
             )
 
             glossary_prompt = build_glossary_prompt(glossary_entries)
@@ -425,11 +428,9 @@ def translate_batch(
 
     if db and project and scope_id and project_apply_glossary:
         try:
-            glossary_entries = get_glossary(
-                db,
-                scope_id,
-                source_lang,
-                target_lang
+            glossary_entries = relevant_terms(
+                get_glossary(db, scope_id, project_source_language(project) or source_lang, target_lang),
+                "\n".join(texts),
             )
 
             glossary_prompt = build_glossary_prompt(glossary_entries)

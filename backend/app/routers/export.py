@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 from uuid import UUID
 from fastapi.responses import StreamingResponse
@@ -13,6 +13,7 @@ from app.models.project import TranslationProject
 from app.models.user import User
 
 from app.services.export_service import generate_docx, generate_pdf
+from app.services.learning import capture_template_in_background
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ router = APIRouter(prefix="/projects", tags=["Export"])
 )
 def export_docx_route(
     project_id: UUID,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -60,6 +62,7 @@ def export_docx_route(
         logger.exception("Request failed")
         raise HTTPException(status_code=500, detail="DOCX export failed")
 
+    background_tasks.add_task(capture_template_in_background, project.id, current_user.id)
     return StreamingResponse(
         file_buffer,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -78,6 +81,7 @@ def export_docx_route(
 )
 def export_pdf_route(
     project_id: UUID,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -108,6 +112,7 @@ def export_pdf_route(
         logger.exception("Request failed")
         raise HTTPException(status_code=500, detail="PDF export failed")
 
+    background_tasks.add_task(capture_template_in_background, project.id, current_user.id)
     return StreamingResponse(
         file_buffer,
         media_type="application/pdf",

@@ -1048,6 +1048,7 @@ def author_rebuild_docx_multiturn(
     max_turns: int = DEFAULT_MAX_TURNS,
     timeout_per_run_seconds: int = 180,
     extra_instructions: Optional[str] = None,
+    terminology: str = "",
 ) -> bytes:
     """End-to-end multi-turn Claude-authored rebuild.
 
@@ -1067,6 +1068,7 @@ def author_rebuild_docx_multiturn(
         max_turns=max_turns,
         timeout_per_run_seconds=timeout_per_run_seconds,
         extra_instructions=extra_instructions,
+        terminology=terminology,
     )
 
 
@@ -1101,6 +1103,7 @@ def _author_rebuild_docx_multiturn_core(
     max_turns: int = DEFAULT_MAX_TURNS,
     timeout_per_run_seconds: int = 180,
     extra_instructions: Optional[str] = None,
+    terminology: str = "",
     _force_doc_type: Optional[str] = None,
     _disable_page_by_page: bool = False,
 ) -> bytes:
@@ -1165,6 +1168,7 @@ def _author_rebuild_docx_multiturn_core(
             max_turns=max_turns,
             timeout_per_run_seconds=timeout_per_run_seconds,
             extra_instructions=extra_instructions,
+            terminology=terminology,
         )
 
     out_dir = Path(tempfile.mkdtemp(prefix="claude_multiturn_"))
@@ -1221,6 +1225,8 @@ def _author_rebuild_docx_multiturn_core(
         notation_rules=NOTATION_RULES,
     )
     initial_prompt = prompt_template.format(**format_kwargs)
+    if terminology:
+        initial_prompt += "\n\n" + terminology
 
     if extra_instructions and extra_instructions.strip():
         initial_prompt += (
@@ -1472,6 +1478,7 @@ def _author_rebuild_form_page_by_page(
     max_turns: int = DEFAULT_MAX_TURNS,
     timeout_per_run_seconds: int = 180,
     extra_instructions: Optional[str] = None,
+    terminology: str = "",
 ) -> bytes:
     """Multi-page FORM rebuild: split into single pages, run a full
     multi-turn rebuild on each, then merge the resulting DOCXs.
@@ -1496,6 +1503,7 @@ def _author_rebuild_form_page_by_page(
             max_turns=max_turns,
             timeout_per_run_seconds=timeout_per_run_seconds,
             extra_instructions=extra_instructions,
+            terminology=terminology,
             _force_doc_type="FORM",
             _disable_page_by_page=True,
         )
@@ -1527,6 +1535,7 @@ def _author_rebuild_form_page_by_page(
                 max_turns=max_turns,
                 timeout_per_run_seconds=timeout_per_run_seconds,
                 extra_instructions=page_extra,
+                terminology=terminology,
                 _force_doc_type="FORM",
                 _disable_page_by_page=True,
             )

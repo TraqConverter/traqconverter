@@ -24,6 +24,7 @@ from app.dependencies.feature_guard import require_feature
 from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import can_manage_project, get_user_project_or_404
 from app.services import ai_actions
+from app.services.learning import capture_template_in_background
 from app.services.project_lifecycle import enqueue_job, job_charge_reference
 from app.models.project import TranslationProject, ProjectStatus
 from app.models.user import User
@@ -726,6 +727,7 @@ class _ReviewStatusPayload(BaseModel):
 def update_review_status(
     project_id: UUID,
     data: _ReviewStatusPayload,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -741,6 +743,8 @@ def update_review_status(
     project.review_status = new_status
     db.commit()
     db.refresh(project)
+    if new_status == "CERTIFIED":
+        background_tasks.add_task(capture_template_in_background, project.id, current_user.id)
     return {"id": str(project.id), "review_status": project.review_status}
 
 
@@ -754,6 +758,7 @@ def update_review_status(
 )
 def certify_project(
     project_id: UUID,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -770,6 +775,7 @@ def certify_project(
     project.review_status = "CERTIFIED"
     db.commit()
     db.refresh(project)
+    background_tasks.add_task(capture_template_in_background, project.id, current_user.id)
     return {
         "id": str(project.id),
         "review_status": project.review_status,

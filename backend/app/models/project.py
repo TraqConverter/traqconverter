@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, Boolean, ForeignKey, Enum
+from sqlalchemy import JSON, Column, String, Integer, DateTime, Boolean, ForeignKey, Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -136,6 +136,13 @@ class TranslationProject(Base):
     rebuild_started_at = Column(DateTime, nullable=True)
     failure_reason = Column(String, nullable=True)
     document_version = Column(Integer, nullable=False, default=0, server_default="0")
+    doc_profile = Column(JSON, nullable=True)
+    doc_key = Column(String, nullable=True, index=True)
+    template_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("document_templates.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+    )
 
 
 
@@ -148,3 +155,7 @@ class TranslationProject(Base):
     user = relationship("User", foreign_keys=[user_id], back_populates="projects")
     team = relationship("Team")
     assignee = relationship("User", foreign_keys=[assignee_id])
+
+
+# Registers document_templates so the template_id foreign key resolves.
+import app.models.learning  # noqa: E402,F401

@@ -14,7 +14,7 @@ from app.dependencies.tenant import get_user_project_or_404
 from app.models.project import TranslationProject
 from app.models.translation_segment import TranslationSegment
 from app.models.user import User
-from app.services import docx_blocks, document_editor
+from app.services import docx_blocks, document_editor, learning
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +116,7 @@ def edit_document(
         raise HTTPException(status_code=409, detail="The document changed; reloaded the latest version")
     if changed:
         document_editor.save_version(db, project, new_data, f"Edited {len(changed)} paragraph(s)", user)
+        learning.record_changes(db, project, data, new_data, "typed")
     db.commit()
     return {"version": project.document_version}
 
@@ -157,6 +158,7 @@ def chat_document(
     _require_version(project, payload.version)
     if changed or new_data is not data:
         document_editor.save_version(db, project, new_data, f"AI: {payload.message[:150]}", user)
+        learning.record_changes(db, project, data, new_data, "chat")
     db.commit()
     return {"version": project.document_version, "reply": reply, "changed_block_ids": changed}
 

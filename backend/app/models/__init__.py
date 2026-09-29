@@ -8,3 +8,5 @@ from app.models.team_member import TeamMember, TeamInvite
 from app.models.certification import Certification
 from .segment_comment import SegmentComment
 from app.models.document_version import DocumentVersion
+from app.models.glossary import Glossary
+from app.models.learning import DocumentTemplate, PendingLearning

@@ -277,7 +277,7 @@ def test_author_rebuild_uses_rebuild_default_model(monkeypatch):
     monkeypatch.setattr(claude_params, "REBUILD_MODEL", "claude-opus-4-6")
     monkeypatch.setattr(
         mt, "author_rebuild_docx_multiturn",
-        lambda pdf, s, t, model=None: seen.setdefault("model", model) and b"docx",
+        lambda pdf, s, t, model=None, **kw: seen.setdefault("model", model) and b"docx",
     )
     car.author_rebuild_docx(b"pdf", "it", "en")
     assert seen["model"] == "claude-opus-4-6"
