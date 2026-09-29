@@ -318,7 +318,10 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
 
 
 
-    MAX_LONG_EDGE = 3000
+    # The API downsizes anything larger before the model sees it; sending exactly what it sees keeps
+    # the pixel frame we state in the prompt identical to the model's, so bboxes land where they should.
+    MAX_LONG_EDGE = 1568
+    MAX_PIXELS = 1_150_000
     MAX_BYTES = 4_500_000
     try:
         with Image.open(image_path) as pil:
@@ -326,23 +329,14 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
             orig_w, orig_h = pil.size
             mode = pil.mode
 
-            long_edge = max(orig_w, orig_h)
-
-
-
-            if long_edge != MAX_LONG_EDGE:
-                scale = MAX_LONG_EDGE / long_edge
+            scale = min(1.0, MAX_LONG_EDGE / max(orig_w, orig_h), (MAX_PIXELS / (orig_w * orig_h)) ** 0.5)
+            if scale < 1.0:
                 send_w = max(1, int(orig_w * scale))
                 send_h = max(1, int(orig_h * scale))
-                send_img = pil.convert("RGB").resize(
-                    (send_w, send_h), Image.LANCZOS
-                )
+                send_img = pil.convert("RGB").resize((send_w, send_h), Image.LANCZOS)
             else:
                 send_img = pil.convert("RGB")
                 send_w, send_h = orig_w, orig_h
-
-
-
 
             img_bytes = b""
             for quality in (85, 75, 65, 55):

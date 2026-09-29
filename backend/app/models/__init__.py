@@ -12,3 +12,4 @@ from app.models.glossary import Glossary
 from app.models.learning import DocumentTemplate, PendingLearning
 from app.models.ai_usage import AiUsage
 from app.models.batch import Batch, BatchTerm
+from app.models.review import ReviewState
