@@ -304,9 +304,9 @@ export default function CertificationsPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           <div
-            className="flex items-center gap-2 px-4 py-2 rounded-full w-72"
+            className="flex items-center gap-2 px-4 py-2 rounded-full w-full sm:w-72"
             style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
           >
             <svg

@@ -7,7 +7,7 @@ export type BatchRef = { id: string; name: string }
 export default function BatchBadge({ batch }: { batch: BatchRef }) {
   return (
     <Link
-      href={`/batches/${batch.id}`}
+      href={`/jobs?batch=${batch.id}`}
       onClick={(e) => e.stopPropagation()}
       title={`Batch: ${batch.name}`}
       className="inline-flex items-center gap-1 max-w-[180px] px-2 py-0.5 rounded-full text-[11px] font-medium align-middle hover:underline"

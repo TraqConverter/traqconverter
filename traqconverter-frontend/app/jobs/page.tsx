@@ -1,9 +1,10 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { useRouter } from "next/navigation"
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { api } from "@/lib/api"
-import BatchBadge, { type BatchRef } from "@/components/BatchBadge"
+import { type BatchRef } from "@/components/BatchBadge"
+import BatchGroup, { type BatchDetail, type BatchDoc, type BatchSummary } from "./BatchGroup"
 
 type Assignee = {
   id: string
@@ -25,6 +26,7 @@ type Project = {
   assignee_id: string | null
   assignee: Assignee | null
   batch?: BatchRef | null
+  partial?: boolean
 }
 
 function effectiveStatus(p: { status?: string; review_status?: string }) {
@@ -107,9 +109,63 @@ function relativeTime(iso?: string) {
 }
 
 export default function JobsPage() {
+  return (
+    <Suspense fallback={null}>
+      <Jobs />
+    </Suspense>
+  )
+}
+
+type Entry =
+  | { kind: "doc"; project: Project }
+  | { kind: "group"; id: string; name: string; docs: Project[]; all: Project[] }
+
+const POLL_MS = 5000
+
+const ROW_GRID =
+  "md:grid-cols-[minmax(0,2fr)_128px_112px_minmax(0,1fr)_72px] xl:grid-cols-[minmax(0,2.4fr)_128px_112px_minmax(0,1.2fr)_minmax(0,1.1fr)_56px_84px_72px]"
+
+function isActive(p: { status?: string }) {
+  const s = (p.status || "").toUpperCase()
+  return s === "PENDING" || s === "PROCESSING"
+}
+
+function fromBatchDoc(d: BatchDoc, batch: BatchRef): Project {
+  return {
+    id: d.id,
+    filename: d.filename,
+    status: d.status,
+    review_status: d.review_status,
+    progress: d.progress,
+    source_lang: d.source_lang,
+    target_lang: d.target_lang,
+    page_count: d.page_count,
+    credits_used: d.page_count,
+    created_at: d.created_at || "",
+    assignee_id: null,
+    assignee: null,
+    batch,
+    partial: true,
+  }
+}
+
+function initialsOf(fullName: string | null, email: string) {
+  const name = (fullName || "").trim()
+  if (name) {
+    const parts = name.split(/\s+/).filter(Boolean)
+    return parts.length >= 2 ? (parts[0][0] + parts[1][0]).toUpperCase() : parts[0].slice(0, 2).toUpperCase()
+  }
+  return email.slice(0, 2).toUpperCase()
+}
+
+function Jobs() {
   const router = useRouter()
+  const highlight = useSearchParams().get("batch")
 
   const [projects, setProjects] = useState<Project[]>([])
+  const [summaries, setSummaries] = useState<Record<string, BatchSummary>>({})
+  const [details, setDetails] = useState<Record<string, BatchDetail>>({})
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(highlight ? [highlight] : []))
   const [members, setMembers] = useState<Member[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -123,6 +179,9 @@ export default function JobsPage() {
   const [renameBusy, setRenameBusy] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
+
+  const highlightRef = useRef<HTMLDivElement | null>(null)
+  const scrolledTo = useRef<string | null>(null)
 
   const closeRename = () => {
     setRenamingId(null)
@@ -178,26 +237,11 @@ export default function JobsPage() {
     }
   }
 
-  useEffect(() => {
-    fetchJobs()
-    fetchMembers()
-  }, [])
-
-  useEffect(() => {
-    if (!assigningId) return
-    const onClick = () => setAssigningId(null)
-    window.addEventListener("click", onClick)
-    return () => window.removeEventListener("click", onClick)
-  }, [assigningId])
-
-  const fetchJobs = async () => {
+  const fetchJobs = useCallback(async () => {
     try {
-      setLoading(true)
-
       const res = await api.get("/projects/")
       setProjects(res.data || [])
     } catch (err: any) {
-      console.error("PROJECTS ERROR:", err)
       setError(
         err?.response?.data?.detail ||
           "Couldn't load your projects — try refreshing in a moment."
@@ -205,17 +249,63 @@ export default function JobsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  const fetchMembers = async () => {
+  const fetchSummaries = useCallback(async () => {
     try {
-      const res = await api.get("/members")
-      setMembers(res.data?.members || [])
+      const res = await api.get("/batches")
+      const list: BatchSummary[] = res.data || []
+      setSummaries(Object.fromEntries(list.map((b) => [b.id, b])))
     } catch {
-
-      setMembers([])
+      setSummaries({})
     }
-  }
+  }, [])
+
+  const loadDetail = useCallback(async (id: string) => {
+    try {
+      const res = await api.get(`/batches/${id}`)
+      setDetails((d) => ({ ...d, [id]: res.data }))
+    } catch {
+      // Group still renders from the projects list and the summary.
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchJobs()
+    fetchSummaries()
+    api
+      .get("/members")
+      .then((res) => setMembers(res.data?.members || []))
+      .catch(() => setMembers([]))
+  }, [fetchJobs, fetchSummaries])
+
+  const requested = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    for (const id of expanded) {
+      if (details[id] || requested.current.has(id)) continue
+      requested.current.add(id)
+      loadDetail(id)
+    }
+  }, [expanded, details, loadDetail])
+
+  const anyActive =
+    projects.some(isActive) || Object.values(details).some((d) => d.projects.some(isActive))
+  useEffect(() => {
+    if (!anyActive) return
+    const t = window.setInterval(() => {
+      fetchJobs()
+      fetchSummaries()
+      for (const id of Object.keys(details)) loadDetail(id)
+    }, POLL_MS)
+    return () => window.clearInterval(t)
+  }, [anyActive, details, fetchJobs, fetchSummaries, loadDetail])
+
+  useEffect(() => {
+    if (!assigningId) return
+    const onClick = () => setAssigningId(null)
+    window.addEventListener("click", onClick)
+    return () => window.removeEventListener("click", onClick)
+  }, [assigningId])
 
   const assignProject = async (projectId: string, assigneeId: string | null) => {
     try {
@@ -246,7 +336,6 @@ export default function JobsPage() {
       )
       setAssigningId(null)
     } catch (err: any) {
-      console.error("ASSIGN ERROR:", err)
       setError(
         err?.response?.data?.detail ||
           "Couldn't update the assignee. Please try again."
@@ -267,71 +356,380 @@ export default function JobsPage() {
     return c
   }, [projects])
 
-  const visible = useMemo(() => {
-    let list = projects
-    if (tab === "active") {
-      list = list.filter((p) => {
-        const s = effectiveStatus(p)
-        return s === "PROCESSING" || s === "PENDING"
-      })
-    } else if (tab === "review") {
-      list = list.filter((p) => effectiveStatus(p) === "IN_REVIEW")
-    } else if (tab === "delivered") {
-      list = list.filter((p) => {
-        const s = effectiveStatus(p)
-        return s === "COMPLETED" || s === "CERTIFIED"
-      })
+  const entries = useMemo<Entry[]>(() => {
+    const q = query.trim().toLowerCase()
+    const tabOk = (p: Project) => {
+      const s = effectiveStatus(p)
+      if (tab === "active") return s === "PROCESSING" || s === "PENDING"
+      if (tab === "review") return s === "IN_REVIEW"
+      if (tab === "delivered") return s === "COMPLETED" || s === "CERTIFIED"
+      return true
     }
-    if (query.trim()) {
-      const q = query.toLowerCase()
-      list = list.filter((p) =>
-        (p.filename || "").toLowerCase().includes(q) ||
-        (p.source_lang || "").toLowerCase().includes(q) ||
-        (p.target_lang || "").toLowerCase().includes(q)
+    const queryOk = (p: Project) =>
+      !q ||
+      (p.filename || "").toLowerCase().includes(q) ||
+      (p.source_lang || "").toLowerCase().includes(q) ||
+      (p.target_lang || "").toLowerCase().includes(q)
+
+    const byBatch = new Map<string, Project[]>()
+    const known = new Set(projects.map((p) => p.id))
+    for (const p of projects) {
+      if (p.batch) byBatch.set(p.batch.id, [...(byBatch.get(p.batch.id) || []), p])
+    }
+    // GET /projects/ is capped, so a batch can have documents only its detail knows about.
+    for (const d of Object.values(details)) {
+      const ref = { id: d.id, name: d.name }
+      const extra = d.projects.filter((x) => !known.has(x.id)).map((x) => fromBatchDoc(x, ref))
+      if (extra.length) byBatch.set(d.id, [...(byBatch.get(d.id) || []), ...extra])
+    }
+
+    const out: Entry[] = []
+    const seen = new Set<string>()
+    const addGroup = (id: string, name: string) => {
+      seen.add(id)
+      const all = byBatch.get(id) || []
+      const nameHit = !!q && name.toLowerCase().includes(q)
+      const docs = all.filter((p) => tabOk(p) && (nameHit || queryOk(p)))
+      if (docs.length || id === highlight || (nameHit && tab === "all")) {
+        out.push({ kind: "group", id, name, docs, all })
+      }
+    }
+
+    if (highlight && !projects.some((p) => p.batch?.id === highlight)) {
+      const h = details[highlight] || summaries[highlight]
+      if (h) addGroup(highlight, h.name)
+    }
+    for (const p of projects) {
+      if (p.batch) {
+        if (!seen.has(p.batch.id)) {
+          addGroup(p.batch.id, p.batch.name || summaries[p.batch.id]?.name || "")
+        }
+      } else if (tabOk(p) && queryOk(p)) {
+        out.push({ kind: "doc", project: p })
+      }
+    }
+    return out
+  }, [projects, details, summaries, tab, query, highlight])
+
+  useEffect(() => {
+    if (!highlight || scrolledTo.current === highlight || !highlightRef.current) return
+    scrolledTo.current = highlight
+    highlightRef.current.scrollIntoView({ block: "center" })
+  }, [highlight, entries])
+
+  const toggleGroup = (id: string) =>
+    setExpanded((s) => {
+      const next = new Set(s)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const refreshBatch = (id: string) => {
+    fetchJobs()
+    fetchSummaries()
+    loadDetail(id)
+  }
+
+  const groupSummary = (id: string, all: Project[]) => {
+    const s = summaries[id] || details[id]
+    if (s) return s
+    const completed = all.filter((p) => (p.status || "").toUpperCase() === "COMPLETED").length
+    const failed = all.filter((p) => (p.status || "").toUpperCase() === "FAILED").length
+    return {
+      documents: all.length,
+      pages: all.reduce((n, p) => n + (p.page_count || 0), 0),
+      completed,
+      failed,
+      in_progress: all.length - completed - failed,
+      terms: 0,
+    }
+  }
+
+  const renderAssignee = (p: Project) => {
+    if (p.partial) {
+      return (
+        <span className="text-xs" style={{ color: "#9a9178" }}>
+          —
+        </span>
       )
     }
-    return list
-  }, [projects, tab, query])
+    return (
+      <div className="relative" onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            setAssigningId(assigningId === p.id ? null : p.id)
+          }}
+          className="flex items-center gap-2 max-w-full text-left transition"
+          style={{ color: "#1f2a2e" }}
+        >
+          {p.assignee ? (
+            <>
+              <div
+                className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0"
+                style={{ background: "#cfe6e2", color: "#0a7870" }}
+              >
+                {initialsOf(p.assignee.full_name, p.assignee.email)}
+              </div>
+              <span className="text-xs truncate" style={{ color: "#4a4638" }}>
+                {p.assignee.full_name || p.assignee.email.split("@")[0]}
+              </span>
+            </>
+          ) : (
+            <span
+              className="text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap"
+              style={{ background: "#f3ecdb", color: "#8a8270", border: "1px solid #e7ddc5" }}
+            >
+              + Assign
+            </span>
+          )}
+        </button>
+
+        {assigningId === p.id && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="absolute z-20 mt-2 right-0 xl:right-auto xl:left-0 w-64 max-w-[80vw] rounded-xl py-2 max-h-64 overflow-y-auto"
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e7ddc5",
+              boxShadow: "0 8px 24px rgba(30,30,20,0.12)",
+            }}
+          >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                assignProject(p.id, null)
+              }}
+              disabled={assignBusy === p.id}
+              className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition hover:bg-[#faf5ee]"
+              style={{ color: "#8a8270" }}
+            >
+              <span
+                className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold"
+                style={{ background: "#f3ecdb", color: "#9a9178" }}
+              >
+                —
+              </span>
+              Unassigned
+            </button>
+            {members.length === 0 ? (
+              <div className="px-3 py-3 text-xs" style={{ color: "#8a8270" }}>
+                No team members yet — invite teammates from the Members page.
+              </div>
+            ) : (
+              members.map((m) => {
+                const isCurrent = p.assignee_id === m.id
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      assignProject(p.id, m.id)
+                    }}
+                    disabled={assignBusy === p.id}
+                    className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition hover:bg-[#faf5ee]"
+                    style={{ color: "#1f2a2e", background: isCurrent ? "#f3ecdb" : undefined }}
+                  >
+                    <span
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold"
+                      style={{ background: "#cfe6e2", color: "#0a7870" }}
+                    >
+                      {initialsOf(m.full_name, m.email)}
+                    </span>
+                    <span className="flex-1 truncate">{m.full_name || m.email.split("@")[0]}</span>
+                    {isCurrent && (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0a7870" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="m5 12 5 5 10-10" />
+                      </svg>
+                    )}
+                  </button>
+                )
+              })
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const renderActions = (p: Project) =>
+    p.partial ? null : (
+      <div className="flex justify-end items-center gap-1" onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          title="Rename project"
+          aria-label="Rename project"
+          onClick={(e) => {
+            e.stopPropagation()
+            setRenamingId(p.id)
+            setRenameDraft(p.filename || "")
+          }}
+          className="w-8 h-8 rounded-md flex items-center justify-center transition hover:bg-[#f3ecdb]"
+          style={{ color: "#6b6558" }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4Z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          title="Delete project"
+          aria-label="Delete project"
+          onClick={(e) => {
+            e.stopPropagation()
+            setDeletingId(p.id)
+          }}
+          className="w-8 h-8 rounded-md flex items-center justify-center transition hover:bg-[#f9efe9]"
+          style={{ color: "#b14a3a" }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 6h18" />
+            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+            <path d="M19 6 18 21H6L5 6" />
+          </svg>
+        </button>
+      </div>
+    )
+
+  const renderRow = (p: Project, inGroup: boolean) => {
+    const st = statusStyle(effectiveStatus(p))
+    const progress = Math.max(0, Math.min(100, p.progress || 0))
+    const open = () => router.push(`/editor/${p.id}`)
+    const statusChip = (
+      <span
+        className="inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.04em] px-2.5 py-1 rounded-full whitespace-nowrap"
+        style={{ background: st.bg, color: st.text }}
+      >
+        <span className="w-1.5 h-1.5 rounded-full" style={{ background: st.dot }} />
+        {st.label}
+      </span>
+    )
+    const langs = (
+      <div className="flex items-center gap-1.5">
+        <LangChip text={langChip(p.source_lang)} />
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9a9178" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M5 12h14M13 6l6 6-6 6" />
+        </svg>
+        <LangChip text={langChip(p.target_lang)} />
+      </div>
+    )
+    const fileIcon = (
+      <div
+        className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+        style={{ background: inGroup ? "#ffffff" : "#f3ecdb", color: "#6b6558", border: inGroup ? "1px solid #ede3cc" : "none" }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+          <path d="M14 2v6h6" />
+          <path d="M9 13h6M9 17h6M9 9h2" />
+        </svg>
+      </div>
+    )
+    const meta = (
+      <>
+        {p.page_count ? `${p.page_count} page${p.page_count === 1 ? "" : "s"}` : "—"} ·{" "}
+        <span className="font-mono" title={p.id}>
+          {p.id.slice(0, 8)}
+        </span>
+      </>
+    )
+
+    return (
+      <div
+        key={p.id}
+        role="button"
+        tabIndex={0}
+        onClick={open}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") open()
+        }}
+        className={`w-full text-left px-4 sm:px-5 py-3.5 md:py-4 transition cursor-pointer hover:bg-[#fbf6ea] md:grid md:items-center md:gap-3 ${ROW_GRID}`}
+        style={{
+          borderBottom: "1px solid #f4ecd6",
+          color: "#1f2a2e",
+          background: inGroup ? "#fffdf9" : undefined,
+          boxShadow: inGroup ? "inset 3px 0 0 #cfe6e2" : undefined,
+        }}
+      >
+        <div className={`flex items-center gap-3 min-w-0 ${inGroup ? "md:pl-5" : ""}`}>
+          {fileIcon}
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold truncate">{p.filename || "Untitled document"}</div>
+            <div className="text-xs truncate" style={{ color: "#8a8270" }}>
+              {meta}
+              <span className="md:hidden"> · {relativeTime(p.created_at)}</span>
+            </div>
+          </div>
+          <div className="md:hidden shrink-0">{renderActions(p)}</div>
+        </div>
+
+        <div className="md:hidden flex flex-wrap items-center gap-2 mt-2.5 pl-12">
+          {statusChip}
+          {langs}
+        </div>
+
+        <div className="hidden md:block">{langs}</div>
+        <div className="hidden md:block">{statusChip}</div>
+
+        <div className="hidden xl:flex items-center gap-3">
+          <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "#f1e8d1" }}>
+            <div
+              className="h-full transition-all"
+              style={{
+                width: `${progress}%`,
+                background: progress >= 100 ? "#4a8a3a" : progress > 0 ? "#0a7870" : "#cfc6ad",
+              }}
+            />
+          </div>
+          <div className="text-xs tabular-nums w-9 text-right" style={{ color: "#6b6558" }}>
+            {progress}%
+          </div>
+        </div>
+
+        <div className="hidden md:block min-w-0">{renderAssignee(p)}</div>
+
+        <div className="hidden xl:block text-right tabular-nums text-sm" style={{ color: "#4a4638" }}>
+          {p.page_count?.toLocaleString() ?? "—"}
+        </div>
+        <div className="hidden xl:block text-right text-sm" style={{ color: "#6b6558" }} title={p.created_at}>
+          {relativeTime(p.created_at)}
+        </div>
+
+        <div className="hidden md:block">{renderActions(p)}</div>
+      </div>
+    )
+  }
+
+  const isFiltered = tab !== "all" || query.trim().length > 0
 
   return (
     <div className="space-y-6 pb-16">
-      {}
       <div className="text-[12px] tracking-wide" style={{ color: "#9a9178" }}>
         TraqConverter <span style={{ color: "#cfc6ad" }}>›</span>{" "}
         <span style={{ color: "#1f2a2e" }}>Projects</span>
       </div>
 
-      {}
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
-          <h1
-            className="text-[28px] font-semibold tracking-tight"
-            style={{ color: "#1f2a2e" }}
-          >
+          <h1 className="text-[28px] font-semibold tracking-tight" style={{ color: "#1f2a2e" }}>
             Projects
           </h1>
           <p className="text-sm mt-1" style={{ color: "#8a8270" }}>
-            All your translation jobs, sorted by most recent.
+            Most recent first. Documents uploaded together are grouped as a batch.
           </p>
         </div>
         <button
           type="button"
           onClick={() => router.push("/new-translation")}
-          className="px-4 py-2.5 rounded-full text-sm font-semibold transition flex items-center gap-2"
+          className="px-4 py-2.5 rounded-full text-sm font-semibold transition flex items-center gap-2 hover:bg-[#0a645d]"
           style={{ background: "#0a7870", color: "#fff" }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "#0a645d")}
-          onMouseLeave={(e) => (e.currentTarget.style.background = "#0a7870")}
         >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 5v14M5 12h14" />
           </svg>
           New project
@@ -339,108 +737,64 @@ export default function JobsPage() {
       </div>
 
       {error && (
-        <div
-          className="text-sm rounded-lg px-3 py-2"
-          style={{ background: "#f2d4cf", color: "#7a2f24" }}
-        >
+        <div className="text-sm rounded-lg px-3 py-2" style={{ background: "#f2d4cf", color: "#7a2f24" }}>
           {error}
         </div>
       )}
 
-      {}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div
-          className="flex items-center gap-1 p-1 rounded-full"
-          style={{ background: "#f3ecdb", border: "1px solid #e7ddc5" }}
-        >
-          <TabButton
-            label="All"
-            count={counts.all}
-            active={tab === "all"}
-            onClick={() => setTab("all")}
-          />
-          <TabButton
-            label="In progress"
-            count={counts.active}
-            active={tab === "active"}
-            onClick={() => setTab("active")}
-          />
-          <TabButton
-            label="Awaiting review"
-            count={counts.review}
-            active={tab === "review"}
-            onClick={() => setTab("review")}
-          />
-          <TabButton
-            label="Delivered"
-            count={counts.delivered}
-            active={tab === "delivered"}
-            onClick={() => setTab("delivered")}
-          />
+        <div className="max-w-full overflow-x-auto">
+          <div
+            className="inline-flex items-center gap-1 p-1 rounded-full"
+            style={{ background: "#f3ecdb", border: "1px solid #e7ddc5" }}
+          >
+            <TabButton label="All" count={counts.all} active={tab === "all"} onClick={() => setTab("all")} />
+            <TabButton label="In progress" count={counts.active} active={tab === "active"} onClick={() => setTab("active")} />
+            <TabButton label="Awaiting review" count={counts.review} active={tab === "review"} onClick={() => setTab("review")} />
+            <TabButton label="Delivered" count={counts.delivered} active={tab === "delivered"} onClick={() => setTab("delivered")} />
+          </div>
         </div>
 
         <div
-          className="flex items-center gap-2 px-4 py-2 rounded-full w-72"
+          className="flex items-center gap-2 px-4 py-2 rounded-full w-full sm:w-72"
           style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
         >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="#9a9178"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9a9178" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="11" cy="11" r="7" />
             <path d="m20 20-3.5-3.5" />
           </svg>
           <input
-            placeholder="Search by file or language…"
+            placeholder="Search file, batch or language…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="flex-1 bg-transparent outline-none text-sm"
+            className="flex-1 min-w-0 bg-transparent outline-none text-sm"
             style={{ color: "#1f2a2e" }}
           />
         </div>
       </div>
 
-      {}
-      <div
-        className="rounded-2xl overflow-hidden"
-        style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
-      >
+      <div className="rounded-2xl" style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}>
         <div
-          className="grid items-center text-[11px] font-semibold tracking-[0.14em] px-5 py-3"
-          style={{
-            gridTemplateColumns:
-              "minmax(260px,2.2fr) 1fr 1fr 1.3fr 1.1fr 0.8fr 0.9fr 40px",
-            background: "#faf5ee",
-            borderBottom: "1px solid #f1e8d1",
-            color: "#9a9178",
-          }}
+          className={`hidden md:grid md:gap-3 items-center text-[11px] font-semibold tracking-[0.14em] px-5 py-3 rounded-t-2xl ${ROW_GRID}`}
+          style={{ background: "#faf5ee", borderBottom: "1px solid #f1e8d1", color: "#9a9178" }}
         >
           <div>PROJECT</div>
           <div>LANGUAGES</div>
           <div>STATUS</div>
-          <div>PROGRESS</div>
+          <div className="hidden xl:block">PROGRESS</div>
           <div>ASSIGNEE</div>
-          <div className="text-right">PAGES</div>
-          <div className="text-right">CREATED</div>
+          <div className="hidden xl:block text-right">PAGES</div>
+          <div className="hidden xl:block text-right">CREATED</div>
           <div />
         </div>
 
         {loading ? (
-          <div
-            className="px-5 py-12 text-center text-sm"
-            style={{ color: "#8a8270" }}
-          >
+          <div className="px-5 py-12 text-center text-sm" style={{ color: "#8a8270" }}>
             Loading projects…
           </div>
-        ) : visible.length === 0 ? (
+        ) : entries.length === 0 ? (
           <EmptyState
-            isFiltered={tab !== "all" || query.trim().length > 0}
+            isFiltered={isFiltered}
             onCreate={() => router.push("/new-translation")}
             onReset={() => {
               setTab("all")
@@ -448,396 +802,31 @@ export default function JobsPage() {
             }}
           />
         ) : (
-          visible.map((p) => {
-            const st = statusStyle(effectiveStatus(p))
-            const progress = Math.max(0, Math.min(100, p.progress || 0))
+          entries.map((e) => {
+            if (e.kind === "doc") return renderRow(e.project, false)
+            const open = expanded.has(e.id) || query.trim().length > 0
             return (
-              <div
-                key={p.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => router.push(`/editor/${p.id}`)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") router.push(`/editor/${p.id}`)
-                }}
-                className="w-full text-left grid items-center px-5 py-4 transition cursor-pointer"
-                style={{
-                  gridTemplateColumns:
-                    "minmax(260px,2.2fr) 1fr 1fr 1.3fr 1.1fr 0.8fr 0.9fr 40px",
-                  borderBottom: "1px solid #f4ecd6",
-                  color: "#1f2a2e",
-                  background: "#ffffff",
-                }}
-                onMouseEnter={(e) =>
-                  (e.currentTarget.style.background = "#fbf6ea")
-                }
-                onMouseLeave={(e) =>
-                  (e.currentTarget.style.background = "#ffffff")
-                }
+              <BatchGroup
+                key={`batch:${e.id}`}
+                ref={e.id === highlight ? highlightRef : undefined}
+                id={e.id}
+                name={e.name}
+                summary={groupSummary(e.id, e.all)}
+                detail={details[e.id] || null}
+                expanded={open}
+                highlighted={e.id === highlight}
+                onToggle={() => toggleGroup(e.id)}
+                onNeedDetail={() => loadDetail(e.id)}
+                onChanged={() => refreshBatch(e.id)}
               >
-                {}
-                <div className="flex items-center gap-3 min-w-0">
-                  <div
-                    className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ background: "#f3ecdb", color: "#6b6558" }}
-                  >
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
-                      <path d="M14 2v6h6" />
-                      <path d="M9 13h6M9 17h6M9 9h2" />
-                    </svg>
+                {e.docs.length ? (
+                  e.docs.map((p) => renderRow(p, true))
+                ) : (
+                  <div className="px-5 py-4 text-sm" style={{ color: "#8a8270", borderBottom: "1px solid #f4ecd6" }}>
+                    {details[e.id] ? "No documents match this filter." : "Loading documents…"}
                   </div>
-                  <div className="min-w-0">
-                    <div
-                      className="font-semibold truncate"
-                      style={{ color: "#1f2a2e" }}
-                    >
-                      {p.filename || "Untitled document"}
-                    </div>
-                    <div
-                      className="text-xs truncate"
-                      style={{ color: "#8a8270" }}
-                    >
-                      {p.credits_used
-                        ? `${p.credits_used} credit${p.credits_used === 1 ? "" : "s"}`
-                        : "—"}{" "}
-                      ·{" "}
-                      <span className="font-mono" title={p.id}>
-                        {p.id.slice(0, 8)}
-                      </span>
-                    </div>
-                    {p.batch && (
-                      <div className="mt-1">
-                        <BatchBadge batch={p.batch} />
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {}
-                <div className="flex items-center gap-1.5">
-                  <LangChip text={langChip(p.source_lang)} />
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#9a9178"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M5 12h14M13 6l6 6-6 6" />
-                  </svg>
-                  <LangChip text={langChip(p.target_lang)} />
-                </div>
-
-                {}
-                <div>
-                  <span
-                    className="inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.04em] px-2.5 py-1 rounded-full"
-                    style={{ background: st.bg, color: st.text }}
-                  >
-                    <span
-                      className="w-1.5 h-1.5 rounded-full"
-                      style={{ background: st.dot }}
-                    />
-                    {st.label}
-                  </span>
-                </div>
-
-                {}
-                <div className="flex items-center gap-3">
-                  <div
-                    className="flex-1 h-1.5 rounded-full overflow-hidden"
-                    style={{ background: "#f1e8d1" }}
-                  >
-                    <div
-                      className="h-full transition-all"
-                      style={{
-                        width: `${progress}%`,
-                        background:
-                          progress >= 100
-                            ? "#4a8a3a"
-                            : progress > 0
-                            ? "#0a7870"
-                            : "#cfc6ad",
-                      }}
-                    />
-                  </div>
-                  <div
-                    className="text-xs tabular-nums w-10 text-right"
-                    style={{ color: "#6b6558" }}
-                  >
-                    {progress}%
-                  </div>
-                </div>
-
-                {}
-                <div
-                  className="relative"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setAssigningId(assigningId === p.id ? null : p.id)
-                    }}
-                    className="flex items-center gap-2 max-w-full text-left transition"
-                    style={{ color: "#1f2a2e" }}
-                  >
-                    {p.assignee ? (
-                      <>
-                        <div
-                          className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0"
-                          style={{ background: "#cfe6e2", color: "#0a7870" }}
-                        >
-                          {(() => {
-                            const name = (p.assignee.full_name || "").trim()
-                            if (name) {
-                              const parts = name.split(/\s+/).filter(Boolean)
-                              return parts.length >= 2
-                                ? (parts[0][0] + parts[1][0]).toUpperCase()
-                                : parts[0].slice(0, 2).toUpperCase()
-                            }
-                            return p.assignee.email.slice(0, 2).toUpperCase()
-                          })()}
-                        </div>
-                        <span
-                          className="text-xs truncate"
-                          style={{ color: "#4a4638" }}
-                        >
-                          {p.assignee.full_name ||
-                            p.assignee.email.split("@")[0]}
-                        </span>
-                      </>
-                    ) : (
-                      <span
-                        className="text-xs font-medium px-2 py-0.5 rounded-full"
-                        style={{
-                          background: "#f3ecdb",
-                          color: "#8a8270",
-                          border: "1px solid #e7ddc5",
-                        }}
-                      >
-                        + Assign
-                      </span>
-                    )}
-                  </button>
-
-                  {assigningId === p.id && (
-                    <div
-                      onClick={(e) => e.stopPropagation()}
-                      className="absolute z-20 mt-2 left-0 w-64 rounded-xl py-2 max-h-64 overflow-y-auto"
-                      style={{
-                        background: "#ffffff",
-                        border: "1px solid #e7ddc5",
-                        boxShadow: "0 8px 24px rgba(30,30,20,0.12)",
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          assignProject(p.id, null)
-                        }}
-                        disabled={assignBusy === p.id}
-                        className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition"
-                        style={{ color: "#8a8270" }}
-                        onMouseEnter={(e) =>
-                          (e.currentTarget.style.background = "#faf5ee")
-                        }
-                        onMouseLeave={(e) =>
-                          (e.currentTarget.style.background = "transparent")
-                        }
-                      >
-                        <span
-                          className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold"
-                          style={{
-                            background: "#f3ecdb",
-                            color: "#9a9178",
-                          }}
-                        >
-                          —
-                        </span>
-                        Unassigned
-                      </button>
-                      {members.length === 0 ? (
-                        <div
-                          className="px-3 py-3 text-xs"
-                          style={{ color: "#8a8270" }}
-                        >
-                          No team members yet — invite teammates from the
-                          Members page.
-                        </div>
-                      ) : (
-                        members.map((m) => {
-                          const initials = (() => {
-                            const n = (m.full_name || "").trim()
-                            if (n) {
-                              const parts = n.split(/\s+/).filter(Boolean)
-                              return parts.length >= 2
-                                ? (parts[0][0] + parts[1][0]).toUpperCase()
-                                : parts[0].slice(0, 2).toUpperCase()
-                            }
-                            return m.email.slice(0, 2).toUpperCase()
-                          })()
-                          const isCurrent = p.assignee_id === m.id
-                          return (
-                            <button
-                              key={m.id}
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                assignProject(p.id, m.id)
-                              }}
-                              disabled={assignBusy === p.id}
-                              className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition"
-                              style={{
-                                color: "#1f2a2e",
-                                background: isCurrent ? "#f3ecdb" : "transparent",
-                              }}
-                              onMouseEnter={(e) =>
-                                (e.currentTarget.style.background = "#faf5ee")
-                              }
-                              onMouseLeave={(e) =>
-                                (e.currentTarget.style.background = isCurrent
-                                  ? "#f3ecdb"
-                                  : "transparent")
-                              }
-                            >
-                              <span
-                                className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold"
-                                style={{
-                                  background: "#cfe6e2",
-                                  color: "#0a7870",
-                                }}
-                              >
-                                {initials}
-                              </span>
-                              <span className="flex-1 truncate">
-                                {m.full_name || m.email.split("@")[0]}
-                              </span>
-                              {isCurrent && (
-                                <svg
-                                  width="14"
-                                  height="14"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="#0a7870"
-                                  strokeWidth="2.4"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                >
-                                  <path d="m5 12 5 5 10-10" />
-                                </svg>
-                              )}
-                            </button>
-                          )
-                        })
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {}
-                <div
-                  className="text-right tabular-nums text-sm"
-                  style={{ color: "#4a4638" }}
-                >
-                  {p.page_count?.toLocaleString() ?? "—"}
-                </div>
-
-                {}
-                <div
-                  className="text-right text-sm"
-                  style={{ color: "#6b6558" }}
-                  title={p.created_at}
-                >
-                  {relativeTime(p.created_at)}
-                </div>
-
-                {}
-                <div
-                  className="flex justify-end items-center gap-1"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <button
-                    type="button"
-                    title="Rename project"
-                    aria-label="Rename project"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setRenamingId(p.id)
-                      setRenameDraft(p.filename || "")
-                    }}
-                    className="w-8 h-8 rounded-md flex items-center justify-center transition"
-                    style={{ color: "#6b6558", background: "transparent" }}
-                    onMouseEnter={(e) =>
-                      (e.currentTarget.style.background = "#f3ecdb")
-                    }
-                    onMouseLeave={(e) =>
-                      (e.currentTarget.style.background = "transparent")
-                    }
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M12 20h9" />
-                      <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4Z" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    title="Delete project"
-                    aria-label="Delete project"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setDeletingId(p.id)
-                    }}
-                    className="w-8 h-8 rounded-md flex items-center justify-center transition"
-                    style={{ color: "#b14a3a", background: "transparent" }}
-                    onMouseEnter={(e) =>
-                      (e.currentTarget.style.background = "#f9efe9")
-                    }
-                    onMouseLeave={(e) =>
-                      (e.currentTarget.style.background = "transparent")
-                    }
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M3 6h18" />
-                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                      <path d="M19 6 18 21H6L5 6" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
+                )}
+              </BatchGroup>
             )
           })
         )}
@@ -1028,7 +1017,7 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className="px-3.5 py-1.5 rounded-full text-sm font-medium transition flex items-center gap-1.5"
+      className="px-3.5 py-1.5 rounded-full text-sm font-medium transition flex items-center gap-1.5 whitespace-nowrap"
       style={{
         background: active ? "#ffffff" : "transparent",
         color: active ? "#1f2a2e" : "#6b6558",
@@ -1054,7 +1043,7 @@ function TabButton({
 function LangChip({ text }: { text: string }) {
   return (
     <span
-      className="inline-flex items-center text-[11px] font-semibold tracking-[0.04em] px-2 py-0.5 rounded-md uppercase"
+      className="inline-flex items-center text-[11px] font-semibold tracking-[0.04em] px-2 py-0.5 rounded-md uppercase whitespace-nowrap"
       style={{
         background: "#cfe6e2",
         color: "#0a5e58",

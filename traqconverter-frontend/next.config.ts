@@ -9,6 +9,13 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   compress: true,
 
+  async redirects() {
+    return [
+      { source: "/batches", destination: "/jobs", permanent: false },
+      { source: "/batches/:id", destination: "/jobs?batch=:id", permanent: false },
+    ]
+  },
+
   async headers() {
     return [
       {
