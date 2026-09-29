@@ -5,6 +5,8 @@ import { useParams, useRouter } from "next/navigation"
 import { api, apiErrorDetail, fetchObjectUrl } from "@/lib/api"
 import LearningPanel from "@/components/learning/LearningPanel"
 import DocumentEditor, { type DocumentEditorHandle } from "@/components/editor/DocumentEditor"
+import SourceViewer from "@/components/editor/SourceViewer"
+import { blocking, useReview, type CheckItem, type SourceRef } from "@/components/editor/useReview"
 
 type Segment = {
   id: string
@@ -151,6 +153,13 @@ export default function EditorPage() {
   } | null>(null)
   const [compareLoading, setCompareLoading] = useState(false)
   const sourceObjectUrlRef = useRef<string | null>(null)
+  const [sourceUnavailable, setSourceUnavailable] = useState(false)
+  const [docVersion, setDocVersion] = useState(0)
+  const [activeBlockId, setActiveBlockId] = useState<string | null>(null)
+  const [hoverBlockId, setHoverBlockId] = useState<string | null>(null)
+  const [sourceFocus, setSourceFocus] = useState<(SourceRef & { key: number }) | null>(null)
+  const [certifyGate, setCertifyGate] = useState<CheckItem[] | null>(null)
+  const review = useReview(id, docVersion)
 
   const replaceSourcePreview = (next: typeof sourcePreview) => {
     if (sourceObjectUrlRef.current) URL.revokeObjectURL(sourceObjectUrlRef.current)
@@ -493,11 +502,11 @@ export default function EditorPage() {
   }, [id, fetchProject])
 
   useEffect(() => {
-    if (project && !sourcePreview) {
+    if (project && sourceUnavailable && !sourcePreview) {
       loadCompare()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project])
+  }, [project, sourceUnavailable])
 
   useEffect(() => {
     if (!project) return
@@ -569,11 +578,22 @@ export default function EditorPage() {
     }
   }
 
-  const certify = async () => {
+  const certify = async (force = false) => {
     if (!project) return
     if (project.status !== "COMPLETED") {
       setError("The translation must finish before it can be certified.")
       return
+    }
+    if (!force && project.review_status !== "CERTIFIED") {
+      setBusy("certify")
+      const fresh = await review.fetchChecks()
+      setBusy(null)
+      // Certify adds a missing certification page itself, so that item doesn't hold it back.
+      const open = (fresh?.items ?? []).filter((i) => blocking(i) && !(i.kind === "certification" && i.severity === "warning"))
+      if (open.length) {
+        setCertifyGate(open)
+        return
+      }
     }
     try {
       setBusy("certify")
@@ -1017,7 +1037,7 @@ export default function EditorPage() {
         </button>
         <button
           type="button"
-          onClick={certify}
+          onClick={() => void certify()}
           disabled={busy === "certify"}
           title="Adds the certification page if it's missing, then marks the project certified"
           className="px-4 py-2 rounded-full text-sm font-semibold flex items-center gap-1.5 transition"
@@ -1093,18 +1113,51 @@ export default function EditorPage() {
                 minHeight: 560,
               }}
             >
-              <ComparePane
-                label="ORIGINAL"
-                data={sourcePreview}
-                loading={compareLoading}
-                emptyHint="The source file isn't available."
-              />
+              {sourceUnavailable ? (
+                <ComparePane
+                  label="ORIGINAL"
+                  data={sourcePreview}
+                  loading={compareLoading}
+                  emptyHint="The source file isn't available."
+                />
+              ) : (
+                <SourceViewer
+                  projectId={String(id)}
+                  fileName={project.file_name}
+                  map={review.map}
+                  activeBlockId={activeBlockId}
+                  focus={sourceFocus}
+                  hoverBlockId={hoverBlockId}
+                  onHoverBlock={setHoverBlockId}
+                  onPickBlock={(blockId) => editorRef.current?.focusBlock(blockId)}
+                  onUnavailable={() => setSourceUnavailable(true)}
+                />
+              )}
               <DocumentEditor
                 ref={editorRef}
                 projectId={String(id)}
                 reloadKey={compareReloadKey}
                 onChatOpenChange={setChatOpen}
-                onVersionChange={refreshDocStatus}
+                onVersionChange={(v) => {
+                  setDocVersion(v)
+                  void refreshDocStatus()
+                }}
+                checks={review.checks}
+                checking={review.checking}
+                checksError={review.error}
+                onRecheck={() => void review.fetchChecks(true)}
+                onDismissCheck={(itemId, on) => void review.dismiss(itemId, on)}
+                onActiveBlockChange={(blockId) => {
+                  setActiveBlockId(blockId)
+                  if (blockId) setSourceFocus(null)
+                }}
+                onIssuePick={(item) => {
+                  if (item.source && (!item.block_id || !review.map?.blocks[item.block_id])) {
+                    setActiveBlockId(null)
+                    setSourceFocus({ ...item.source, key: Date.now() })
+                  }
+                }}
+                hoverBlockId={hoverBlockId}
               />
             </div>
           </div>
@@ -1744,12 +1797,123 @@ export default function EditorPage() {
         </div>
       )}
 
+      {certifyGate && (
+        <CertifyGate
+          items={certifyGate}
+          onReview={() => {
+            setCertifyGate(null)
+            editorRef.current?.openChecks()
+          }}
+          onCertify={() => {
+            setCertifyGate(null)
+            void certify(true)
+          }}
+          onClose={() => setCertifyGate(null)}
+        />
+      )}
+
       {confirmState && (
         <ConfirmDialog
           state={confirmState}
           onClose={() => setConfirmState(null)}
         />
       )}
+    </div>
+  )
+}
+
+function CertifyGate({
+  items,
+  onReview,
+  onCertify,
+  onClose,
+}: {
+  items: CheckItem[]
+  onReview: () => void
+  onCertify: () => void
+  onClose: () => void
+}) {
+  const errors = items.filter((i) => i.severity === "error").length
+  const warnings = items.length - errors
+  const summary = [errors ? `${errors} to fix` : "", warnings ? `${warnings} to check` : ""].filter(Boolean).join(", ")
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(31,42,46,0.45)",
+        backdropFilter: "blur(2px)",
+        zIndex: 100,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Issues before certifying"
+        onClick={(e) => e.stopPropagation()}
+        className="tq-gate"
+        style={{
+          width: 500,
+          maxWidth: "92vw",
+          background: "#fbf6ea",
+          borderRadius: 18,
+          boxShadow: "0 18px 40px rgba(0,0,0,0.25)",
+          padding: 24,
+          border: "1px solid #e7ddc5",
+        }}
+      >
+        <div className="text-[11px] font-semibold tracking-[0.16em] mb-1" style={{ color: errors ? "#b14a3a" : "#a8741a" }}>
+          BEFORE YOU SIGN
+        </div>
+        <div className="text-[16px] font-semibold mb-3" style={{ color: "#1f2a2e" }}>
+          The translation has {summary}
+        </div>
+        <ul className="space-y-1.5 mb-5 max-h-56 overflow-auto">
+          {items.slice(0, 6).map((i) => (
+            <li key={i.id} className="flex items-start gap-2 text-[13px]" style={{ color: "#4a4638" }}>
+              <span className="w-1.5 h-1.5 rounded-full mt-[7px] shrink-0" style={{ background: i.severity === "error" ? "#b14a3a" : "#c88a1a" }} />
+              {i.message}
+            </li>
+          ))}
+          {items.length > 6 && (
+            <li className="text-[12px] pl-3.5" style={{ color: "#8a8270" }}>
+              and {items.length - 6} more
+            </li>
+          )}
+        </ul>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button
+            type="button"
+            onClick={onCertify}
+            className="text-[13px] font-semibold px-4 py-2 rounded-full transition"
+            style={{ background: "#ffffff", color: "#1f2a2e", border: "1px solid #e7ddc5" }}
+          >
+            Certify anyway
+          </button>
+          <button
+            type="button"
+            autoFocus
+            onClick={onReview}
+            className="text-[13px] font-semibold px-4 py-2 rounded-full transition"
+            style={{ background: "#0a7870", color: "#ffffff", border: "1px solid #0a7870" }}
+          >
+            Review issues
+          </button>
+        </div>
+      </div>
+      <style>{`.tq-gate { animation: tq-gate-in 160ms ease-out; } @keyframes tq-gate-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }`}</style>
     </div>
   )
 }

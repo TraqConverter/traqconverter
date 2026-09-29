@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react"
+import AiAllowance from "./AiAllowance"
 import { api, apiErrorDetail } from "@/lib/api"
 import {
   BLOCK_ATTR,
@@ -22,6 +23,8 @@ import {
   widthCm,
   type DocImage,
 } from "./docBlocks"
+import ReviewChecklist, { checksLabel, checksTone } from "./ReviewChecklist"
+import type { CheckItem, Checks } from "./useReview"
 
 type ChatTurn = { role: "user" | "assistant"; content: string }
 type Target = { blockIds: string[]; text: string }
@@ -43,6 +46,8 @@ type CertState = { present: boolean; fields: CertFields | null }
 
 export type DocumentEditorHandle = {
   ensureCertification: () => Promise<boolean>
+  openChecks: () => void
+  focusBlock: (id: string) => void
 }
 
 const SAVE_DELAY_MS = 1200
@@ -88,6 +93,8 @@ table, thead, tbody, tfoot, tr, td, th { border-color: transparent !important; }
 p.tq-target { outline: 2px dashed rgba(10, 120, 112, 0.55); outline-offset: 2px; border-radius: 2px; }
 p.tq-changed { animation: tq-flash ${HIGHLIGHT_MS}ms ease-out forwards; border-radius: 2px; }
 p.tq-anchor { box-shadow: -6px 0 0 -3px rgba(10, 120, 112, 0.7); background: rgba(10, 120, 112, 0.05); }
+p.tq-uncertain { box-shadow: -7px 0 0 -4px rgba(200, 138, 26, 0.85); background: linear-gradient(90deg, rgba(246, 227, 184, 0.35), rgba(246, 227, 184, 0) 60%); border-radius: 2px; }
+p.tq-source-hover { background: rgba(10, 120, 112, 0.08); box-shadow: 0 0 0 1px rgba(10, 120, 112, 0.35); border-radius: 2px; transition: background-color 120ms ease; }
 img[${IMAGE_ATTR}] { cursor: grab; outline: 2px solid transparent; outline-offset: 2px; transition: outline-color 120ms ease, opacity 120ms ease; user-select: none; -webkit-user-drag: none; }
 img[${IMAGE_ATTR}]:hover { outline-color: rgba(10, 120, 112, 0.35); }
 img.tq-img-selected { outline-color: #0a7870 !important; }
@@ -158,12 +165,28 @@ export default function DocumentEditor({
   reloadKey,
   onChatOpenChange,
   onVersionChange,
+  checks = null,
+  checking = false,
+  checksError = "",
+  onRecheck,
+  onDismissCheck,
+  onActiveBlockChange,
+  onIssuePick,
+  hoverBlockId = null,
   ref,
 }: {
   projectId: string
   reloadKey?: number
   onChatOpenChange?: (open: boolean) => void
   onVersionChange?: (version: number) => void
+  checks?: Checks | null
+  checking?: boolean
+  checksError?: string
+  onRecheck?: () => void
+  onDismissCheck?: (id: string, on: boolean) => void
+  onActiveBlockChange?: (id: string | null) => void
+  onIssuePick?: (item: CheckItem) => void
+  hoverBlockId?: string | null
   ref?: Ref<DocumentEditorHandle>
 }) {
   const [docxBuffer, setDocxBuffer] = useState<ArrayBuffer | null>(null)
@@ -178,6 +201,7 @@ export default function DocumentEditor({
   const [chatOpen, setChatOpen] = useState(false)
   const [turns, setTurns] = useState<ChatTurn[]>([])
   const [draft, setDraft] = useState("")
+  const [aiEditsRemaining, setAiEditsRemaining] = useState<number | undefined>(undefined)
   const [chatError, setChatError] = useState("")
   const [target, setTarget] = useState<Target | null>(null)
   const [ask, setAsk] = useState<AskAnchor | null>(null)
@@ -190,6 +214,8 @@ export default function DocumentEditor({
   const [certDraft, setCertDraft] = useState<CertFields>(EMPTY_FIELDS)
   const [certError, setCertError] = useState("")
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const [checksOpen, setChecksOpen] = useState(false)
+  const [activeIssue, setActiveIssue] = useState<string | null>(null)
 
   const hostRef = useRef<HTMLDivElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -222,10 +248,22 @@ export default function DocumentEditor({
     placeImage: (id: string, blockId: string, x: number, y: number) => void
   } | null>(null)
   const onVersionChangeRef = useRef(onVersionChange)
+  const onActiveBlockRef = useRef(onActiveBlockChange)
+  const activeBlockRef = useRef<string | null>(null)
 
   useEffect(() => {
     onVersionChangeRef.current = onVersionChange
   }, [onVersionChange])
+
+  useEffect(() => {
+    onActiveBlockRef.current = onActiveBlockChange
+  }, [onActiveBlockChange])
+
+  const reportActiveBlock = useCallback((id: string | null) => {
+    if (id === activeBlockRef.current) return
+    activeBlockRef.current = id
+    onActiveBlockRef.current?.(id)
+  }, [])
 
   const setVersion = useCallback((v: number) => {
     versionRef.current = v
@@ -546,6 +584,7 @@ export default function DocumentEditor({
       idoc.addEventListener("selectionchange", () => {
         const p = selectionBlock()
         if (p && !p.closest("header, footer")) caretBlockRef.current = p.getAttribute(BLOCK_ATTR)
+        if (p) reportActiveBlock(p.getAttribute(BLOCK_ATTR))
         updateAsk()
       })
 
@@ -657,7 +696,7 @@ export default function DocumentEditor({
         }
       })
     },
-    [flushEdits, reloadDocument, scheduleSave, selectImage, updateAsk],
+    [flushEdits, reloadDocument, reportActiveBlock, scheduleSave, selectImage, updateAsk],
   )
 
   useEffect(() => {
@@ -787,6 +826,29 @@ export default function DocumentEditor({
   }, [chatOpen, target, renderTick])
 
   useEffect(() => {
+    const idoc = docRef.current
+    if (!idoc) return
+    idoc.querySelectorAll<HTMLElement>("p.tq-uncertain").forEach((p) => {
+      p.classList.remove("tq-uncertain")
+      p.removeAttribute("title")
+    })
+    for (const item of checks?.items ?? []) {
+      if (item.kind !== "uncertain" || item.dismissed || !item.block_id) continue
+      const p = idoc.querySelector<HTMLElement>(blockSelector(item.block_id))
+      if (!p) continue
+      p.classList.add("tq-uncertain")
+      p.title = item.reason ? `Uncertain reading in the original: ${item.reason}` : item.message
+    }
+  }, [checks, renderTick])
+
+  useEffect(() => {
+    const idoc = docRef.current
+    if (!idoc) return
+    idoc.querySelectorAll("p.tq-source-hover").forEach((p) => p.classList.remove("tq-source-hover"))
+    if (hoverBlockId) idoc.querySelector(blockSelector(hoverBlockId))?.classList.add("tq-source-hover")
+  }, [hoverBlockId, renderTick])
+
+  useEffect(() => {
     onChatOpenChange?.(chatOpen)
     if (!chatOpen) return
     textareaRef.current?.focus()
@@ -852,7 +914,7 @@ export default function DocumentEditor({
     setEditable(false)
     try {
       if (!(await flushEdits())) throw new Error("unsaved")
-      const res = await api.post<{ version: number; reply: string; changed_block_ids: string[] }>(
+      const res = await api.post<{ version: number; reply: string; changed_block_ids: string[]; ai_edits_remaining?: number }>(
         `/projects/${projectId}/document/chat`,
         {
           version: versionRef.current,
@@ -863,6 +925,7 @@ export default function DocumentEditor({
         },
       )
       setVersion(res.data.version)
+      if (typeof res.data.ai_edits_remaining === "number") setAiEditsRemaining(res.data.ai_edits_remaining)
       setTurns((t) => [...t, { role: "assistant", content: res.data.reply }])
       await reloadDocument(highlightBlocks(res.data.changed_block_ids ?? []))
     } catch (err) {
@@ -874,6 +937,8 @@ export default function DocumentEditor({
       } else if (status === 409) {
         setChatError("The document changed elsewhere. Reloaded it; send again.")
         void reloadDocument()
+      } else if (status === 402) {
+        setChatError(apiErrorDetail(err, "You've used the AI edits included with this document. 1 credit adds 10 more."))
       } else if (status === 429) {
         setChatError(apiErrorDetail(err, "Too many requests. Wait a moment and try again."))
       } else if (status === 502) {
@@ -1116,6 +1181,7 @@ export default function DocumentEditor({
 
   const toggleCertification = async () => {
     setImageMenuOpen(false)
+    setChecksOpen(false)
     if (certOpen) {
       setCertOpen(false)
       return
@@ -1186,7 +1252,72 @@ export default function DocumentEditor({
     return addCertification()
   }
 
-  useImperativeHandle(ref, () => ({ ensureCertification }))
+  const focusBlock = (id: string) => {
+    const idoc = docRef.current
+    const p = idoc?.querySelector<HTMLElement>(blockSelector(id))
+    const scroller = scrollRef.current
+    const f = iframeRef.current?.getBoundingClientRect()
+    if (!p || !scroller || !f) return
+    const box = scroller.getBoundingClientRect()
+    const r = p.getBoundingClientRect()
+    const y = f.top + r.top
+    if (y < box.top + 24 || y + r.height > box.bottom - 24) {
+      scroller.scrollTo({ top: scroller.scrollTop + y - box.top - box.height / 2 + r.height / 2, behavior: "smooth" })
+    }
+    p.classList.remove("tq-changed")
+    void p.offsetWidth
+    p.classList.add("tq-changed")
+    window.setTimeout(() => p.classList.remove("tq-changed"), HIGHLIGHT_MS)
+    reportActiveBlock(id)
+  }
+
+  const pickIssue = (item: CheckItem) => {
+    setActiveIssue(item.id)
+    if (item.block_id) focusBlock(item.block_id)
+    else reportActiveBlock(null)
+    onIssuePick?.(item)
+  }
+
+  const openChecks = () => {
+    setImageMenuOpen(false)
+    setCertOpen(false)
+    setChecksOpen(true)
+    if (!checks && !checking) onRecheck?.()
+  }
+
+  useImperativeHandle(ref, () => ({ ensureCertification, openChecks, focusBlock }))
+
+  const issueNavRef = useRef<(step: number) => void>(() => {})
+  useEffect(() => {
+    issueNavRef.current = (step: number) => {
+      const list = (checks?.items ?? []).filter((i) => !i.dismissed && i.severity !== "info")
+      const items = list.length ? list : (checks?.items ?? []).filter((i) => !i.dismissed)
+      if (!items.length) return
+      const at = items.findIndex((i) => i.id === activeIssue)
+      const next = at < 0 ? (step > 0 ? 0 : items.length - 1) : (at + step + items.length) % items.length
+      pickIssue(items[next])
+    }
+  })
+
+  useEffect(() => {
+    if (!checksOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === "]") {
+        e.preventDefault()
+        issueNavRef.current(1)
+      } else if (e.key === "[") {
+        e.preventDefault()
+        issueNavRef.current(-1)
+      } else if (e.key === "Escape") {
+        setChecksOpen(false)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [checksOpen])
 
   useEffect(() => {
     actionsRef.current = {
@@ -1212,6 +1343,7 @@ export default function DocumentEditor({
 
   const openImageMenu = async () => {
     setCertOpen(false)
+    setChecksOpen(false)
     const next = !imageMenuOpen
     setImageMenuOpen(next)
     if (next && !assets) {
@@ -1239,6 +1371,7 @@ export default function DocumentEditor({
           : ""
 
   const hasDocument = renderTick > 0
+  const tone = checksTone(checks)
   const modKey = isMac() ? "⌘" : "Ctrl+"
   const busyLabel =
     busy === "chat" ? "Editing…" : busy === "undo" ? "Undoing…" : busy === "cert" ? "Updating certification…" : "Updating…"
@@ -1274,6 +1407,21 @@ export default function DocumentEditor({
                 Retry
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => (checksOpen ? setChecksOpen(false) : openChecks())}
+              disabled={!hasDocument}
+              aria-expanded={checksOpen}
+              title="Compare numbers, names, notes and terms with the original before certifying"
+              className={`${BTN} inline-flex items-center gap-1.5`}
+              style={{ background: tone.background, color: tone.color, border: tone.border }}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${checking ? "animate-pulse" : ""}`}
+                style={{ background: tone.dot }}
+              />
+              {checksLabel(checks, checking)}
+            </button>
             <button
               type="button"
               onClick={() => void openImageMenu()}
@@ -1320,6 +1468,19 @@ export default function DocumentEditor({
               Ask AI
             </button>
           </div>
+
+          {checksOpen && (
+            <ReviewChecklist
+              checks={checks}
+              checking={checking}
+              error={checksError}
+              activeId={activeIssue}
+              onPick={pickIssue}
+              onDismiss={(item, on) => onDismissCheck?.(item.id, on)}
+              onRecheck={() => onRecheck?.()}
+              onClose={() => setChecksOpen(false)}
+            />
+          )}
 
           {imageMenuOpen && (
             <div
@@ -1576,7 +1737,12 @@ export default function DocumentEditor({
             className="px-4 py-2 flex items-center justify-between text-[11px] font-semibold tracking-[0.14em]"
             style={{ color: "#9a9178", background: "#faf5ee", borderBottom: "1px solid #f1e8d1" }}
           >
-            <span>ASSISTANT</span>
+            <span className="flex items-center gap-2">
+              ASSISTANT
+              <span className="font-medium tracking-normal normal-case">
+                <AiAllowance projectId={projectId} remaining={aiEditsRemaining} />
+              </span>
+            </span>
             <button
               type="button"
               onClick={() => setChatOpen(false)}
