@@ -624,7 +624,8 @@ class _Importer:
             (u for u in reversed(body) if u.tag == w("p") and "_____" in blocks.paragraph_text(u)),
             next((u for u in reversed(body) if u.tag == w("p") and blocks.paragraph_text(u).strip()), None),
         )
-        units = header + body + footer
+        # Room between the signature (and the stamp over it) and the footer lines.
+        units = header + body + ([self.cert._paragraph(after=720)] if footer else []) + footer
         self.import_styles(units)
         return units, signature
 
