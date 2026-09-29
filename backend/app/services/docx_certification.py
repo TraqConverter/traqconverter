@@ -462,12 +462,12 @@ _ISSUER_WORDS = {
 def guess_document_title(data: bytes, fallback: str, doc_type: str = "") -> str:
     """Pick the translation's own title among its opening headings (country and authority lines rank lower)."""
     doc = _Doc.load(data)
-    cert = {id(u) for u in _marker_units(doc)}
+    cert = set(_marker_units(doc))
     type_words = {x for x in re.findall(r"[a-z]{4,}", (doc_type or "").lower())}
     best, best_score = None, 0.0
     seen = 0
     for unit in _body(doc):
-        if unit.tag != w("p") or id(unit) in cert:
+        if unit.tag != w("p") or unit in cert:
             continue
         text = " ".join(blocks.paragraph_text(unit).split())
         if not text:
