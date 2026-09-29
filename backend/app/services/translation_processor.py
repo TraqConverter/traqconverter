@@ -598,6 +598,11 @@ def process_translation_job(project_id: str):
                 f"{len(untranslated)} of {len(segments)} segments could not be translated"
             )
 
+        if project.batch_id:
+            from app.services import batch_terms
+
+            batch_terms.record_from_segments(db, project, [(s.source_text, s.translated_text) for s in segments])
+
 
 
 

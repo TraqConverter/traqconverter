@@ -28,32 +28,68 @@ MAX_ATTEMPTS = int(os.getenv("JOB_MAX_ATTEMPTS", "2"))
 WORKER_ID = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
 
 
+# A batch's first document runs alone so the others can reuse the names and terms it settles on.
+_BATCH_OPEN = """(
+    EXISTS (SELECT 1 FROM batches b WHERE b.id = {bid} AND b.terms_ready_at IS NOT NULL)
+    OR NOT EXISTS (
+        SELECT 1 FROM translation_jobs j2 JOIN translation_projects p2 ON p2.id = j2.project_id
+         WHERE p2.batch_id = {bid} AND j2.status = 'processing' AND j2.id <> {jid}))"""
+
+
+def _pick_job(db, skip: list[str]):
+    while True:
+        cand = db.execute(
+            text(
+                f"""
+                SELECT j.id, p.batch_id
+                  FROM translation_jobs j
+                  LEFT JOIN translation_projects p ON p.id = j.project_id
+                 WHERE j.status = 'pending'
+                   AND j.attempts < :max_attempts
+                   AND j.id::text <> ALL(:skip)
+                   AND (p.batch_id IS NULL OR {_BATCH_OPEN.format(bid='p.batch_id', jid='j.id')})
+                 ORDER BY j.created_at
+                 LIMIT 1
+                 FOR UPDATE OF j SKIP LOCKED
+                """
+            ),
+            {"max_attempts": MAX_ATTEMPTS, "skip": skip},
+        ).fetchone()
+        if not cand or cand.batch_id is None:
+            return cand
+        # Serialise claims within a batch, then re-check with a snapshot that sees the other claimer's commit.
+        db.execute(text("SELECT id FROM batches WHERE id = :bid FOR UPDATE"), {"bid": cand.batch_id})
+        still_open = db.execute(
+            text(f"SELECT {_BATCH_OPEN.format(bid=':bid', jid=':jid')}"),
+            {"bid": cand.batch_id, "jid": cand.id},
+        ).scalar()
+        if still_open:
+            return cand
+        db.rollback()
+        skip.append(str(cand.id))
+
+
 def _claim_next_job():
     db = SessionLocal()
     try:
-        row = db.execute(
-            text(
-                """
-                UPDATE translation_jobs
-                   SET status     = 'processing',
-                       locked_at  = timezone('utc', now()),
-                       locked_by  = :worker_id,
-                       attempts   = attempts + 1,
-                       updated_at = timezone('utc', now())
-                 WHERE id = (
-                       SELECT id
-                         FROM translation_jobs
-                        WHERE status = 'pending'
-                          AND attempts < :max_attempts
-                        ORDER BY created_at
-                        LIMIT 1
-                        FOR UPDATE SKIP LOCKED
-                 )
-             RETURNING id, project_id, s3_key, attempts
-                """
-            ),
-            {"worker_id": WORKER_ID, "max_attempts": MAX_ATTEMPTS},
-        ).fetchone()
+        cand = _pick_job(db, [])
+        row = None
+        if cand:
+            row = db.execute(
+                text(
+                    """
+                    UPDATE translation_jobs
+                       SET status     = 'processing',
+                           locked_at  = timezone('utc', now()),
+                           locked_by  = :worker_id,
+                           attempts   = attempts + 1,
+                           updated_at = timezone('utc', now())
+                     WHERE id = :id
+                 RETURNING id, project_id, s3_key, attempts
+                    """
+                ),
+                {"worker_id": WORKER_ID, "id": cand.id},
+            ).fetchone()
         db.commit()
         if not row:
             return None

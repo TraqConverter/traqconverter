@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { api } from "@/lib/api"
 
 type LangOption = {
@@ -52,6 +53,44 @@ const TARGET_LANGUAGES: LangOption[] = SOURCE_LANGUAGES.filter(
 )
 
 const LANGUAGES: LangOption[] = SOURCE_LANGUAGES
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+function defaultBatchName() {
+  const d = new Date()
+  return `Batch ${d.getDate()} ${MONTHS[d.getMonth()]}`
+}
+
+function fileKey(f: File) {
+  return `${f.name}|${f.size}|${f.lastModified}`
+}
+
+async function countPages(f: File): Promise<number | null> {
+  const name = f.name.toLowerCase()
+  if (/\.(png|jpe?g)$/.test(name)) return 1
+  if (!name.endsWith(".pdf")) return null
+  try {
+    const text = new TextDecoder("latin1").decode(await f.arrayBuffer())
+    const n = (text.match(/\/Type\s*\/Page(?![a-z])/g) || []).length
+    return n > 0 ? n : null
+  } catch {
+    return null
+  }
+}
+
+type UploadState = {
+  state: "uploading" | "done" | "failed" | "skipped"
+  pct?: number
+  error?: string
+  pages?: number
+}
+
+function errorDetail(err: unknown): { status?: number; detail: string } {
+  const e = err as { response?: { status?: number; data?: { detail?: unknown } } }
+  const raw = e?.response?.data?.detail
+  const detail = typeof raw === "string" ? raw : e?.response ? "Upload failed" : "Network error"
+  return { status: e?.response?.status, detail }
+}
 
 function IconUpload() {
   return (
@@ -271,7 +310,14 @@ export default function NewProjectPage() {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  const [file, setFile] = useState<File | null>(null)
+  const [files, setFiles] = useState<File[]>([])
+  const file = files[0] ?? null
+  const multi = files.length > 1
+  const [pageCounts, setPageCounts] = useState<Record<string, number | null>>({})
+  const [batchName, setBatchName] = useState("")
+  const [batchId, setBatchId] = useState<string | null>(null)
+  const [uploads, setUploads] = useState<Record<string, UploadState>>({})
+  const [batchNotice, setBatchNotice] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -330,11 +376,27 @@ export default function NewProjectPage() {
 
   const handlePickFile = () => fileInputRef.current?.click()
 
+  const addFiles = (list: FileList | File[] | null | undefined) => {
+    const incoming = Array.from(list || [])
+    if (!incoming.length || loading) return
+    const known = new Set(files.map(fileKey))
+    const next = [...files, ...incoming.filter((f) => !known.has(fileKey(f)))]
+    setFiles(next)
+    if (next.length > 1 && !batchName) setBatchName(defaultBatchName())
+    for (const f of incoming) {
+      countPages(f).then((n) => setPageCounts((m) => ({ ...m, [fileKey(f)]: n })))
+    }
+  }
+
+  const removeFile = (f: File) => {
+    if (loading || uploads[fileKey(f)]?.state === "done") return
+    setFiles((list) => list.filter((x) => fileKey(x) !== fileKey(f)))
+  }
+
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     setDragOver(false)
-    const f = e.dataTransfer.files?.[0]
-    if (f) setFile(f)
+    addFiles(e.dataTransfer.files)
   }
 
   const swap = () => {
@@ -342,36 +404,103 @@ export default function NewProjectPage() {
     setTarget(source)
   }
 
+  const buildForm = (file: File, batch?: string) => {
+    const formData = new FormData()
+    formData.append("file", file)
+    formData.append("source_language", source)
+    formData.append("target_language", target)
+    formData.append("use_tm", String(useTM))
+    formData.append("apply_glossary", String(applyGlossary))
+    formData.append("request_certification", String(requestCert))
+
+    if (runMode === "dtp") {
+      formData.append("model", "dtp")
+    } else if (rebuildEngine === "claude-authored") {
+      formData.append("model", "claude-authored")
+    } else if (aiModel) {
+      formData.append("model", aiModel)
+    }
+    if (certTemplateId) {
+      formData.append("certification_template_id", certTemplateId)
+    }
+
+    if (instructions.trim()) {
+      formData.append("notes", instructions.trim())
+    }
+    if (batch) formData.append("batch_id", batch)
+    return formData
+  }
+
+  const handleStartBatch = async () => {
+    const name = batchName.trim()
+    if (!name) {
+      setBatchNotice("Name the batch (client or reference) before uploading.")
+      return
+    }
+    setLoading(true)
+    setBatchNotice(null)
+    let id = batchId
+    if (!id) {
+      try {
+        const res = await api.post("/batches", { name })
+        id = res.data.id as string
+        setBatchId(id)
+      } catch (err) {
+        setBatchNotice(`Couldn't create the batch: ${errorDetail(err).detail}`)
+        setLoading(false)
+        return
+      }
+    }
+
+    const set = (k: string, u: UploadState) => setUploads((m) => ({ ...m, [k]: u }))
+    const pending = files.filter((f) => uploads[fileKey(f)]?.state !== "done")
+    let stopReason: string | null = null
+    const failed: string[] = []
+    const notUploaded: string[] = []
+    for (const f of pending) {
+      const k = fileKey(f)
+      if (stopReason) {
+        set(k, { state: "skipped", error: "Not uploaded" })
+        notUploaded.push(f.name)
+        continue
+      }
+      set(k, { state: "uploading", pct: 0 })
+      try {
+        const res = await api.post("/projects/upload", buildForm(f, id), {
+          onUploadProgress: (e) => {
+            if (e.total) set(k, { state: "uploading", pct: Math.round((e.loaded / e.total) * 100) })
+          },
+        })
+        set(k, { state: "done", pct: 100, pages: res.data?.pages })
+      } catch (err) {
+        const { status, detail } = errorDetail(err)
+        set(k, { state: "failed", error: detail })
+        failed.push(f.name)
+        // Running out of credits or access applies to every remaining file.
+        if (/credit/i.test(detail) || status === 401 || status === 402 || status === 403 || !status) {
+          stopReason = detail
+        }
+      }
+    }
+    setLoading(false)
+    window.dispatchEvent(new Event("sidebar:refresh"))
+    if (!failed.length && !notUploaded.length) {
+      router.push(`/batches/${id}`)
+      return
+    }
+    const parts = [`${failed.length} failed: ${failed.join(", ")}.`]
+    if (notUploaded.length) parts.push(`Stopped (${stopReason}). Not uploaded: ${notUploaded.join(", ")}.`)
+    setBatchNotice(parts.join(" "))
+  }
+
   const handleStart = async () => {
     if (!file) return alert("Please select a file first")
+    if (multi) return handleStartBatch()
 
     try {
       setLoading(true)
 
-      const formData = new FormData()
-      formData.append("file", file)
-      formData.append("source_language", source)
-      formData.append("target_language", target)
-      formData.append("use_tm", String(useTM))
-      formData.append("apply_glossary", String(applyGlossary))
-      formData.append("request_certification", String(requestCert))
-
-      if (runMode === "dtp") {
-        formData.append("model", "dtp")
-      } else if (rebuildEngine === "claude-authored") {
-        formData.append("model", "claude-authored")
-      } else if (aiModel) {
-        formData.append("model", aiModel)
-      }
-      if (certTemplateId) {
-        formData.append("certification_template_id", certTemplateId)
-      }
-
-      if (instructions.trim()) {
-        formData.append("notes", instructions.trim())
-      }
-
-      const res = await api.post("/projects/upload", formData)
+      const res = await api.post("/projects/upload", buildForm(file))
       const projectId = res.data.project_id
 
       if (!projectId) throw new Error("Invalid response from server")
@@ -392,7 +521,7 @@ export default function NewProjectPage() {
     const sample = new File([blob], "Sample-Patient-Consent.pdf", {
       type: "application/pdf",
     })
-    setFile(sample)
+    setFiles([sample])
   }
 
   return (
@@ -467,10 +596,12 @@ export default function NewProjectPage() {
                 className="text-[22px] font-semibold mb-2"
                 style={{ color: "#1f2a2e" }}
               >
-                {file ? file.name : "Drop your document here"}
+                {multi ? `${files.length} documents` : file ? file.name : "Drop your document here"}
               </div>
               <div className="text-sm mb-8" style={{ color: "#8a8270" }}>
-                or click to browse · PDF, DOCX, PPTX · up to 200 MB
+                {file
+                  ? "Drop or browse to add more documents from the same client"
+                  : "or click to browse · PDF, DOCX, PPTX · up to 200 MB · several files make a batch"}
               </div>
 
               <div className="flex items-center gap-3">
@@ -497,11 +628,30 @@ export default function NewProjectPage() {
             <input
               ref={fileInputRef}
               type="file"
+              multiple
               className="hidden"
               accept=".pdf,.docx,.pptx,.xlsx,.png,.jpg,.jpeg"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              onChange={(e) => {
+                addFiles(e.target.files)
+                e.target.value = ""
+              }}
             />
           </div>
+
+          {multi && (
+            <BatchList
+              files={files}
+              pageCounts={pageCounts}
+              uploads={uploads}
+              batchName={batchName}
+              onBatchName={setBatchName}
+              nameLocked={!!batchId}
+              onRemove={removeFile}
+              busy={loading}
+              notice={batchNotice}
+              batchId={batchId}
+            />
+          )}
         </div>
 
         {}
@@ -940,11 +1090,19 @@ export default function NewProjectPage() {
                 if (file && !loading) e.currentTarget.style.background = "#0a7870"
               }}
             >
-              {loading ? "Uploading..." : "Start OCR & translation"}
+              {loading
+                ? "Uploading..."
+                : multi
+                ? batchId
+                  ? "Upload remaining documents"
+                  : `Translate ${files.length} documents`
+                : "Start OCR & translation"}
               {!loading && <IconArrowRight />}
             </button>
             <div className="text-xs text-center mt-3" style={{ color: "#8a8270" }}>
-              1 credit per page · review every segment before export
+              {multi
+                ? "1 credit per page · same languages and options for every document"
+                : "1 credit per page · review every segment before export"}
             </div>
           </div>
         </div>
@@ -1041,6 +1199,145 @@ function OptionRow({
         </div>
       </div>
       <Toggle checked={checked} onChange={onChange} />
+    </div>
+  )
+}
+
+function BatchList({
+  files,
+  pageCounts,
+  uploads,
+  batchName,
+  onBatchName,
+  nameLocked,
+  onRemove,
+  busy,
+  notice,
+  batchId,
+}: {
+  files: File[]
+  pageCounts: Record<string, number | null>
+  uploads: Record<string, UploadState>
+  batchName: string
+  onBatchName: (v: string) => void
+  nameLocked: boolean
+  onRemove: (f: File) => void
+  busy: boolean
+  notice: string | null
+  batchId: string | null
+}) {
+  const pagesOf = (f: File) => uploads[fileKey(f)]?.pages ?? pageCounts[fileKey(f)] ?? null
+  const known = files.map(pagesOf)
+  const total = known.reduce<number>((sum, n) => sum + (n ?? 0), 0)
+  const unknown = known.filter((n) => n == null).length
+
+  return (
+    <div
+      className="rounded-2xl p-6 mt-6"
+      style={{ background: "#ffffff", border: "1px solid #e7ddc5", boxShadow: "0 1px 2px rgba(30,30,20,0.03)" }}
+    >
+      <label className="block text-[11px] font-semibold tracking-[0.14em] mb-2" style={{ color: "#9a9178" }}>
+        CLIENT OR BATCH NAME
+      </label>
+      <input
+        value={batchName}
+        onChange={(e) => onBatchName(e.target.value)}
+        disabled={nameLocked || busy}
+        maxLength={120}
+        placeholder="e.g. Rossi family, order 2291"
+        className="w-full text-sm outline-none rounded-xl px-3 py-2.5 mb-1"
+        style={{ background: nameLocked ? "#f6efe0" : "#faf5ee", border: "1px solid #e7ddc5", color: "#1f2a2e" }}
+      />
+      <div className="text-xs mb-5" style={{ color: "#8a8270" }}>
+        Names, institutions and terms are kept the same across every document in the batch.
+      </div>
+
+      <div className="flex items-baseline justify-between mb-2">
+        <div className="text-[11px] font-semibold tracking-[0.14em]" style={{ color: "#9a9178" }}>
+          DOCUMENTS
+        </div>
+        <div className="text-xs" style={{ color: "#6b6558" }}>
+          {files.length} files · {total} page{total === 1 ? "" : "s"}
+          {unknown ? ` + ${unknown} counted after upload` : ""}
+        </div>
+      </div>
+
+      <div>
+        {files.map((f, i) => {
+          const k = fileKey(f)
+          const u = uploads[k]
+          const pages = pagesOf(f)
+          const color =
+            u?.state === "done" ? "#2d5a24" : u?.state === "failed" ? "#b91c1c" : u?.state === "skipped" ? "#7a5a10" : "#8a8270"
+          const label =
+            u?.state === "done"
+              ? "Uploaded"
+              : u?.state === "uploading"
+              ? `Uploading ${u.pct ?? 0}%`
+              : u?.state === "failed"
+              ? u.error || "Failed"
+              : u?.state === "skipped"
+              ? "Not uploaded"
+              : "Ready"
+          return (
+            <div
+              key={k}
+              className="flex items-center gap-3 py-2.5"
+              style={{ borderTop: i ? "1px solid #f1e8d1" : "none" }}
+            >
+              <span style={{ color: "#6b6558" }}>
+                <IconFile />
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm truncate" style={{ color: "#1f2a2e" }}>
+                  {f.name}
+                </div>
+                {u?.state === "uploading" && (
+                  <div className="h-1 rounded-full mt-1.5" style={{ background: "#f3ecdb" }}>
+                    <div className="h-1 rounded-full" style={{ width: `${u.pct ?? 0}%`, background: "#0a7870" }} />
+                  </div>
+                )}
+              </div>
+              <div className="text-xs w-16 text-right shrink-0" style={{ color: "#6b6558" }}>
+                {pages == null ? "—" : `${pages} p.`}
+              </div>
+              <div className="text-xs w-40 text-right truncate shrink-0" style={{ color }} title={label}>
+                {label}
+              </div>
+              <button
+                type="button"
+                onClick={() => onRemove(f)}
+                disabled={busy || u?.state === "done"}
+                aria-label={`Remove ${f.name}`}
+                className="w-6 h-6 rounded-full text-sm shrink-0"
+                style={{
+                  color: "#9a9178",
+                  visibility: busy || u?.state === "done" ? "hidden" : "visible",
+                }}
+              >
+                ×
+              </button>
+            </div>
+          )
+        })}
+      </div>
+
+      {notice && (
+        <div
+          className="mt-4 rounded-xl px-4 py-3 text-sm"
+          style={{ background: "#fbeeee", border: "1px solid #f0cccc", color: "#7a1f1f" }}
+        >
+          {notice}
+          {batchId && (
+            <>
+              {" "}
+              <Link href={`/batches/${batchId}`} className="font-semibold underline" style={{ color: "#0a7870" }}>
+                Open batch
+              </Link>
+            </>
+          )}
+        </div>
+      )}
     </div>
   )
 }

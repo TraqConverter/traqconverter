@@ -20,6 +20,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["Export"])
 
 
+def render_export(db: Session, project: TranslationProject, user: User, fmt: str):
+    """The exact file the single-document export downloads (certification page included)."""
+    segments = (
+        db.query(TranslationSegment)
+        .filter(TranslationSegment.project_id == project.id)
+        .order_by(TranslationSegment.segment_index)
+        .all()
+    )
+    valid_segments = [s for s in segments if s.translated_text and s.translated_text.strip()]
+    build = generate_pdf if fmt == "pdf" else generate_docx
+    return build(valid_segments, user.email, project=project, user=user)
+
+
 
 
 
@@ -37,27 +50,8 @@ def export_docx_route(
 
     project = get_user_project_or_404(db, project_id, current_user)
 
-    segments = (
-        db.query(TranslationSegment)
-        .filter(TranslationSegment.project_id == project_id)
-        .order_by(TranslationSegment.segment_index)
-        .all()
-    )
-
-
-
-    valid_segments = [
-        s for s in segments
-        if s.translated_text and s.translated_text.strip()
-    ]
-
     try:
-        file_buffer = generate_docx(
-            valid_segments,
-            current_user.email,
-            project=project,
-            user=current_user,
-        )
+        file_buffer = render_export(db, project, current_user, "docx")
     except Exception:
         logger.exception("Request failed")
         raise HTTPException(status_code=500, detail="DOCX export failed")
@@ -89,25 +83,8 @@ def export_pdf_route(
 
     project = get_user_project_or_404(db, project_id, current_user)
 
-    segments = (
-        db.query(TranslationSegment)
-        .filter(TranslationSegment.project_id == project_id)
-        .order_by(TranslationSegment.segment_index)
-        .all()
-    )
-
-    valid_segments = [
-        s for s in segments
-        if s.translated_text and s.translated_text.strip()
-    ]
-
     try:
-        file_buffer = generate_pdf(
-            valid_segments,
-            current_user.email,
-            project=project,
-            user=current_user,
-        )
+        file_buffer = render_export(db, project, current_user, "pdf")
     except Exception:
         logger.exception("Request failed")
         raise HTTPException(status_code=500, detail="PDF export failed")

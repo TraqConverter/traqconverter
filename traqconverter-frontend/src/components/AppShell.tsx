@@ -67,6 +67,7 @@ const NAV_GROUPS: NavGroup[] = [
       { name: "Dashboard", path: "/dashboard", match: "/dashboard", icon: IconHome },
       { name: "New project", path: "/new-translation", match: "/new-translation", icon: IconPlus },
       { name: "Projects", path: "/jobs", match: "/jobs", icon: IconFolder },
+      { name: "Batches", path: "/batches", match: "/batches", icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="7" y="3" width="13" height="15" rx="2"/><path d="M4 7v12a2 2 0 0 0 2 2h10"/></svg> },
     ],
   },
   {
