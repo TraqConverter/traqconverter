@@ -105,11 +105,23 @@ def _values(user, team, lang: str, today: date, *, file_name: str, document: str
     }
 
 
+def page_language(target_language, template: Optional[bytes]) -> str:
+    """A template is written in the translator's chosen language (often not the target); its values follow it."""
+    if template:
+        try:
+            detected = cert_locale.detect_language(docx_certification.docx_text(template))
+        except Exception:
+            detected = None
+        if detected:
+            return detected
+    return cert_locale.cert_language(target_language)
+
+
 def content_for_project(db: Session, project, user, template: Optional[bytes]) -> docx_certification.CertContent:
     from app.models.team import Team
     from app.services.cert_template_service import build_substitution_values
 
-    lang = cert_locale.cert_language(project.target_language)
+    lang = page_language(project.target_language, template)
     today = date.today()
     team = db.query(Team).filter(Team.id == project.team_id).first()
     extra = build_substitution_values(user=user, project=project, team=team)
@@ -141,7 +153,7 @@ def example_content(db: Session, user, team, template: bytes) -> docx_certificat
     from app.services.cert_template_service import build_substitution_values
 
     ex = EXAMPLE_PROJECT
-    lang = cert_locale.cert_language(ex["target_language"])
+    lang = page_language(ex["target_language"], template)
     today = date.today()
     sample = SimpleNamespace(
         id=None, file_name=ex["file_name"], source_language=ex["source_language"],

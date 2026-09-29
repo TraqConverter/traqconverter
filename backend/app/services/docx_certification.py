@@ -442,3 +442,15 @@ def guess_document_title(data: bytes, fallback: str, doc_type: str = "") -> str:
         if score > best_score:
             best, best_score = text, score
     return best or fallback
+
+
+def page_text(data: bytes) -> str:
+    """Text of the certification page in a document, empty when there is none."""
+    doc = _Doc.load(data)
+    return " ".join(blocks.paragraph_text(p) for unit in _marker_units(doc) for p in unit.iter(w("p")))
+
+
+def docx_text(data: bytes) -> str:
+    """All body text of a DOCX (used to tell a template's language)."""
+    doc = _Doc.load(data)
+    return " ".join(blocks.paragraph_text(p) for p in _body(doc).iter(w("p")))

@@ -343,7 +343,9 @@ def update_certification(
     lang = {}
 
     def change(data, locked_project):
-        lang["code"] = cert_locale.cert_language(locked_project.target_language)
+        lang["code"] = cert_locale.detect_language(docx_certification.page_text(data)) or cert_locale.cert_language(
+            locked_project.target_language
+        )
         out, _ = docx_certification.update_fields(data, payload.fields.model_dump(exclude_none=True), lang["code"])
         return out
 

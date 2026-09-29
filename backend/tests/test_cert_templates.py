@@ -477,3 +477,21 @@ def test_download_url_is_signed_and_team_scoped(client, owner_project, make_user
     assert r.json()["url"].startswith("https://storage.test/uploads/")
     assert client.get(url, headers=make_user()["headers"]).status_code == 404
     assert client.get("/certifications/not-a-uuid/download-url", headers=owner["headers"]).status_code == 404
+
+
+def test_italian_template_gets_italian_values_even_for_english_target():
+    import io
+
+    from docx import Document
+
+    from app.services import cert_locale, cert_page
+
+    doc = Document()
+    doc.add_paragraph("Io sottoscritto traduttore dichiaro che la traduzione del documento dal testo originale")
+    doc.add_paragraph("è fedele e conforme all'originale, composto da pagine, per uso della persona interessata.")
+    buf = io.BytesIO()
+    doc.save(buf)
+    assert cert_page.page_language("en-GB", buf.getvalue()) == "it"
+    assert cert_page.page_language("en-GB", None) == "en"
+    assert cert_locale.detect_language("I hereby certify that the attached translation of the document is true and accurate") == "en"
+    assert cert_locale.detect_language("short text") is None
