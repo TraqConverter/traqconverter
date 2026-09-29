@@ -252,6 +252,7 @@ from app.routers import members
 from app.routers import certifications
 from app.routers import ws
 from app.routers import learning as learning_router
+from app.routers import review as review_router
 
 app.include_router(settings_router.router)
 app.include_router(stripe.router)
@@ -270,6 +271,7 @@ app.include_router(members.router)
 app.include_router(certifications.router)
 app.include_router(ws.router)
 app.include_router(learning_router.router)
+app.include_router(review_router.router)
 
 logger.info("All routers registered successfully")
 
