@@ -65,7 +65,8 @@ def document_paragraphs(data: bytes) -> list[dict]:
     from app.services import docx_certification
 
     doc = docx_blocks._Doc.load(data)
-    cert_ps = {id(p) for unit in docx_certification._marker_units(doc) for p in unit.iter(docx_blocks.w("p"))}
+    # Hold the element proxies themselves: lxml reuses freed proxy addresses, so id() of a transient proxy can collide.
+    cert_ps = {p for unit in docx_certification._marker_units(doc) for p in unit.iter(docx_blocks.w("p"))}
     out = []
     for part in sorted(doc.trees, key=lambda n: (n != "word/document.xml", n)):
         where = "body" if part == "word/document.xml" else ("header" if "header" in part else "footer")
@@ -73,7 +74,7 @@ def document_paragraphs(data: bytes) -> list[dict]:
             bid = docx_blocks._block_id_of(p)
             text = docx_blocks.paragraph_text(p)
             if bid and text.strip():
-                out.append({"id": bid, "text": text, "cert": id(p) in cert_ps, "where": where})
+                out.append({"id": bid, "text": text, "cert": p in cert_ps, "where": where})
     return out
 
 

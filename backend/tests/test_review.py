@@ -514,3 +514,32 @@ def test_model_boxes_snap_to_stamp_ink_and_text_rows():
     line = source_map.snap_to_text([0.15, 0.29, 0.5, 0.305], dark, w, h)
     assert line[1] == pytest.approx(0.3, abs=0.004) and line[3] == pytest.approx(0.318, abs=0.004)
     assert line[0] == pytest.approx(0.125, abs=0.01) and line[2] == pytest.approx(0.625, abs=0.01)
+
+
+def test_certification_paragraphs_are_identified_exactly():
+    import gc
+    import io
+
+    from docx import Document
+
+    from app.services import docx_blocks, docx_certification, source_map
+
+    doc = Document()
+    for i in range(40):
+        doc.add_paragraph(f"Body paragraph {i} MUNICIPALITY OF ESEMPIO 01230045678901")
+    buf = io.BytesIO()
+    doc.save(buf)
+    data = docx_blocks.tag_blocks(buf.getvalue())
+    from datetime import date
+
+    content = docx_certification.CertContent(lang="en", day=date(2026, 9, 29), values={
+        "translator": "Anna Rossi", "date": "29 September 2026", "source_language": "Italian",
+        "target_language": "English", "document": "Certificate", "pages": "1",
+    })
+    with_cert = docx_certification.add_certification(data, content)
+    for _ in range(5):
+        gc.collect()
+        paras = source_map.document_paragraphs(with_cert)
+        body = [p for p in paras if p["text"].startswith("Body paragraph")]
+        assert len(body) == 40 and not any(p["cert"] for p in body)
+        assert any(p["cert"] for p in paras)
