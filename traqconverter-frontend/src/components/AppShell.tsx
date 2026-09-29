@@ -34,6 +34,9 @@ const IconMemory = (
 const IconBook = (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v18H6.5A2.5 2.5 0 0 0 4 22.5Z"/><path d="M4 4.5v18"/></svg>
 )
+const IconTemplate = (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+)
 const IconShield = (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6Z"/><path d="m9 12 2 2 4-4"/></svg>
 )
@@ -67,6 +70,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { name: "Translation Memory", path: "/translation-memory", match: "/translation-memory", icon: IconMemory },
       { name: "Glossary", path: "/settings/glossary", match: "/settings/glossary", icon: IconBook },
+      { name: "Templates", path: "/templates", match: "/templates", icon: IconTemplate },
       { name: "Certifications", path: "/certifications", match: "/certifications", icon: IconShield },
     ],
   },
