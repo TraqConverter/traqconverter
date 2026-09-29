@@ -31,11 +31,14 @@ _OP_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "op": {"type": "string", "enum": ["replace", "insert_before", "insert_after", "delete"]},
+                    "op": {
+                        "type": "string",
+                        "enum": ["set_text", "replace_paragraph", "replace", "insert_before", "insert_after", "delete"],
+                    },
                     "target": {"type": "string"},
-                    "xml": {"type": "string"},
+                    "content": {"type": "string"},
                 },
-                "required": ["op", "target", "xml"],
+                "required": ["op", "target", "content"],
                 "additionalProperties": False,
             },
         },
@@ -52,12 +55,20 @@ You receive an outline of the whole translation (one line per top-level block: [
 description), the WordprocessingML of the blocks around the user's selection, the selected text, \
 the conversation so far and the request.
 
-Answer with JSON: "reply" (one or two sentences to the user, in the language they wrote in, saying \
-what you changed, or why you changed nothing) and "operations". Each operation targets a top-level \
-block by the id shown in brackets:
-- replace: swap the block for the XML you give (one or more <w:p>/<w:tbl> elements)
-- insert_before / insert_after: add the XML next to the block
-- delete: remove the block ("xml": "")
+Answer with JSON: "reply" (one or two sentences to the user, written in the same language as the \
+REQUEST text, never the source document's language, saying what you changed or why you changed \
+nothing) and "operations". Always use the SMALLEST operation \
+that does the job; the user is waiting while you write:
+- set_text: new wording for ONE paragraph (any paragraph id, including inside tables, headers and \
+footers). "content" is the paragraph's complete new plain text (\\t for a tab, \\n for a line \
+break). Its formatting is kept automatically. Use this for every wording, spelling, number or \
+terminology change.
+- replace_paragraph: restyle or restructure ONE paragraph (bold, size, alignment, splitting it). \
+"content" is one or more <w:p> elements; target is the paragraph id.
+- replace: swap a whole top-level block (outline id) for new <w:p>/<w:tbl> XML. Only for layout \
+changes (make columns, rebuild a table, reorder), never for a wording change.
+- insert_before / insert_after: add <w:p>/<w:tbl> XML next to a top-level block.
+- delete: remove a top-level block ("content": "").
 
 Rules:
 - XML uses the w: prefix (already declared). Top level may only be <w:p> or <w:tbl>. No images, \
@@ -66,6 +77,8 @@ drawings, hyperlinks, relationship ids or <w:sectPr>.
 exactly as it is, and keep the <w:bookmarkStart w:name="_b..."/>/<w:bookmarkEnd/> pair of each \
 paragraph you keep. New paragraphs don't need bookmarks.
 - To move content: delete it where it was and insert it where it belongs, in one response.
+- For a vague request ("find a better alternative"), make the change directly and name it in the \
+reply; don't ask for confirmation.
 - Side-by-side layout = a table with all w:tblBorders set to w:val="nil".
 - The translation must stay faithful to the source. If a request would add, drop or alter meaning \
 compared with the source, do it only if the user is explicit, and say so in the reply.
@@ -218,13 +231,17 @@ def _request_text(data: bytes, block_ids: list[str], selected_text: str, message
             xml = {}
         heading = "ALL BLOCKS" if xml else "BLOCK XML (omitted: document too large; ask the user to select the part to change)"
     blocks = "\n".join(f"--- [{uid}]\n{x}" for uid, x in xml.items())
+    selected = docx_blocks.paragraph_texts(data, block_ids)
+    selected_list = "\n".join(f"[{bid}] {text}" for bid, text in selected.items()) or "(none)"
     convo = "\n".join(f"{t['role'].upper()}: {t['content']}" for t in history[-10:]) or "(none)"
     return (
         f"OUTLINE OF THE TRANSLATION\n{outline}\n\n"
+        f"SELECTED PARAGRAPHS (targets for set_text / replace_paragraph)\n{selected_list}\n\n"
         f"{heading}\n{blocks}\n\n"
         f"SELECTED TEXT\n{selected_text or '(no selection: the request is about the whole document)'}\n\n"
         f"CONVERSATION SO FAR\n{convo}\n\n"
-        f"REQUEST\n{message}"
+        f"REQUEST\n{message}\n\n"
+        "Write \"reply\" in the language this REQUEST is written in (English if unclear)."
     )
 
 
@@ -253,7 +270,8 @@ def chat_edit(
     content.append({"type": "text", "text": _request_text(data, block_ids, selected_text, message, history)})
     messages = [{"role": "user", "content": content}]
 
-    params = claude_params.request_params(model, max_tokens=16000, thinking=True, effort="medium")
+    # Low effort: edits are local and the user is waiting; output length is most of the latency.
+    params = claude_params.request_params(model, max_tokens=16000, thinking=True, effort="low")
     output_config = {**params.pop("output_config", {}), "format": {"type": "json_schema", "schema": _OP_SCHEMA}}
 
     last_error = None

@@ -350,6 +350,16 @@ def paragraph_text_all(el) -> str:
     return " ".join(t for t in (paragraph_text(p) for p in el.iter(w("p"))) if t.strip())
 
 
+def paragraph_texts(data: bytes, ids: list[str]) -> dict[str, str]:
+    doc = _Doc.load(data)
+    out = {}
+    for bid in ids:
+        p = doc.find_block(bid)
+        if p is not None and p.tag == w("p"):
+            out[bid] = paragraph_text(p)
+    return out
+
+
 def outline(data: bytes, limit: int = 160) -> str:
     doc = _Doc.load(data)
     lines = []
@@ -417,6 +427,25 @@ def apply_operations(data: bytes, operations: list[dict]) -> tuple[bytes, list[s
     touched = []
     for op in operations:
         kind, target = op.get("op"), op.get("target", "")
+        content = op.get("content", op.get("xml", ""))
+        if kind in ("set_text", "replace_paragraph"):
+            p = doc.find_block(target)
+            if p is None or p.tag != w("p"):
+                raise DocxEditError(f"Unknown paragraph {target}")
+            if kind == "set_text":
+                set_paragraph_text(p, content.replace("\r\n", "\n"))
+                touched.append(p)
+            else:
+                new = _parse_fragment(content)
+                if not new or any(el_new.tag != w("p") for el_new in new):
+                    raise DocxEditError("replace_paragraph content must be one or more <w:p>")
+                ref = p
+                for el_new in new:
+                    ref.addnext(el_new)
+                    ref = el_new
+                p.getparent().remove(p)
+                touched.extend(new)
+            continue
         el = doc.find_block(target)
         unit = _unit_of(el) if el is not None else None
         if unit is None:
@@ -428,7 +457,7 @@ def apply_operations(data: bytes, operations: list[dict]) -> tuple[bytes, list[s
             if len(siblings) == 1:
                 container.insert(0, etree.Element(w("p")))
             continue
-        new = _parse_fragment(op.get("xml", ""))
+        new = _parse_fragment(content)
         if not new:
             raise DocxEditError(f"Operation {kind} on {target} has no content")
         if kind == "replace":

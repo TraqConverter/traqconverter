@@ -125,7 +125,7 @@ def test_chat_edit_applies_operations_and_reports_changed_blocks(client, project
         "operations": [{
             "op": "replace",
             "target": ids[1],
-            "xml": "<w:p><w:r><w:t>Mr. BIANCHI LUCA</w:t></w:r></w:p><w:p><w:r><w:t>born in Bari</w:t></w:r></w:p>",
+            "content": "<w:p><w:r><w:t>Mr. BIANCHI LUCA</w:t></w:r></w:p><w:p><w:r><w:t>born in Bari</w:t></w:r></w:p>",
         }],
     })
     r = client.post(
@@ -151,8 +151,8 @@ def test_chat_retries_once_when_operations_are_invalid(client, project_with_doc,
     data, v = _get(client, owner, project)
     target = docx_blocks.block_ids(data)[2]
     fake = fake_claude(
-        {"reply": "x", "operations": [{"op": "replace", "target": target, "xml": "<w:p><w:r><w:drawing/></w:r></w:p>"}]},
-        {"reply": "Done.", "operations": [{"op": "replace", "target": target, "xml": "<w:p><w:r><w:t>[Signature]</w:t></w:r></w:p>"}]},
+        {"reply": "x", "operations": [{"op": "replace", "target": target, "content": "<w:p><w:r><w:drawing/></w:r></w:p>"}]},
+        {"reply": "Done.", "operations": [{"op": "replace", "target": target, "content": "<w:p><w:r><w:t>[Signature]</w:t></w:r></w:p>"}]},
     )
     r = client.post(f"/projects/{project.id}/document/chat", headers=owner["headers"], json={"version": v, "message": "tidy"})
     assert r.status_code == 200, r.text
@@ -171,7 +171,7 @@ def test_chat_question_without_operations_keeps_version(client, project_with_doc
 def test_chat_gives_up_after_two_bad_answers(client, project_with_doc, fake_claude):
     owner, project = project_with_doc()
     _, v = _get(client, owner, project)
-    bad = {"reply": "x", "operations": [{"op": "delete", "target": "_b00000000", "xml": ""}]}
+    bad = {"reply": "x", "operations": [{"op": "delete", "target": "_b00000000", "content": ""}]}
     fake_claude(bad, bad)
     r = client.post(f"/projects/{project.id}/document/chat", headers=owner["headers"], json={"version": v, "message": "x"})
     assert r.status_code == 502

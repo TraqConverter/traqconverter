@@ -147,3 +147,31 @@ def test_fields_and_footnote_refs_are_left_untouched():
     out, _ = db.apply_text_edits(data, [(first, before.replace(" end", " finish"))])
     xml = db._Doc.load(out).files["word/document.xml"].decode()
     assert ">7<" in xml and "PAGE" in xml and "finish" in xml
+
+
+def test_set_text_inside_a_table_cell_keeps_the_rest_of_the_table():
+    data = _sample()
+    cell = db.block_ids(data)[2]
+    out, changed = db.apply_operations(data, [{"op": "set_text", "target": cell, "content": "[Illegible signature]"}])
+    table = Document(io.BytesIO(out)).tables[0]
+    assert table.cell(0, 0).text == "[Illegible signature]"
+    assert table.cell(0, 1).text == "[Round stamp: Registry Office]"
+    assert changed == [cell]
+
+
+def test_replace_paragraph_restyles_one_cell_paragraph():
+    data = _sample()
+    cell = db.block_ids(data)[3]
+    xml = '<w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>[Round stamp: Registry Office]</w:t></w:r></w:p>'
+    out, changed = db.apply_operations(data, [{"op": "replace_paragraph", "target": cell, "content": xml}])
+    cell_p = Document(io.BytesIO(out)).tables[0].cell(0, 1).paragraphs[0]
+    assert cell_p.runs[0].bold and cell_p.alignment == 2
+    assert len(changed) == 1
+    with pytest.raises(db.DocxEditError):
+        db.apply_operations(data, [{"op": "replace_paragraph", "target": cell, "content": "<w:tbl/>"}])
+
+
+def test_paragraph_texts_for_selected_ids():
+    data = _sample()
+    ids = db.block_ids(data)
+    assert db.paragraph_texts(data, ids[:2]) == {ids[0]: "Born in Bari on 12/03/1987", ids[1]: "Ref.\t0001"}
