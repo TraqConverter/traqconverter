@@ -137,6 +137,11 @@ except Exception as _e:
 
 app = FastAPI()
 
+from app.services import ai_usage as _ai_usage
+
+_ai_usage.install_hooks()
+app.middleware("http")(_ai_usage.attribution_middleware)
+
 
 
 
@@ -252,6 +257,7 @@ from app.routers import members
 from app.routers import certifications
 from app.routers import ws
 from app.routers import learning as learning_router
+from app.routers import usage as usage_router
 
 app.include_router(settings_router.router)
 app.include_router(stripe.router)
@@ -270,6 +276,7 @@ app.include_router(members.router)
 app.include_router(certifications.router)
 app.include_router(ws.router)
 app.include_router(learning_router.router)
+app.include_router(usage_router.router)
 
 logger.info("All routers registered successfully")
 

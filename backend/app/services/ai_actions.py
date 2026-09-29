@@ -16,11 +16,10 @@ from app.services.credit_service import (
     InsufficientCreditsError,
     WalletNotFoundError,
 )
-from app.services.project_lifecycle import revision_charge_reference
 
 logger = logging.getLogger(__name__)
 
-FREE_REVISIONS = int(os.getenv("FREE_REVISIONS_PER_PROJECT", "2"))
+REGENERATE_LIMIT = int(os.getenv("REGENERATE_LIMIT_PER_PROJECT", "2"))
 REBUILD_LOCK_MINUTES = 30
 STAFF_ROLES = ("SUPERUSER", "SUPER_ADMIN", "ADMIN")
 
@@ -47,13 +46,20 @@ def charge(db: Session, project: TranslationProject, user: User, reference: str)
     return True
 
 
-def charge_revision(db: Session, project: TranslationProject, user: User) -> str | None:
-    """Count a revision; charge page credits once the free allowance is used. Returns the charge reference."""
+def regenerations_left(project: TranslationProject) -> int:
+    return max(0, REGENERATE_LIMIT - (project.revision_count or 0))
+
+
+def use_regeneration(project: TranslationProject) -> None:
+    """Count a regenerate or revise against the per-document limit; they are never charged."""
+    if regenerations_left(project) <= 0:
+        raise HTTPException(status_code=403, detail=f"Regenerate is limited to {REGENERATE_LIMIT} per document")
     project.revision_count = (project.revision_count or 0) + 1
-    if project.revision_count <= FREE_REVISIONS:
-        return None
-    reference = revision_charge_reference(project.id, project.revision_count)
-    return reference if charge(db, project, user, reference) else None
+
+
+def return_regeneration(project: TranslationProject) -> None:
+    """A failed attempt doesn't count against the limit."""
+    project.revision_count = max(0, (project.revision_count or 0) - 1)
 
 
 def claim_rebuild(project: TranslationProject) -> None:
@@ -69,8 +75,8 @@ def claim_rebuild(project: TranslationProject) -> None:
     project.rebuild_started_at = datetime.utcnow()
 
 
-def run_rebuild(project_id: str, instructions: str | None, charge_reference: str | None) -> None:
-    """Background task: author a fresh DOCX from the source PDF; refund the charge on failure."""
+def run_rebuild(project_id: str, instructions: str | None) -> None:
+    """Background task: author a fresh DOCX from the source PDF; a failure gives the attempt back."""
     from app.database import SessionLocal
     from app.services.s3_service import download_file_from_s3, upload_file_to_s3
 
@@ -116,10 +122,8 @@ def run_rebuild(project_id: str, instructions: str | None, charge_reference: str
             db.rollback()
             logger.exception("Rebuild failed for project %s", project_id)
             project.rebuild_status = "failed"
-            project.rebuild_error = "The layout rebuild failed"
-            if charge_reference:
-                CreditService.refund_usage(db, charge_reference)
-                project.rebuild_error += "; credits were refunded"
+            project.rebuild_error = "The layout rebuild failed; it didn't count toward your regenerate limit"
+            return_regeneration(project)
             db.commit()
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -140,6 +144,5 @@ def expire_stale_rebuilds(db: Session) -> int:
     for project in stale:
         project.rebuild_status = "failed"
         project.rebuild_error = "The layout rebuild was interrupted; try again"
-        if project.revision_count and project.revision_count > FREE_REVISIONS:
-            CreditService.refund_usage(db, revision_charge_reference(project.id, project.revision_count))
+        return_regeneration(project)
     return len(stale)

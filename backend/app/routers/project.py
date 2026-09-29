@@ -23,7 +23,7 @@ from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
 from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import can_manage_project, get_user_project_or_404
-from app.services import ai_actions
+from app.services import ai_actions, ai_usage
 from app.services.learning import capture_template_in_background
 from app.services.project_lifecycle import enqueue_job, job_charge_reference
 from app.models.project import TranslationProject, ProjectStatus
@@ -641,7 +641,7 @@ def get_project_status(
         "rebuild_status": project.rebuild_status,
         "rebuild_error": project.rebuild_error,
         "revision_count": project.revision_count or 0,
-        "free_revisions_left": max(0, ai_actions.FREE_REVISIONS - (project.revision_count or 0)),
+        "free_revisions_left": ai_actions.regenerations_left(project),
     }
 
 
@@ -1407,12 +1407,13 @@ def suggest_glossary(
     )
 
     try:
-        raw = _call_model(
-            model_key=getattr(project, "model", None),
-            system=system_prompt,
-            user=user_payload,
-            max_tokens=4096,
-        )
+        with ai_usage.ai_context(action="glossary_suggest", project_id=project.id, team_id=project.team_id, user_id=current_user.id):
+            raw = _call_model(
+                model_key=getattr(project, "model", None),
+                system=system_prompt,
+                user=user_payload,
+                max_tokens=4096,
+            )
     except Exception:
         logger.exception("Glossary extraction failed for project %s", project.id)
         raise HTTPException(status_code=502, detail="Glossary extraction failed")
@@ -1536,25 +1537,25 @@ def revise_project(
         raise HTTPException(status_code=404, detail="No segments to revise")
     _validate_model_key(data.model)
 
+    ai_actions.use_regeneration(project)
     ai_actions.claim_rebuild(project)
-    reference = ai_actions.charge_revision(db, project, current_user)
     db.commit()
 
     background_tasks.add_task(
-        _revise_background,
+        ai_usage.bind(_revise_background, action="revise", project_id=project.id, team_id=project.team_id, user_id=current_user.id),
         str(project.id),
         (data.model or "").strip() or project.model,
         (data.instructions or "").strip(),
-        reference,
     )
     return {
         "rebuild_status": "rebuild_in_progress",
         "revision_count": project.revision_count,
-        "charged": bool(reference),
+        "regenerations_left": ai_actions.regenerations_left(project),
+        "charged": False,
     }
 
 
-def _revise_background(project_id: str, model_key: str | None, instructions: str, reference: str | None) -> None:
+def _revise_background(project_id: str, model_key: str | None, instructions: str) -> None:
     from app.database import SessionLocal
     from app.services.ai_translation_service import _call_model, humanize_lang
 
@@ -1613,16 +1614,14 @@ def _revise_background(project_id: str, model_key: str | None, instructions: str
         project = db.query(TranslationProject).filter(TranslationProject.id == project_id).first()
         if project:
             project.rebuild_status = "failed"
-            project.rebuild_error = "The revision failed"
-            if reference:
-                CreditService.refund_usage(db, reference)
-                project.rebuild_error += "; credits were refunded"
+            project.rebuild_error = "The revision failed; it didn't count toward your regenerate limit"
+            ai_actions.return_regeneration(project)
             db.commit()
     finally:
         db.close()
 
     if needs_rebuild:
-        ai_actions.run_rebuild(project_id, instructions, reference)
+        ai_actions.run_rebuild(project_id, instructions)
 
 
 @router.post(
@@ -1640,15 +1639,20 @@ def rebuild_with_claude(
     if (project.source_kind or "").upper() != "PDF":
         raise HTTPException(status_code=400, detail="Regenerating only works for PDF source projects")
 
+    ai_actions.use_regeneration(project)
     ai_actions.claim_rebuild(project)
-    reference = ai_actions.charge_revision(db, project, current_user)
     db.commit()
-    background_tasks.add_task(ai_actions.run_rebuild, str(project.id), None, reference)
+    background_tasks.add_task(
+        ai_usage.bind(ai_actions.run_rebuild, action="regenerate", project_id=project.id, team_id=project.team_id, user_id=current_user.id),
+        str(project.id),
+        None,
+    )
     return {
         "ok": True,
         "rebuild_status": "rebuild_in_progress",
         "revision_count": project.revision_count,
-        "charged": bool(reference),
+        "regenerations_left": ai_actions.regenerations_left(project),
+        "charged": False,
     }
 
 

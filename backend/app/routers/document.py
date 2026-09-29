@@ -14,7 +14,7 @@ from app.dependencies.tenant import get_user_project_or_404
 from app.models.project import TranslationProject
 from app.models.translation_segment import TranslationSegment
 from app.models.user import User
-from app.services import docx_blocks, document_editor, learning
+from app.services import ai_allowance, ai_usage, docx_blocks, document_editor, learning
 
 logger = logging.getLogger(__name__)
 
@@ -134,17 +134,19 @@ def chat_document(
     project = get_user_project_or_404(db, project_id, user)
     _require_version(project, payload.version)
     data, _ = document_editor.current_document(db, project, user, _initial_builder(db, project, user))
+    ai_allowance.reserve_edit(db, project, user)
     # The Claude call takes seconds to a minute, so the row is only locked to write the result.
     db.commit()
     try:
-        new_data, reply, changed = document_editor.chat_edit(
-            project,
-            data,
-            payload.block_ids,
-            payload.selected_text,
-            payload.message,
-            [t.model_dump() for t in payload.history],
-        )
+        with ai_usage.ai_context(action="document_chat", project_id=project.id, team_id=project.team_id, user_id=user.id):
+            new_data, reply, changed = document_editor.chat_edit(
+                project,
+                data,
+                payload.block_ids,
+                payload.selected_text,
+                payload.message,
+                [t.model_dump() for t in payload.history],
+            )
     except document_editor.ChatEditError as e:
         from app.services.ai_actions import is_staff
 
@@ -159,8 +161,14 @@ def chat_document(
     if changed or new_data is not data:
         document_editor.save_version(db, project, new_data, f"AI: {payload.message[:150]}", user)
         learning.record_changes(db, project, data, new_data, "chat")
+    ai_allowance.count_edit(db, project, user)
     db.commit()
-    return {"version": project.document_version, "reply": reply, "changed_block_ids": changed}
+    return {
+        "version": project.document_version,
+        "reply": reply,
+        "changed_block_ids": changed,
+        "ai_edits_remaining": ai_allowance.remaining_included(project),
+    }
 
 
 @router.post("/{project_id}/document/undo")

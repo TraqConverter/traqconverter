@@ -131,6 +131,7 @@ class TranslationProject(Base):
     edited_html = Column(String, nullable=True)
 
     revision_count = Column(Integer, nullable=False, default=0, server_default="0")
+    ai_edits_used = Column(Integer, nullable=False, default=0, server_default="0")
     rebuild_status = Column(String, nullable=True)
     rebuild_error = Column(String, nullable=True)
     rebuild_started_at = Column(DateTime, nullable=True)

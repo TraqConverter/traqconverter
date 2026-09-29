@@ -27,10 +27,6 @@ def job_charge_reference(project_id, attempt: int | None = None) -> str:
     return str(project_id) if not attempt else f"{project_id}:rerun:{attempt}"
 
 
-def revision_charge_reference(project_id, revision: int) -> str:
-    return f"{project_id}:revision:{revision}"
-
-
 def latest_job_charge(db: Session, project_id) -> str | None:
     pid = str(project_id)
     row = (

@@ -15,6 +15,7 @@ from app.models.translation_segment import TranslationSegment
 from app.models.project import TranslationProject
 from app.models.user import User
 
+from app.services import ai_usage
 from app.services.translation_memory_service import store_tm_entry
 
 logger = logging.getLogger(__name__)
@@ -171,35 +172,36 @@ def retranslate_segment(
     instructions = (data.instructions or "").strip()
 
     try:
-        if instructions:
+        with ai_usage.ai_context(action="retranslate", project_id=project.id, team_id=project.team_id, user_id=current_user.id):
+            if instructions:
 
 
 
-            src_name = humanize_lang(project.source_language)
-            tgt_name = humanize_lang(project.target_language)
-            system_prompt = (
-                f"You are a professional translator. Translate from "
-                f"{src_name} to {tgt_name}. The output MUST be "
-                f"written in {tgt_name}. Return ONLY the translated "
-                f"text — no preamble, no quotes, no commentary.\n\n"
-                f"USER INSTRUCTIONS (apply these strictly):\n{instructions}"
-            )
-            new_translation = _call_model(
-                model_key=getattr(project, "model", None),
-                system=system_prompt,
-                user=src_text,
-                max_tokens=2048,
-            )
-        else:
+                src_name = humanize_lang(project.source_language)
+                tgt_name = humanize_lang(project.target_language)
+                system_prompt = (
+                    f"You are a professional translator. Translate from "
+                    f"{src_name} to {tgt_name}. The output MUST be "
+                    f"written in {tgt_name}. Return ONLY the translated "
+                    f"text — no preamble, no quotes, no commentary.\n\n"
+                    f"USER INSTRUCTIONS (apply these strictly):\n{instructions}"
+                )
+                new_translation = _call_model(
+                    model_key=getattr(project, "model", None),
+                    system=system_prompt,
+                    user=src_text,
+                    max_tokens=2048,
+                )
+            else:
 
 
-            new_translation = translate_text(
-                text=src_text,
-                source_lang=project.source_language,
-                target_lang=project.target_language,
-                db=db,
-                project=project,
-            )
+                new_translation = translate_text(
+                    text=src_text,
+                    source_lang=project.source_language,
+                    target_lang=project.target_language,
+                    db=db,
+                    project=project,
+                )
     except Exception:
         logger.exception("Request failed")
         raise HTTPException(
