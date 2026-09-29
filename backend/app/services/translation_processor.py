@@ -61,6 +61,9 @@ from app.services.layout_translator import (
     rebuild_output,
 )
 from app.routers.ws import broadcast_progress
+from app.services import learning
+from app.services.glossary_service import project_source_language
+from concurrent.futures import ThreadPoolExecutor
 
 from docx import Document
 import fitz
@@ -69,6 +72,7 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 20
+TEMPLATE_FILL_TIMEOUT = 600
 
 
 
@@ -184,6 +188,61 @@ def extract_file_text(file_path: str):
 
 
 
+def _start_template_fill(db, project, source_kind, source_bytes, source_text, terminology):
+    """Submit the template fill for this project's kind of document, or return None when there's no template."""
+    if source_kind not in ("PDF", "IMAGE"):
+        return None
+    template = learning.find_template(db, project.team_id, project.doc_key, project.target_language)
+    if not template:
+        return None
+    from app.services import template_fill
+    from app.services.document_editor import _download
+
+    args = dict(
+        source_data=source_bytes,
+        file_name=project.file_name,
+        source_text=source_text,
+        template_source=template.source_text or "",
+        source_lang=project_source_language(project) or project.source_language,
+        target_lang=project.target_language,
+        terminology=terminology,
+    )
+    template_key = template.s3_key
+
+    def run():
+        return template_fill.fill_from_template(template_docx=_download(template_key), **args)
+
+    logger.info("Template fill starting (project=%s template=%s)", project.id, template.id)
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="template-fill")
+    future = pool.submit(run)
+    pool.shutdown(wait=False)
+    return template.id, future
+
+
+def _finish_template_fill(db, project, job, temp_dir) -> bool:
+    """Save the template-built document as the authored DOCX; False means use the normal rebuild."""
+    if not job:
+        return False
+    template_id, future = job
+    try:
+        docx_bytes, stats = future.result(timeout=TEMPLATE_FILL_TIMEOUT)
+    except Exception:
+        logger.exception("Template fill failed; using the normal rebuild (project=%s)", project.id)
+        return False
+    from app.models.learning import DocumentTemplate
+    from app.services import s3_service
+
+    path = temp_dir / f"template_{project.id}.docx"
+    path.write_bytes(docx_bytes)
+    project.authored_docx_s3_key = s3_service.upload_file_to_s3(path)
+    template = db.query(DocumentTemplate).filter(DocumentTemplate.id == template_id).first()
+    if template:
+        learning.mark_template_used(db, project, template)
+    db.commit()
+    logger.info("Built from template (project=%s template=%s stats=%s)", project.id, template_id, stats)
+    return True
+
+
 def process_translation_job(project_id: str):
     logger.info(f"Worker starting processing for {project_id}")
 
@@ -209,6 +268,7 @@ def process_translation_job(project_id: str):
         project.translated_segments = 0
         project.failure_reason = None
         project.authored_docx_s3_key = None
+        project.template_id = None
         project.edited_html = None
         project.rebuild_error = None
         project.last_heartbeat = datetime.utcnow()
@@ -239,6 +299,13 @@ def process_translation_job(project_id: str):
 
         project.source_kind = source_kind
         db.commit()
+
+        source_bytes = input_file.read_bytes()
+        source_text = "\n".join(item.text or "" for item in extracted)
+        learning.profile_project(db, project, source_bytes, source_text)
+        terminology = learning.team_terminology(db, project, source_text)
+        # The template fill runs next to segment translation so neither waits for the other.
+        template_job = _start_template_fill(db, project, source_kind, source_bytes, source_text, terminology)
 
 
 
@@ -577,9 +644,11 @@ def process_translation_job(project_id: str):
 
 
 
+        used_template = _finish_template_fill(db, project, template_job, temp_dir)
         wants_authored = (
             source_kind == "PDF"
             and (getattr(project, "model", "") or "") == "claude-authored"
+            and not used_template
         )
         if wants_authored:
             try:
@@ -596,6 +665,7 @@ def process_translation_job(project_id: str):
                     pdf_bytes=pdf_bytes,
                     source_lang=source_lang,
                     target_lang=target_lang,
+                    terminology=terminology,
                 )
                 authored_path = (
                     temp_dir / f"authored_{project.id}.docx"

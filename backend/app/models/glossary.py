@@ -1,5 +1,7 @@
 import uuid
-from sqlalchemy import Column, String, Text, Integer, ForeignKey
+from datetime import datetime
+
+from sqlalchemy import Column, DateTime, Float, String, Text, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.database import Base
@@ -26,3 +28,13 @@ class Glossary(Base):
 
     notes = Column(Text, nullable=True)
     usage_count = Column(Integer, nullable=False, default=0)
+
+    # 'manual' (typed by the team), 'learned' (mined from edits) or 'rejected' (kept so it isn't relearned).
+    origin = Column(String, nullable=False, default="manual", server_default="manual")
+    confidence = Column(Float, nullable=True)
+    learned_from_project_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("translation_projects.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at = Column(DateTime, nullable=True, default=datetime.utcnow)

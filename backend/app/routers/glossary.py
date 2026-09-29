@@ -28,6 +28,8 @@ def _serialize(term: Glossary) -> dict:
         "target_term": term.target_term,
         "notes": term.notes,
         "usage_count": term.usage_count or 0,
+        "origin": term.origin or "manual",
+        "confidence": term.confidence,
     }
 
 
@@ -72,7 +74,7 @@ def get_terms(
         return []
     terms = (
         db.query(Glossary)
-        .filter(Glossary.team_id.in_(allowed_teams))
+        .filter(Glossary.team_id.in_(allowed_teams), Glossary.origin != "rejected")
         .order_by(Glossary.usage_count.desc())
         .all()
     )
@@ -130,6 +132,8 @@ def update_term(
     payload = data.model_dump(exclude_unset=True)
     for field, value in payload.items():
         setattr(term, field, value)
+    if payload:
+        term.origin = "manual"
 
     db.commit()
     db.refresh(term)

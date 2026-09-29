@@ -219,6 +219,21 @@ def _source_block(project: TranslationProject) -> Optional[dict]:
     return None
 
 
+def _team_terminology(project: TranslationProject) -> str:
+    from sqlalchemy.orm import object_session
+
+    from app.services.learning import team_terminology
+
+    db = object_session(project)
+    if db is None:
+        return ""
+    try:
+        return team_terminology(db, project)
+    except Exception:
+        logger.exception("Terminology lookup for chat edit failed (project=%s)", project.id)
+        return ""
+
+
 def _request_text(data: bytes, block_ids: list[str], selected_text: str, message: str, history: list[dict]) -> str:
     outline = docx_blocks.outline(data)
     if block_ids:
@@ -267,6 +282,9 @@ def chat_edit(
     source = _source_block(project)
     if source:
         content.append(source)
+    terminology = _team_terminology(project)
+    if terminology:
+        content.append({"type": "text", "text": terminology})
     content.append({"type": "text", "text": _request_text(data, block_ids, selected_text, message, history)})
     messages = [{"role": "user", "content": content}]
 
