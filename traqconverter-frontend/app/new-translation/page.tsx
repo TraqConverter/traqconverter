@@ -122,34 +122,6 @@ function IconSwap() {
   )
 }
 
-function IconDB() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0a7870" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <ellipse cx="12" cy="6" rx="8" ry="3" />
-      <path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6" />
-      <path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
-    </svg>
-  )
-}
-
-function IconBook() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0a7870" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v18H6.5A2.5 2.5 0 0 0 4 22.5Z" />
-      <path d="M4 4.5v18" />
-    </svg>
-  )
-}
-
-function IconShield() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0a7870" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6Z" />
-      <path d="m9 12 2 2 4-4" />
-    </svg>
-  )
-}
-
 function IconChevron() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9a9178" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -164,40 +136,6 @@ function IconArrowRight() {
       <path d="M5 12h14" />
       <path d="m13 5 7 7-7 7" />
     </svg>
-  )
-}
-
-function Toggle({
-  checked,
-  onChange,
-}: {
-  checked: boolean
-  onChange: (v: boolean) => void
-}) {
-  return (
-    <button
-      onClick={() => onChange(!checked)}
-      aria-pressed={checked}
-      className="relative inline-flex items-center transition"
-      style={{
-        width: 44,
-        height: 24,
-        borderRadius: 999,
-        background: checked ? "#0a7870" : "#e7ddc5",
-      }}
-    >
-      <span
-        className="absolute rounded-full transition"
-        style={{
-          width: 18,
-          height: 18,
-          background: "#fff",
-          left: checked ? 23 : 3,
-          top: 3,
-          boxShadow: "0 1px 2px rgba(0,0,0,0.15)",
-        }}
-      />
-    </button>
   )
 }
 
@@ -324,54 +262,25 @@ export default function NewProjectPage() {
   const [source, setSource] = useState("auto")
   const [target, setTarget] = useState("it-IT")
 
-  const [useTM, setUseTM] = useState(false)
-  const [applyGlossary, setApplyGlossary] = useState(false)
-  const [requestCert, setRequestCert] = useState(false)
-
-  const [showRunOptions, setShowRunOptions] = useState(true)
-  const [runMode, setRunMode] = useState<"translate" | "dtp">("translate")
-
-  const [rebuildEngine, setRebuildEngine] = useState<
-    "claude-authored" | "segment-pipeline"
-  >("claude-authored")
-  const [aiModel, setAiModel] = useState<string>("")
-  const [models, setModels] = useState<
-    { id: string; label: string; provider: string }[]
-  >([])
-  const [orientation, setOrientation] = useState<"auto" | "portrait" | "landscape">("auto")
+  // null until known; /certifications answers 403 on plans without the feature.
+  const [certsEnabled, setCertsEnabled] = useState<boolean | null>(null)
   const [certTemplateId, setCertTemplateId] = useState<string>("")
   const [certTemplates, setCertTemplates] = useState<
     { id: string; file_name: string }[]
   >([])
-  const [instructions, setInstructions] = useState<string>("")
-  const [showInstructionsEditor, setShowInstructionsEditor] = useState(false)
 
   useEffect(() => {
     api
-      .get("/projects/translation-models")
-      .then((res) => {
-        const list = res.data?.models || []
-        setModels(list)
-
-        if (list.length) setAiModel(list[0].id)
-      })
-      .catch(() => setModels([]))
-    api
       .get("/certifications")
       .then((res) => {
-        const items =
-          res.data?.items ||
-          (Array.isArray(res.data) ? res.data : []) ||
-          []
-
-        setCertTemplates(
-          items.map((c: any) => ({
-            id: c.id,
-            file_name: c.file_name,
-          })),
-        )
+        const items: { id: string; file_name: string }[] = res.data?.items || []
+        setCertsEnabled(true)
+        setCertTemplates(items.map((c) => ({ id: c.id, file_name: c.file_name })))
       })
-      .catch(() => setCertTemplates([]))
+      .catch(() => {
+        setCertsEnabled(false)
+        setCertTemplates([])
+      })
   }, [])
 
   const handlePickFile = () => fileInputRef.current?.click()
@@ -409,23 +318,12 @@ export default function NewProjectPage() {
     formData.append("file", file)
     formData.append("source_language", source)
     formData.append("target_language", target)
-    formData.append("use_tm", String(useTM))
-    formData.append("apply_glossary", String(applyGlossary))
-    formData.append("request_certification", String(requestCert))
-
-    if (runMode === "dtp") {
-      formData.append("model", "dtp")
-    } else if (rebuildEngine === "claude-authored") {
-      formData.append("model", "claude-authored")
-    } else if (aiModel) {
-      formData.append("model", aiModel)
-    }
-    if (certTemplateId) {
+    formData.append("model", "claude-authored")
+    formData.append("use_tm", "true")
+    formData.append("apply_glossary", "true")
+    formData.append("request_certification", String(!!certsEnabled))
+    if (certsEnabled && certTemplateId) {
       formData.append("certification_template_id", certTemplateId)
-    }
-
-    if (instructions.trim()) {
-      formData.append("notes", instructions.trim())
     }
     if (batch) formData.append("batch_id", batch)
     return formData
@@ -485,7 +383,7 @@ export default function NewProjectPage() {
     setLoading(false)
     window.dispatchEvent(new Event("sidebar:refresh"))
     if (!failed.length && !notUploaded.length) {
-      router.push(`/batches/${id}`)
+      router.push(`/jobs?batch=${id}`)
       return
     }
     const parts = [`${failed.length} failed: ${failed.join(", ")}.`]
@@ -514,16 +412,6 @@ export default function NewProjectPage() {
     }
   }
 
-  const trySample = () => {
-    const blob = new Blob(["Sample document for TraqConverter"], {
-      type: "text/plain",
-    })
-    const sample = new File([blob], "Sample-Patient-Consent.pdf", {
-      type: "application/pdf",
-    })
-    setFiles([sample])
-  }
-
   return (
     <div className="max-w-[1200px] mx-auto">
       {}
@@ -539,7 +427,7 @@ export default function NewProjectPage() {
 
       {}
       <h1
-        className="text-[34px] font-semibold tracking-tight mb-1"
+        className="text-[28px] sm:text-[34px] font-semibold tracking-tight mb-1"
         style={{ color: "#1f2a2e" }}
       >
         New project
@@ -560,9 +448,9 @@ export default function NewProjectPage() {
         minute.
       </p>
 
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] xl:grid-cols-[minmax(0,1fr)_360px] gap-6">
         {}
-        <div className="col-span-2">
+        <div className="min-w-0">
           <div
             onDragOver={(e) => {
               e.preventDefault()
@@ -571,14 +459,13 @@ export default function NewProjectPage() {
             onDragLeave={() => setDragOver(false)}
             onDrop={handleDrop}
             onClick={handlePickFile}
-            className="rounded-2xl p-10 cursor-pointer transition"
+            className="rounded-2xl p-6 sm:p-10 cursor-pointer transition lg:min-h-[480px] flex"
             style={{
               background: "#ffffff",
               border: `2px dashed ${dragOver ? "#0a7870" : "#e7ddc5"}`,
-              minHeight: 480,
             }}
           >
-            <div className="flex flex-col items-center justify-center h-full text-center py-10">
+            <div className="flex-1 min-w-0 flex flex-col items-center justify-center text-center py-4 sm:py-10">
               <div
                 className="rounded-2xl mb-6 flex items-center justify-center"
                 style={{
@@ -593,7 +480,7 @@ export default function NewProjectPage() {
               </div>
 
               <div
-                className="text-[22px] font-semibold mb-2"
+                className="text-[20px] sm:text-[22px] font-semibold mb-2 max-w-full break-words"
                 style={{ color: "#1f2a2e" }}
               >
                 {multi ? `${files.length} documents` : file ? file.name : "Drop your document here"}
@@ -654,8 +541,7 @@ export default function NewProjectPage() {
           )}
         </div>
 
-        {}
-        <div className="space-y-6">
+        <div className="space-y-6 min-w-0">
           {}
           <div
             className="rounded-2xl p-6"
@@ -696,383 +582,49 @@ export default function NewProjectPage() {
               label="TARGET LANGUAGE"
               options={TARGET_LANGUAGES}
             />
-          </div>
 
-          {}
-          <div
-            className="rounded-2xl p-6"
-            style={{
-              background: "#ffffff",
-              border: "1px solid #e7ddc5",
-              boxShadow: "0 1px 2px rgba(30,30,20,0.03)",
-            }}
-          >
-            <div
-              className="text-[11px] font-semibold tracking-[0.14em] mb-4"
-              style={{ color: "#9a9178" }}
-            >
-              RUN MODE
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {(
-                [
-                  {
-                    value: "translate" as const,
-                    title: "Translate",
-                    sub: "Standard translation workflow into a different language.",
-                  },
-                  {
-                    value: "dtp" as const,
-                    title: "DTP",
-                    sub: "Editable source output with automatic DOCX rebuild — no AI translation.",
-                  },
-                ]
-              ).map((opt) => {
-                const active = runMode === opt.value
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setRunMode(opt.value)}
-                    className="rounded-xl p-4 text-left transition"
-                    style={{
-                      background: active ? "#f6f1e4" : "#ffffff",
-                      border: `1px solid ${active ? "#0a7870" : "#e7ddc5"}`,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <div
-                        className="w-4 h-4 rounded-full flex items-center justify-center"
-                        style={{
-                          background: active ? "#0a7870" : "transparent",
-                          border: `2px solid ${active ? "#0a7870" : "#cfc6ad"}`,
-                        }}
-                      >
-                        {active && (
-                          <div
-                            className="w-1.5 h-1.5 rounded-full"
-                            style={{ background: "#fff" }}
-                          />
-                        )}
-                      </div>
-                      <span
-                        className="font-semibold text-[14px]"
-                        style={{ color: "#1f2a2e" }}
-                      >
-                        {opt.title}
-                      </span>
-                    </div>
-                    <div
-                      className="text-[12px] leading-snug"
-                      style={{ color: "#8a8270" }}
-                    >
-                      {opt.sub}
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          {}
-          <div
-            className="rounded-2xl"
-            style={{
-              background: "#ffffff",
-              border: "1px solid #e7ddc5",
-              boxShadow: "0 1px 2px rgba(30,30,20,0.03)",
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => setShowRunOptions((v) => !v)}
-              className="w-full flex items-center justify-between px-6 py-4 text-left"
-              style={{
-                borderBottom: showRunOptions
-                  ? "1px solid #f1e8d1"
-                  : "none",
-              }}
-            >
-              <div
-                className="text-[14px] font-semibold"
-                style={{ color: "#1f2a2e" }}
-              >
-                Run Options
-              </div>
-              <div
-                className="text-[11px] font-semibold tracking-[0.14em] px-2.5 py-1 rounded-full"
-                style={{
-                  background: "#cfe6e2",
-                  color: "#0a7870",
-                  border: "1px solid #b7dad4",
-                }}
-              >
-                {showRunOptions ? "HIDE" : "SHOW"}
-              </div>
-            </button>
-
-            {showRunOptions && (
-              <div className="px-6 py-2">
-                {}
-                <RunOptionRow label="Rebuild engine">
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)",
-                      gap: 6,
-                      width: "100%",
-                      minWidth: 0,
-                    }}
-                  >
-                    {(
-                      [
-                        {
-                          id: "claude-authored",
-                          title: "Layout rebuild",
-                          desc: "Best quality",
-                        },
-                        {
-                          id: "segment-pipeline",
-                          title: "Segment pipeline",
-                          desc: "Fast",
-                        },
-                      ] as const
-                    ).map((opt) => {
-                      const active = rebuildEngine === opt.id
-                      const disabled = runMode === "dtp"
-                      return (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => !disabled && setRebuildEngine(opt.id)}
-                          disabled={disabled}
-                          className="text-left px-3 py-2 rounded-xl transition"
-                          style={{
-                            background: disabled
-                              ? "#f6efe0"
-                              : active
-                              ? "#ffffff"
-                              : "#faf5ee",
-                            border: active
-                              ? "2px solid #0a7870"
-                              : "1px solid #e7ddc5",
-                            color: disabled ? "#9a9178" : "#1f2a2e",
-                            cursor: disabled ? "not-allowed" : "pointer",
-                          }}
-                        >
-                          <div
-                            className="flex items-center gap-1.5 text-[11px] font-semibold"
-                            style={{ minWidth: 0 }}
-                          >
-                            <span
-                              style={{
-                                width: 12,
-                                height: 12,
-                                borderRadius: 999,
-                                border: active
-                                  ? "3.5px solid #0a7870"
-                                  : "1px solid #cdb98a",
-                                background: "#ffffff",
-                                display: "inline-block",
-                                flexShrink: 0,
-                              }}
-                            />
-                            {opt.title}
-                          </div>
-                          <div
-                            className="text-[10px] mt-0.5"
-                            style={{ color: "#8a8270", marginLeft: 18 }}
-                          >
-                            {opt.desc}
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </RunOptionRow>
-
-                {}
-                {rebuildEngine === "segment-pipeline" && (
-                  <RunOptionRow
-                    label="AI Model"
-                    helper="The translator engine used per segment. Only applies when Rebuild engine is set to Segment pipeline."
-                  >
-                    <select
-                      value={aiModel}
-                      onChange={(e) => setAiModel(e.target.value)}
-                      disabled={runMode === "dtp"}
-                      className="text-sm outline-none rounded-lg px-3 py-2 w-full max-w-[260px]"
-                      style={{
-                        background:
-                          runMode === "dtp" ? "#f6efe0" : "#faf5ee",
-                        border: "1px solid #e7ddc5",
-                        color: runMode === "dtp" ? "#9a9178" : "#1f2a2e",
-                        cursor:
-                          runMode === "dtp" ? "not-allowed" : "pointer",
-                      }}
-                    >
-                      {models.length === 0 && (
-                        <option value="">Default (balanced)</option>
-                      )}
-                      {models.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </select>
-                  </RunOptionRow>
-                )}
-
-                {}
-                <RunOptionRow
-                  label="Page Orientation"
-                  helper="Match source orientation automatically, or force one. The rebuild adopts this per page."
+            {certsEnabled && certTemplates.length > 0 && (
+              <div className="mt-5 pt-5" style={{ borderTop: "1px solid #f1e8d1" }}>
+                <label
+                  htmlFor="cert-template"
+                  className="block text-[11px] font-semibold tracking-[0.14em] mb-3"
+                  style={{ color: "#9a9178" }}
                 >
-                  <div
-                    className="inline-flex p-1 rounded-full"
-                    style={{
-                      background: "#f3ecdb",
-                      border: "1px solid #e7ddc5",
-                    }}
-                  >
-                    {(["auto", "portrait", "landscape"] as const).map(
-                      (val) => {
-                        const active = orientation === val
-                        return (
-                          <button
-                            key={val}
-                            type="button"
-                            onClick={() => setOrientation(val)}
-                            className="text-[12px] font-semibold tracking-[0.04em] px-3 py-1 rounded-full transition capitalize"
-                            style={{
-                              background: active ? "#ffffff" : "transparent",
-                              color: active ? "#0a7870" : "#6b6558",
-                              boxShadow: active
-                                ? "0 1px 2px rgba(30,30,20,0.06)"
-                                : "none",
-                            }}
-                          >
-                            {val}
-                          </button>
-                        )
-                      },
-                    )}
-                  </div>
-                </RunOptionRow>
-
-                {}
-                <RunOptionRow
-                  label="Certification template"
-                  helper="DOCX template with {{tokens}} from your Certifications library. Auto-filled at export."
-                >
+                  CERTIFICATION
+                </label>
+                <div className="relative">
                   <select
+                    id="cert-template"
                     value={certTemplateId}
                     onChange={(e) => setCertTemplateId(e.target.value)}
-                    className="text-sm outline-none rounded-lg px-3 py-2 w-full max-w-[260px]"
-                    style={{
-                      background: "#faf5ee",
-                      border: "1px solid #e7ddc5",
-                      color: "#1f2a2e",
-                    }}
+                    className="w-full min-w-0 appearance-none text-sm outline-none rounded-xl pl-4 pr-10 py-3"
+                    style={{ background: "#ffffff", border: "1px solid #e7ddc5", color: "#1f2a2e" }}
                   >
-                    <option value="">None — use the default cert</option>
+                    <option value="">Standard statement</option>
                     {certTemplates.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.file_name}
                       </option>
                     ))}
                   </select>
-                </RunOptionRow>
-
-                {}
-                <RunOptionRow
-                  label="Instructions"
-                  helper="Free-text guidance handed to the AI (e.g. 'formal register', 'prefer Municipality over City')."
-                  last
-                >
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setShowInstructionsEditor((v) => !v)
-                    }
-                    className="text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
-                    style={{
-                      background: instructions
-                        ? "#cfe6e2"
-                        : "#ffffff",
-                      color: instructions ? "#0a5e58" : "#0a7870",
-                      border: `1px solid ${
-                        instructions ? "#b7dad4" : "#cfe6e2"
-                      }`,
-                    }}
-                  >
-                    {instructions ? "Edit instructions" : "+ Add instructions"}
-                  </button>
-                </RunOptionRow>
-
-                {showInstructionsEditor && (
-                  <div className="pb-5">
-                    <textarea
-                      value={instructions}
-                      onChange={(e) => setInstructions(e.target.value)}
-                      rows={4}
-                      placeholder="E.g. Use formal register. Translate 'Comune' as 'Municipality'. Preserve all dates exactly."
-                      className="w-full text-sm outline-none rounded-xl px-3 py-2.5 resize-none"
-                      style={{
-                        background: "#faf5ee",
-                        border: "1px solid #e7ddc5",
-                        color: "#1f2a2e",
-                      }}
-                    />
-                  </div>
-                )}
+                  <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2">
+                    <IconChevron />
+                  </span>
+                </div>
+                <div className="text-xs mt-2" style={{ color: "#8a8270" }}>
+                  Appended at export with the project details filled in.
+                </div>
               </div>
             )}
-          </div>
-          {}
-          <div
-            className="rounded-2xl p-6"
-            style={{
-              background: "#ffffff",
-              border: "1px solid #e7ddc5",
-              boxShadow: "0 1px 2px rgba(30,30,20,0.03)",
-            }}
-          >
+
             <div
-              className="text-[11px] font-semibold tracking-[0.14em] mb-4"
-              style={{ color: "#9a9178" }}
+              className="mt-5 pt-4 text-xs leading-relaxed"
+              style={{ borderTop: "1px solid #f1e8d1", color: "#8a8270" }}
             >
-              OPTIONS
+              Translation memory and glossary are applied automatically. Layout and page orientation follow the source.
             </div>
-
-            <OptionRow
-              icon={<IconDB />}
-              title="Use Translation Memory"
-              subtitle="Reuse approved segments from your past projects"
-              checked={useTM}
-              onChange={setUseTM}
-            />
-
-            <OptionRow
-              icon={<IconBook />}
-              title="Apply Glossary"
-              subtitle="Enforce your team's approved terminology"
-              checked={applyGlossary}
-              onChange={setApplyGlossary}
-            />
-
-            <OptionRow
-              icon={<IconShield />}
-              title="Request certification"
-              subtitle="Add a translator's certification statement page"
-              checked={requestCert}
-              onChange={setRequestCert}
-              last
-            />
           </div>
 
-          {}
           <div>
             <button
               onClick={handleStart}
@@ -1101,7 +653,7 @@ export default function NewProjectPage() {
             </button>
             <div className="text-xs text-center mt-3" style={{ color: "#8a8270" }}>
               {multi
-                ? "1 credit per page · same languages and options for every document"
+                ? "1 credit per page · same languages for every document"
                 : "1 credit per page · review every segment before export"}
             </div>
           </div>
@@ -1118,88 +670,6 @@ function IconUploadWhite() {
       <path d="m7 9 5-5 5 5" />
       <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
     </svg>
-  )
-}
-
-function RunOptionRow({
-  label,
-  helper,
-  children,
-  last,
-}: {
-  label: string
-  helper?: string
-  children: React.ReactNode
-  last?: boolean
-}) {
-  return (
-    <div
-      className="grid items-start gap-4 py-4"
-      style={{
-
-        gridTemplateColumns: "160px 1fr",
-        borderBottom: last ? "none" : "1px solid #f4ecd6",
-      }}
-    >
-      <div className="min-w-0">
-        <div
-          className="text-[13px] font-semibold leading-snug"
-          style={{ color: "#1f2a2e" }}
-        >
-          {label}
-        </div>
-        {helper && (
-          <div
-            className="text-[11px] mt-1 leading-snug"
-            style={{ color: "#8a8270" }}
-          >
-            {helper}
-          </div>
-        )}
-      </div>
-      <div className="flex items-center justify-end min-w-0">
-        {children}
-      </div>
-    </div>
-  )
-}
-
-function OptionRow({
-  icon,
-  title,
-  subtitle,
-  checked,
-  onChange,
-  last,
-}: {
-  icon: React.ReactNode
-  title: string
-  subtitle: string
-  checked: boolean
-  onChange: (v: boolean) => void
-  last?: boolean
-}) {
-  return (
-    <div
-      className="flex items-center gap-3 py-3"
-      style={{ borderBottom: last ? "none" : "1px solid #f1e8d1" }}
-    >
-      <div
-        className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
-        style={{ background: "#e1efec" }}
-      >
-        {icon}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-semibold" style={{ color: "#1f2a2e" }}>
-          {title}
-        </div>
-        <div className="text-xs truncate" style={{ color: "#8a8270" }}>
-          {subtitle}
-        </div>
-      </div>
-      <Toggle checked={checked} onChange={onChange} />
-    </div>
   )
 }
 
@@ -1233,7 +703,7 @@ function BatchList({
 
   return (
     <div
-      className="rounded-2xl p-6 mt-6"
+      className="rounded-2xl p-5 sm:p-6 mt-6"
       style={{ background: "#ffffff", border: "1px solid #e7ddc5", boxShadow: "0 1px 2px rgba(30,30,20,0.03)" }}
     >
       <label className="block text-[11px] font-semibold tracking-[0.14em] mb-2" style={{ color: "#9a9178" }}>
@@ -1292,16 +762,19 @@ function BatchList({
                 <div className="text-sm truncate" style={{ color: "#1f2a2e" }}>
                   {f.name}
                 </div>
+                <div className="sm:hidden text-xs truncate" style={{ color }} title={label}>
+                  {label}
+                </div>
                 {u?.state === "uploading" && (
                   <div className="h-1 rounded-full mt-1.5" style={{ background: "#f3ecdb" }}>
                     <div className="h-1 rounded-full" style={{ width: `${u.pct ?? 0}%`, background: "#0a7870" }} />
                   </div>
                 )}
               </div>
-              <div className="text-xs w-16 text-right shrink-0" style={{ color: "#6b6558" }}>
+              <div className="text-xs w-12 sm:w-16 text-right shrink-0" style={{ color: "#6b6558" }}>
                 {pages == null ? "—" : `${pages} p.`}
               </div>
-              <div className="text-xs w-40 text-right truncate shrink-0" style={{ color }} title={label}>
+              <div className="hidden sm:block text-xs w-40 text-right truncate shrink-0" style={{ color }} title={label}>
                 {label}
               </div>
               <button
@@ -1331,8 +804,8 @@ function BatchList({
           {batchId && (
             <>
               {" "}
-              <Link href={`/batches/${batchId}`} className="font-semibold underline" style={{ color: "#0a7870" }}>
-                Open batch
+              <Link href={`/jobs?batch=${batchId}`} className="font-semibold underline" style={{ color: "#0a7870" }}>
+                Open in Projects
               </Link>
             </>
           )}

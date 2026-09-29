@@ -67,7 +67,6 @@ const NAV_GROUPS: NavGroup[] = [
       { name: "Dashboard", path: "/dashboard", match: "/dashboard", icon: IconHome },
       { name: "New project", path: "/new-translation", match: "/new-translation", icon: IconPlus },
       { name: "Projects", path: "/jobs", match: "/jobs", icon: IconFolder },
-      { name: "Batches", path: "/batches", match: "/batches", icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="7" y="3" width="13" height="15" rx="2"/><path d="M4 7v12a2 2 0 0 0 2 2h10"/></svg> },
     ],
   },
   {
@@ -114,6 +113,21 @@ export default function AppShell({ children }: { children: ReactNode }) {
   } | null>(null)
 
   const showChrome = !isPublicRoute(pathname)
+  const [navOpen, setNavOpen] = useState(false)
+  const [navPath, setNavPath] = useState(pathname)
+  if (navPath !== pathname) {
+    setNavPath(pathname)
+    setNavOpen(false)
+  }
+
+  useEffect(() => {
+    if (!navOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setNavOpen(false)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [navOpen])
 
   useEffect(() => {
     if (!showChrome) return
@@ -269,8 +283,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen" style={{ background: "#faf5ee", color: "#1f2a2e" }}>
       {}
+      {navOpen && (
+        <div
+          className="lg:hidden fixed inset-0 z-40"
+          style={{ background: "rgba(31, 42, 46, 0.35)" }}
+          onClick={() => setNavOpen(false)}
+        />
+      )}
       <aside
-        className="w-64 flex flex-col justify-between"
+        className={`w-64 shrink-0 flex flex-col justify-between fixed inset-y-0 left-0 z-50 transition-transform lg:static lg:translate-x-0 ${
+          navOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
         style={{
           background: "#f3ecdb",
           borderRight: "1px solid #e7ddc5",
@@ -428,16 +451,25 @@ export default function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       {}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         <header
-          className="px-8 pt-6 pb-4 flex items-center justify-between"
+          className="px-4 sm:px-8 pt-4 sm:pt-6 pb-4 flex items-center justify-between gap-3"
           style={{ background: "#faf5ee" }}
         >
+          <button
+            type="button"
+            onClick={() => setNavOpen(true)}
+            className="lg:hidden w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+            style={{ background: "#ffffff", border: "1px solid #e7ddc5", color: "#4a4638" }}
+            aria-label="Open menu"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          </button>
           <div className="flex-1" />
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
             <div
-              className="flex items-center gap-2 px-4 py-2 rounded-full w-80"
+              className="hidden md:flex items-center gap-2 px-4 py-2 rounded-full w-64 xl:w-80"
               style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
             >
               <span style={{ color: "#9a9178" }}>{IconSearch}</span>
@@ -470,7 +502,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </div>
               {displayName && (
                 <div
-                  className="text-sm font-medium"
+                  className="hidden sm:block text-sm font-medium truncate max-w-[160px]"
                   style={{ color: "#1f2a2e" }}
                 >
                   {displayName}
@@ -480,7 +512,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto px-8 pb-10">
+        <main className="flex-1 overflow-y-auto px-4 sm:px-8 pb-10">
           {children}
         </main>
       </div>

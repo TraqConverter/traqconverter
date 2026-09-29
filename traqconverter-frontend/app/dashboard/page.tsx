@@ -270,7 +270,7 @@ export default function DashboardPage() {
           <span>Workspace</span>
         </div>
         <h1
-          className="text-[34px] font-semibold tracking-tight"
+          className="text-[28px] sm:text-[34px] font-semibold tracking-tight"
           style={{ color: "#1f2a2e" }}
         >
           {name ? `Welcome back, ${name}` : "Welcome back"}
@@ -287,7 +287,7 @@ export default function DashboardPage() {
       )}
 
       {}
-      <div className="grid grid-cols-4 gap-5 mb-10">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5 mb-10">
         <KpiCard
           label="ACTIVE PROJECTS"
           value={String(kpis.active)}
@@ -335,7 +335,7 @@ export default function DashboardPage() {
           boxShadow: "0 1px 2px rgba(30,30,20,0.03)",
         }}
       >
-        <header className="flex items-center justify-between px-7 pt-6 pb-5">
+        <header className="flex flex-wrap items-center justify-between gap-4 px-5 sm:px-7 pt-6 pb-5">
           <div>
             <h2
               className="text-[22px] font-semibold"
@@ -348,10 +348,10 @@ export default function DashboardPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             {}
             <div
-              className="flex items-center p-1 rounded-full"
+              className="flex items-center p-1 rounded-full max-w-full overflow-x-auto"
               style={{ background: "#f6efe0" }}
             >
               {(
@@ -366,7 +366,7 @@ export default function DashboardPage() {
                   <button
                     key={t.key}
                     onClick={() => setTab(t.key)}
-                    className="text-sm px-4 py-1.5 rounded-full transition"
+                    className="text-sm px-4 py-1.5 rounded-full transition whitespace-nowrap"
                     style={{
                       background: active ? "#ffffff" : "transparent",
                       color: active ? "#1f2a2e" : "#8a8270",
@@ -409,7 +409,8 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        {}
+        <div className="overflow-x-auto">
+        <div className="min-w-[880px]">
         <div
           className="grid px-7 py-3 text-[11px] font-semibold tracking-[0.12em]"
           style={{
@@ -591,6 +592,8 @@ export default function DashboardPage() {
               )
             })}
         </div>
+        </div>
+        </div>
       </section>
     </div>
   )
@@ -615,7 +618,7 @@ function KpiCard({
 }) {
   return (
     <div
-      className="rounded-2xl p-6"
+      className="rounded-2xl p-4 sm:p-6 min-w-0"
       style={{
         background: "#ffffff",
         border: "1px solid #e7ddc5",
@@ -630,7 +633,7 @@ function KpiCard({
       </div>
       <div className="flex items-center gap-3 mb-2">
         <div
-          className="text-[40px] font-semibold leading-none"
+          className="text-[32px] sm:text-[40px] font-semibold leading-none"
           style={{ color: "#1f2a2e" }}
         >
           {value}
