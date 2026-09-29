@@ -219,13 +219,13 @@ export default function EditorPage() {
     }
   }
 
-  const startClaudeRebuild = () => {
+  const startRegenerate = () => {
     setConfirmState({
-      title: "Rebuild with Claude",
+      title: "Regenerate the translation",
       body:
-        "Claude reads the original PDF and writes a fresh translated DOCX. It runs in the background and usually takes 1-3 minutes.\n\n" +
+        "The whole translation is redone from the original, replacing your edits (you can undo it). It runs in the background and usually takes 1-3 minutes.\n\n" +
         revisionCostText(project?.free_revisions_left),
-      confirmLabel: "Start rebuild",
+      confirmLabel: "Regenerate",
       onConfirm: async () => {
         try {
           setCompareActionBusy("rerun")
@@ -233,10 +233,10 @@ export default function EditorPage() {
           const res = await api.post(`/projects/${id}/rebuild-with-claude`)
           markRebuildRunning(res.data?.revision_count)
           setNotice(
-            "Rebuild started. The preview updates here when it finishes.",
+            "Regenerating. The document updates here when it finishes.",
           )
         } catch (err: unknown) {
-          setError(apiErrorDetail(err, "Couldn't start the Claude rebuild."))
+          setError(apiErrorDetail(err, "Couldn't start regenerating."))
         } finally {
           setCompareActionBusy(null)
         }
@@ -1097,7 +1097,7 @@ export default function EditorPage() {
               }}
             >
               <div className="text-[12px]" style={{ color: "#8a8270" }}>
-                Type in the translation to edit it. Select text to ask Claude for changes.
+                Type in the translation to edit it. Select text and use Ask AI for bigger changes.
               </div>
               <div
                 className="flex items-center gap-2 relative"
@@ -1105,60 +1105,7 @@ export default function EditorPage() {
               >
                 <button
                   type="button"
-                  onClick={suggestGlossary}
-                  disabled={compareActionBusy !== null || glossarySuggestions.loading}
-                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
-                  style={{
-                    background: "#ffffff",
-                    color: "#0a5e58",
-                    border: "1px solid #cfe6e2",
-                    cursor:
-                      compareActionBusy !== null || glossarySuggestions.loading
-                        ? "not-allowed"
-                        : "pointer",
-                  }}
-                  title="AI extracts recurring terms from the translated segments"
-                >
-                  {glossarySuggestions.loading
-                    ? "Scanning…"
-                    : "✨ Suggest glossary"}
-                </button>
-                <button
-                  type="button"
-                  onClick={requestRevision}
-                  disabled={compareActionBusy !== null || rebuildRunning}
-                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
-                  style={{
-                    background: "#ffffff",
-                    color: "#0a7870",
-                    border: "1px solid #cfe6e2",
-                    cursor:
-                      compareActionBusy !== null ? "not-allowed" : "pointer",
-                  }}
-                >
-                  {compareActionBusy === "revise"
-                    ? "Revising…"
-                    : "💬 Request revision"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => startClaudeRebuild()}
-                  disabled={compareActionBusy !== null || rebuildRunning}
-                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
-                  style={{
-                    background: "#0a7870",
-                    color: "#ffffff",
-                    border: "1px solid #0a7870",
-                    cursor:
-                      compareActionBusy !== null ? "not-allowed" : "pointer",
-                  }}
-                  title="Send the original PDF to Claude and have Claude author a fresh translated DOCX"
-                >
-                  {rebuildRunning ? "Rebuilding…" : "✦ Rebuild with Claude"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowRerunPicker((v) => !v)}
+                  onClick={() => startRegenerate()}
                   disabled={compareActionBusy !== null || rebuildRunning}
                   className="inline-flex items-center gap-1.5 text-[12px] font-semibold tracking-[0.04em] px-3 py-1.5 rounded-full transition"
                   style={{
@@ -1168,56 +1115,10 @@ export default function EditorPage() {
                     cursor:
                       compareActionBusy !== null ? "not-allowed" : "pointer",
                   }}
+                  title="Redo the whole translation from the original, replacing your edits"
                 >
-                  {compareActionBusy === "rerun" ? "Re-running…" : "↻ Re-run"}
+                  {rebuildRunning ? "Regenerating…" : "↻ Regenerate"}
                 </button>
-                {showRerunPicker && (
-                  <div
-                    className="absolute right-0 top-full mt-2 z-30 rounded-xl py-1 w-72"
-                    style={{
-                      background: "#ffffff",
-                      border: "1px solid #e7ddc5",
-                      boxShadow: "0 8px 24px rgba(30,30,20,0.12)",
-                    }}
-                  >
-                    <div
-                      className="px-3 py-2 text-[10px] font-semibold tracking-[0.14em]"
-                      style={{
-                        color: "#9a9178",
-                        borderBottom: "1px solid #f1e8d1",
-                      }}
-                    >
-                      RE-RUN WITH MODEL
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => rerunTranslation(null)}
-                      className="w-full text-left px-3 py-2 text-sm hover:bg-[#faf5ee]"
-                      style={{ color: "#1f2a2e" }}
-                    >
-                      Same model (
-                      <span className="font-mono text-xs">
-                        {project?.model || "balanced"}
-                      </span>
-                      )
-                    </button>
-                    <div
-                      className="border-t my-1"
-                      style={{ borderColor: "#f1e8d1" }}
-                    />
-                    {translationModels.map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => rerunTranslation(m.id)}
-                        className="w-full text-left px-3 py-2 text-sm hover:bg-[#faf5ee]"
-                        style={{ color: "#1f2a2e" }}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             </div>
 

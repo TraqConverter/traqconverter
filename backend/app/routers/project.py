@@ -1632,7 +1632,7 @@ def rebuild_with_claude(
     """Queue a fresh Claude-authored layout rebuild; poll GET /projects/{id} for rebuild_status."""
     project = get_user_project_or_404(db, project_id, current_user)
     if (project.source_kind or "").upper() != "PDF":
-        raise HTTPException(status_code=400, detail="Claude rebuild only works for PDF source projects")
+        raise HTTPException(status_code=400, detail="Regenerating only works for PDF source projects")
 
     ai_actions.claim_rebuild(project)
     reference = ai_actions.charge_revision(db, project, current_user)

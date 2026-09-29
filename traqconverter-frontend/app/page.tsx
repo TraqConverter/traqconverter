@@ -187,7 +187,7 @@ function Hero() {
               Upload your client&apos;s scan, PDF, or Word file. TraqConverter
               reads it, translates it, and rebuilds the page layout, marking
               signatures, stamps, and unreadable parts the way you would. Correct
-              it in place or ask Claude to fix a highlighted passage, then export
+              it in place or ask the built-in AI to fix a highlighted passage, then export
               it with your own certification page.
             </p>
             <div className="flex flex-wrap items-center gap-3 mb-8">
@@ -572,7 +572,7 @@ function HowItWorks() {
             {
               n: "02",
               t: "Correct the draft",
-              b: "The source stays on the left, the translated document on the right. Type corrections directly, or highlight a passage and ask Claude to change it.",
+              b: "The source stays on the left, the translated document on the right. Type corrections directly, or highlight a passage and ask the AI to change it.",
             },
             {
               n: "03",
@@ -623,13 +623,13 @@ function DeepFeatures() {
         <SectionHeader
           eyebrow="THE EDITOR"
           title="Edit the document, not a list of segments"
-          subtitle="The translation is a real Word document. Type where something's wrong, or highlight it and ask Claude. Every change can be undone."
+          subtitle="The translation is a real Word document. Type where something's wrong, or highlight it and ask the AI. Every change can be undone."
         />
         <div className="grid md:grid-cols-2 gap-12 items-center mt-14">
           <FeatureList
             items={[
               { t: "Side by side with the source", b: "The original stays next to the translation while you work, page for page." },
-              { t: "Highlight and ask Claude", b: "Select a line, a table, or a signature block and say what's off: a term, a number, or the layout. Most fixes take a few seconds." },
+              { t: "Highlight and ask AI", b: "Select a line, a table, or a signature block and say what's off: a term, a number, or the layout. Most fixes take a few seconds." },
               { t: "Translation memory (Pro)", b: "Your translations are stored and offered as matches in later projects for the same language pair." },
               { t: "Glossary (Pro)", b: "Keep product names, legal terms, and proper nouns consistent with your house style." },
             ]}
@@ -770,7 +770,7 @@ function EditorMock() {
             color: TEXT,
           }}
         >
-          <span style={{ color: TEAL, fontWeight: 600 }}>Claude · </span>
+          <span style={{ color: TEAL, fontWeight: 600 }}>AI · </span>
           Done: stamp on the left, name and signature on the right, in a borderless table.
         </div>
       </div>
@@ -1178,7 +1178,7 @@ function FAQ() {
     },
     {
       q: "Will the layout look like the original?",
-      a: "That's the goal of the rebuild: text blocks, tables, and signature blocks are placed where they were in the original. Complex pages can need touch-ups, which you make in the editor by typing or by asking Claude.",
+      a: "That's the goal of the rebuild: text blocks, tables, and signature blocks are placed where they were in the original. Complex pages can need touch-ups, which you make in the editor by typing or by asking the AI.",
     },
     {
       q: "Which languages do you handle?",

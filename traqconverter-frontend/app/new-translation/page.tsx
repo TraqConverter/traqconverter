@@ -679,7 +679,7 @@ export default function NewProjectPage() {
                       [
                         {
                           id: "claude-authored",
-                          title: "Claude-direct",
+                          title: "Layout rebuild",
                           desc: "Best quality",
                         },
                         {
