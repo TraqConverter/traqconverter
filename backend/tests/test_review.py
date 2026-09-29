@@ -543,3 +543,42 @@ def test_certification_paragraphs_are_identified_exactly():
         body = [p for p in paras if p["text"].startswith("Body paragraph")]
         assert len(body) == 40 and not any(p["cert"] for p in body)
         assert any(p["cert"] for p in paras)
+
+
+def _pdf_with_table(rows):
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    y = 100
+    for row in rows:
+        x = 60
+        for cell in row:
+            page.insert_text((x, y), cell, fontsize=10)
+            x += 110
+        y += 20
+    return doc.tobytes()
+
+
+def test_word_anchors_place_repeated_table_values_in_their_own_cells():
+    from app.services import source_map as sm
+
+    pdf = _pdf_with_table([["1", "126,00", "0,00", "N2.2"], ["2", "4,00", "0,00", "N2.2"], ["Totale", "130,00", "0,00"]])
+    paras = [{"id": f"_b{i:08x}", "text": t} for i, t in enumerate(
+        ["€126.00", "€0.00", "N2.2", "€4.00", "€0.00", "N2.2", "Total", "€130.00", "€0.00"])]
+    res = sm.match_words(paras, sm.text_layer_words(pdf))
+    tops = {p["text"] + str(i): res[p["id"]]["bbox"][1] for i, p in enumerate(paras) if p["id"] in res}
+    assert tops["€0.001"] < tops["€0.004"] < tops["€0.008"]
+    assert tops["N2.22"] < tops["N2.25"]
+    for p in paras:
+        if p["id"] in res:
+            x0, y0, x1, y1 = res[p["id"]]["bbox"]
+            assert (x1 - x0) * (y1 - y0) < 0.01
+
+
+def test_coarse_boxes_rejected_for_short_paragraphs():
+    from app.services import source_map as sm
+
+    assert sm._too_coarse({"bbox": [0.05, 0.2, 0.95, 0.6]}, "€0.00")
+    assert not sm._too_coarse({"bbox": [0.05, 0.2, 0.95, 0.6]}, "x" * 200)
+    assert not sm._too_coarse({"bbox": [0.1, 0.2, 0.2, 0.22]}, "€0.00")

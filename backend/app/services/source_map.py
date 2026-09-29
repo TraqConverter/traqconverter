@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 
 VISION_MODEL = os.getenv("REVIEW_VISION_MODEL", claude_params.CLASSIFIER_MODEL)
 MATCH_MIN = 0.55
+# Bump when matching changes so stored maps are recomputed.
+ALGO_VERSION = 2
+# A short paragraph mapped to more than this share of the page is a block-level guess, not a location.
+MAX_SHORT_AREA = 0.04
+SHORT_PARA_CHARS = 80
+_ANCHOR_RE = re.compile(r"[\w.,/\-€$£%]+", re.UNICODE)
 STRONG_MATCH = 0.75
 MAX_VISION_PAGES = 12
 MAX_PARAS_PER_CALL = 80
@@ -183,6 +189,101 @@ def _rebox_from_text_layer(segs: list[dict], lines: list[dict]) -> None:
         s["page"] = page
         s["bbox"] = [round(v, 4) for v in _union([line["bbox"] for line in found if line["page"] == page])]
 
+
+
+def _digits_key(tok: str) -> Optional[str]:
+    """Numbers compare by their digits only, so 1.000,00 and 1,000.00 and €0.00 / 0,00 € meet."""
+    d = re.sub(r"\D", "", tok)
+    return d if len(d) >= 1 and any(ch.isdigit() for ch in tok) else None
+
+
+def _anchor_keys(text: str) -> list[str]:
+    """Tokens that read the same in source and translation: numbers, codes and capitalised names."""
+    keys = []
+    for tok in _ANCHOR_RE.findall(text):
+        tok = tok.strip(".,;:()[]")
+        if not tok:
+            continue
+        d = _digits_key(tok)
+        if d is not None:
+            keys.append("#" + d)
+        elif len(tok) >= 3 and (tok.isupper() or tok[:1].isupper()) and fold(tok) not in _STOP:
+            keys.append(fold(tok))
+    return keys
+
+
+def text_layer_words(pdf: bytes) -> list[dict]:
+    """Words of the text layer in reading order, with page-fraction boxes and anchor keys."""
+    import fitz
+
+    out = []
+    with fitz.open(stream=pdf, filetype="pdf") as doc:
+        for page_index, page in enumerate(doc):
+            w, h = page.rect.width or 1, page.rect.height or 1
+            words = sorted(page.get_text("words"), key=lambda x: (x[5], x[6], x[7]))
+            for x0, y0, x1, y1, text, *_ in words:
+                keys = _anchor_keys(text)
+                if not keys:
+                    continue
+                out.append({
+                    "page": page_index,
+                    "order": len(out),
+                    "bbox": [max(0.0, x0 / w), max(0.0, y0 / h), min(1.0, x1 / w), min(1.0, y1 / h)],
+                    "keys": set(keys),
+                })
+    return out
+
+
+def match_words(paras: list[dict], words: list[dict]) -> dict[str, dict]:
+    """Locate paragraphs by their anchors on the text layer, following reading order through repeated values."""
+    by_key: dict[str, list[dict]] = {}
+    for word in words:
+        for k in word["keys"]:
+            by_key.setdefault(k, []).append(word)
+    out: dict[str, dict] = {}
+    last = -1
+    for p in paras:
+        keys = _anchor_keys(p["text"])
+        if not keys:
+            continue
+        found = [k for k in dict.fromkeys(keys) if k in by_key]
+        if not found or len(found) / len(set(keys)) < 0.5:
+            continue
+        # Start from the rarest anchor; its next occurrence after the previous match is the likely spot.
+        rare = min(found, key=lambda k: len(by_key[k]))
+        occurrences = by_key[rare]
+        after = [o for o in occurrences if o["order"] > last]
+        start = (after or occurrences)[0]
+        chosen = [start]
+        line_h = max(0.008, start["bbox"][3] - start["bbox"][1])
+        for k in found:
+            if k == rare:
+                continue
+            near = [o for o in by_key[k] if o["page"] == start["page"]
+                    and abs(o["bbox"][1] - start["bbox"][1]) <= 3 * line_h
+                    and abs(o["order"] - start["order"]) <= 60]
+            if near:
+                chosen.append(min(near, key=lambda o: abs(o["order"] - start["order"])))
+        coverage = len({k for o in chosen for k in o["keys"]} & set(found)) / len(set(keys))
+        if coverage < 0.5:
+            continue
+        box = _union([o["bbox"] for o in chosen])
+        out[p["id"]] = {
+            "page": start["page"],
+            "bbox": [round(max(0.0, box[0] - 0.004), 4), round(max(0.0, box[1] - 0.003), 4),
+                     round(min(1.0, box[2] + 0.004), 4), round(min(1.0, box[3] + 0.003), 4)],
+            "confidence": round(min(1.0, 0.6 + 0.4 * coverage), 2),
+            "via": "words",
+        }
+        last = max(o["order"] for o in chosen)
+    return out
+
+
+def _too_coarse(entry: Optional[dict], text: str) -> bool:
+    if not entry or not entry.get("bbox") or len(text) > SHORT_PARA_CHARS:
+        return False
+    x0, y0, x1, y1 = entry["bbox"]
+    return (x1 - x0) * (y1 - y0) > MAX_SHORT_AREA
 
 def _union(boxes: list[list[float]]) -> list[float]:
     return [min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes)]
@@ -624,21 +725,35 @@ def refresh(db: Session, project: TranslationProject, data: bytes) -> tuple[dict
         return smap, []
     if smap.get("scan") is None:
         smap["scan"] = len(source_pages.text_layer(project).strip()) < 40
+    if smap.get("algo") != ALGO_VERSION:
+        blocks = {}
+        smap["algo"] = ALGO_VERSION
     missing = [p for p in paras if p["id"] not in blocks]
     changed = False
     if missing:
         by_text = {}
         for p in paras:
             entry = blocks.get(p["id"])
-            if entry and entry.get("page") is not None:
+            # Only long paragraphs are unique enough to share a location; "€0.00" in six cells is six places.
+            if entry and entry.get("page") is not None and len(p["text"]) > SHORT_PARA_CHARS:
                 by_text.setdefault(" ".join(fold(p["text"]).split()), entry)
         matched = match_segments(paras, segment_boxes(db, project, info))
+        anchored = {}
+        if not smap.get("scan"):
+            pdf = source_pages.source_pdf(project)
+            if pdf:
+                anchored = match_words(paras, text_layer_words(pdf))
         for p in missing:
             twin = by_text.get(" ".join(fold(p["text"]).split()))
+            seg = matched.get(p["id"])
+            word = anchored.get(p["id"])
             if twin:
                 blocks[p["id"]] = {**twin, "copied": True}
-            elif p["id"] in matched:
-                blocks[p["id"]] = matched[p["id"]]
+            # Short paragraphs (cells, values) are placed by their exact words; sentences keep their whole line.
+            elif word and (not seg or _too_coarse(seg, p["text"]) or len(p["text"]) <= SHORT_PARA_CHARS // 2):
+                blocks[p["id"]] = word
+            elif seg and not _too_coarse(seg, p["text"]):
+                blocks[p["id"]] = seg
             else:
                 blocks[p["id"]] = {"page": None, "bbox": None}
         changed = True
