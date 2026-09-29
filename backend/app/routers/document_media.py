@@ -364,7 +364,8 @@ def add_certification(
     content = _cert_content(db, project, user, template)
 
     def change(data, _project):
-        content.values["document"] = docx_certification.guess_document_title(data, content.values["document"])
+        doc_type = (project.doc_profile or {}).get("document_type", "") if isinstance(project.doc_profile, dict) else ""
+        content.values["document"] = docx_certification.guess_document_title(data, content.values["document"], doc_type)
         return docx_certification.add_certification(data, content)
 
     new_version = _edit(db, project_id, user, payload.version, "Added the certification page", change)
