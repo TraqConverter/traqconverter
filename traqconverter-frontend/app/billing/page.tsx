@@ -30,6 +30,8 @@ type Wallet = {
   tier?: string
   trial_days_left?: number | null
   features?: Record<string, boolean>
+  // Plan changes, card, invoices and cancelling go through the Stripe portal.
+  has_subscription?: boolean
 }
 
 type Transaction = {
@@ -72,6 +74,26 @@ export default function BillingPage() {
     }
   }
 
+  const openPortal = async (busyKey = "portal") => {
+    setError(null)
+    try {
+      setBusy(busyKey)
+      const res = await api.post("/subscription/portal")
+      if (res.data?.portal_url) {
+        window.location.href = res.data.portal_url
+      } else {
+        throw new Error("No portal URL returned")
+      }
+    } catch (err: any) {
+      console.error("PORTAL ERROR:", err)
+      setError(
+        err?.response?.data?.detail ||
+          "Couldn't open the billing portal. Please try again."
+      )
+      setBusy(null)
+    }
+  }
+
   const handleSubscribe = async (plan: string) => {
     setError(null)
     try {
@@ -87,6 +109,11 @@ export default function BillingPage() {
         throw new Error("No checkout URL returned")
       }
     } catch (err: any) {
+      // Already subscribed: a second checkout would bill twice, so change plan in the portal.
+      if (err?.response?.status === 409 && err?.response?.data?.portal) {
+        await openPortal(`plan:${plan}`)
+        return
+      }
       console.error("SUBSCRIBE ERROR:", err)
       setError(
         err?.response?.data?.detail ||
@@ -137,6 +164,7 @@ export default function BillingPage() {
   const trialExpired = tier === "EXPIRED"
   const currentPlan = (wallet?.plan_type || "TRIAL").toUpperCase()
   const trialDaysLeft = wallet?.trial_days_left ?? null
+  const subscribed = !!wallet?.has_subscription
 
   if (loading) {
     return (
@@ -176,11 +204,31 @@ export default function BillingPage() {
             Manage your subscription, buy more credits, and review usage.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <StatusPill
             active={planActive}
             label={`${currentPlan} · ${planActive ? "Active" : onTrial ? "Trial" : "Inactive"}`}
           />
+          {subscribed && (
+            <button
+              type="button"
+              onClick={() => openPortal()}
+              disabled={busy !== null}
+              className="px-4 py-2 rounded-full text-sm font-semibold transition"
+              style={{
+                background: "#ffffff",
+                color: "#1f2a2e",
+                border: "1px solid #e7ddc5",
+                cursor: busy !== null ? "not-allowed" : "pointer",
+              }}
+              onMouseEnter={(e) => {
+                if (busy === null) e.currentTarget.style.background = "#faf5ee"
+              }}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "#ffffff")}
+            >
+              {busy === "portal" ? "Opening…" : "Manage subscription"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -309,8 +357,12 @@ export default function BillingPage() {
       <section>
         <SectionHeader
           eyebrow="SUBSCRIPTION"
-          title="Choose a plan"
-          subtitle="One credit is one page. Cancel anytime. Your wallet updates within seconds of payment."
+          title={subscribed ? "Your plan" : "Choose a plan"}
+          subtitle={
+            subscribed
+              ? "Change plan, update your card, download invoices or cancel in the billing portal. An upgrade adds the extra pages straight away; a downgrade keeps the pages you already have."
+              : "One credit is one page. Cancel anytime. Your wallet updates within seconds of payment."
+          }
         />
         {catalog === undefined ? (
           <div className="text-sm" style={{ color: "#8a8270" }}>Loading plans…</div>
@@ -326,9 +378,12 @@ export default function BillingPage() {
                 plan={p}
                 catalog={catalog}
                 isCurrent={tier === p.code}
+                subscribed={subscribed}
                 busy={busy === `plan:${p.code}`}
                 disabled={busy !== null}
-                onSubscribe={() => handleSubscribe(p.code)}
+                onSubscribe={() =>
+                  subscribed ? openPortal(`plan:${p.code}`) : handleSubscribe(p.code)
+                }
               />
             ))}
           </div>
@@ -513,6 +568,7 @@ function PlanCard({
   plan,
   catalog,
   isCurrent,
+  subscribed,
   busy,
   disabled,
   onSubscribe,
@@ -520,11 +576,24 @@ function PlanCard({
   plan: Plan
   catalog: PlanCatalog
   isCurrent: boolean
+  subscribed: boolean
   busy: boolean
   disabled: boolean
   onSubscribe: () => void
 }) {
   const featured = plan.code === "PRO"
+  // Subscribers open the portal from every card, their own plan included; others can't re-buy the current one.
+  const locked = isCurrent && !subscribed
+  const muted = isCurrent
+  const label = busy
+    ? subscribed
+      ? "Opening…"
+      : "Redirecting to Stripe…"
+    : isCurrent
+      ? "Current plan"
+      : subscribed
+        ? "Change plan"
+        : `Subscribe to ${plan.name}`
   const bullets = planBullets(catalog, plan)
   return (
     <div
@@ -607,22 +676,25 @@ function PlanCard({
       <button
         type="button"
         onClick={onSubscribe}
-        disabled={disabled || isCurrent}
+        disabled={disabled || locked}
         className="w-full py-3 rounded-full text-[14px] font-semibold transition"
         style={{
-          background: isCurrent ? "#f3ecdb" : disabled ? "#9bc9c5" : "#0a7870",
-          color: isCurrent ? "#8a8270" : "#fff",
-          cursor: isCurrent || disabled ? "not-allowed" : "pointer",
-          border: isCurrent ? "1px solid #e7ddc5" : "none",
+          background: muted ? "#f3ecdb" : disabled ? "#9bc9c5" : "#0a7870",
+          color: muted ? "#8a8270" : "#fff",
+          cursor: locked || disabled ? "not-allowed" : "pointer",
+          border: muted ? "1px solid #e7ddc5" : "none",
         }}
         onMouseEnter={(e) => {
-          if (!isCurrent && !disabled) e.currentTarget.style.background = "#0a645d"
+          if (locked || disabled) return
+          e.currentTarget.style.background = muted ? "#ece2c8" : "#0a645d"
         }}
         onMouseLeave={(e) => {
-          if (!isCurrent && !disabled) e.currentTarget.style.background = "#0a7870"
+          if (locked || disabled) return
+          e.currentTarget.style.background = muted ? "#f3ecdb" : "#0a7870"
         }}
+        title={subscribed ? "Opens the billing portal" : undefined}
       >
-        {isCurrent ? "Current plan" : busy ? "Redirecting to Stripe…" : `Subscribe to ${plan.name}`}
+        {label}
       </button>
       )}
     </div>

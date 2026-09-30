@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.feature_guard import effective_plan
+from app.services.stripe_billing import has_active_subscription
 
 from app.models.credit import CreditWallet, CreditTransaction
 from app.models.user import User
@@ -117,6 +118,8 @@ def get_wallet(
         "features": features,
 
         "trial_days_left": trial_days_left,
+        # True: plan changes go through the Stripe portal, not a new checkout.
+        "has_subscription": has_active_subscription(db, team),
     }
 
 
