@@ -1,7 +1,8 @@
 """Pictures, stamps and the certification page inside the editable translated document."""
 import logging
+from datetime import date
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -14,6 +15,7 @@ from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
 from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import get_user_project_or_404
+from app.models.certification import Certification
 from app.models.document_version import DocumentVersion
 from app.models.project import TranslationProject
 from app.models.user import User
@@ -65,9 +67,13 @@ class _Align(BaseModel):
     align: Align
 
 
+# A team template's id, "standard" for the built-in page, or left out for the project's saved pick.
+TemplateChoice = Optional[Union[UUID, Literal["standard"]]]
+
+
 class _CertCreate(BaseModel):
     version: int
-    template_id: Optional[UUID] = None
+    template_id: TemplateChoice = None
 
 
 class _CertFields(BaseModel):
@@ -87,7 +93,8 @@ class _CertFields(BaseModel):
 
 class _CertUpdate(BaseModel):
     version: int
-    fields: _CertFields
+    fields: _CertFields = Field(default_factory=_CertFields)
+    template_id: TemplateChoice = None
 
 
 def _edit(db: Session, project_id: UUID, user: User, version: int, note: str, change):
@@ -288,28 +295,71 @@ def delete_image(
     return {"version": _edit(db, project_id, user, version, "Deleted an image", change)}
 
 
-def _template_bytes(db: Session, project: TranslationProject, template_id: Optional[UUID]) -> Optional[bytes]:
+def _page_template(db: Session, project: TranslationProject, template_id) -> tuple[Optional[Certification], Optional[bytes]]:
     try:
-        cert = cert_page.template_for(db, project, template_id)
+        cert = cert_page.page_template_for(db, project, template_id)
     except cert_page.TemplateNotFound:
         raise HTTPException(status_code=404, detail="Certification template not found")
     if cert is None:
-        return None
+        return None, None
     if not cert_page.is_docx(cert):
-        raise HTTPException(status_code=400, detail="Only Word (.docx) templates can be placed in the document")
+        raise HTTPException(status_code=422, detail="Only Word (.docx) templates can be placed in the document")
     try:
-        return cert_page.load_bytes(cert)
+        return cert, cert_page.load_bytes(cert)
     except Exception:
         logger.exception("Couldn't load certification template %s", cert.id)
         raise HTTPException(status_code=502, detail="Couldn't load the certification template")
 
 
+def _current_choice(db: Session, project: TranslationProject, data: bytes) -> str:
+    """The template the page was built from, else what adding one would use now."""
+    ref = docx_certification.page_template(data)
+    if ref:
+        return ref
+    try:
+        return cert_page.choice_id(cert_page.page_template_for(db, project))
+    except cert_page.TemplateNotFound:
+        return cert_page.STANDARD
+
+
+def _carry_fields(content: docx_certification.CertContent, old: dict, typed: dict, old_lang: str) -> None:
+    """Keep what the old page said (and what's typed in the panel) on the page built from another template."""
+    kept = {k: v for k, v in old.items() if k in docx_certification.FIELDS and v}
+    kept.update({k: v for k, v in typed.items() if v})
+    iso = kept.get("date", "")
+    if not docx_certification.ISO_DATE.match(iso):
+        iso = old.get("date_iso", "")
+    try:
+        content.day = date.fromisoformat(iso)
+        kept["date"] = cert_locale.format_date(content.day, content.lang)
+    except ValueError:
+        pass
+    for name in ("source_language", "target_language"):
+        if name in kept and old_lang != content.lang:
+            kept[name] = cert_locale.relocalize(kept[name], content.lang)
+    content.values.update(kept)
+
+
+def _templates(db: Session, project: TranslationProject) -> list[dict]:
+    return [
+        {"id": str(c.id), "name": c.file_name, "is_default": bool(c.is_default)}
+        for c in cert_page.templates(db, project.team_id)
+    ]
+
+
 @router.get("/{project_id}/document/certification", dependencies=_cert_feature)
 def get_certification(project_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """`template_id` is the page's template ("standard" for the built-in one), or the one an add would use."""
     project = get_user_project_or_404(db, project_id, user)
     data, version = document_editor.current_document(db, project, user, _initial_builder(db, project, user))
     fields = docx_certification.read_fields(data)
-    return {"version": version, "present": fields is not None, "fields": fields or {}}
+    return {
+        "version": version,
+        "present": fields is not None,
+        "fields": fields or {},
+        "template_id": _current_choice(db, project, data),
+        "templates": _templates(db, project),
+    }
 
 
 @router.post("/{project_id}/document/certification", dependencies=_cert_feature)
@@ -319,18 +369,22 @@ def add_certification(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """Adds the page; a `template_id` picks the template and is saved on the project for later exports and re-adds."""
     project = get_user_project_or_404(db, project_id, user)
-    template = _template_bytes(db, project, payload.template_id)
+    cert, template = _page_template(db, project, payload.template_id)
     content = cert_page.content_for_project(db, project, user, template)
+    content.template_ref = cert_page.choice_id(cert)
 
-    def change(data, _project):
+    def change(data, locked_project):
         doc_type = (project.doc_profile or {}).get("document_type", "") if isinstance(project.doc_profile, dict) else ""
         content.values["document"] = docx_certification.guess_document_title(data, content.values["document"], doc_type)
+        if payload.template_id is not None:
+            cert_page.remember(locked_project, cert)
         return docx_certification.add_certification(data, content)
 
     new_version = _edit(db, project_id, user, payload.version, "Added the certification page", change)
     fields = dict(content.values, date_iso=content.day.isoformat())
-    return {"version": new_version, "present": True, "fields": fields}
+    return {"version": new_version, "present": True, "fields": fields, "template_id": content.template_ref}
 
 
 @router.put("/{project_id}/document/certification", dependencies=_cert_feature)
@@ -340,19 +394,42 @@ def update_certification(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """Updates the fields in place. A different `template_id` rebuilds the page from that template, keeping the values."""
+    typed = payload.fields.model_dump(exclude_none=True)
+    switch = None
+    if payload.template_id is not None:
+        project = get_user_project_or_404(db, project_id, user)
+        cert, template = _page_template(db, project, payload.template_id)
+        switch = (cert, cert_page.content_for_project(db, project, user, template))
+        switch[1].template_ref = cert_page.choice_id(cert)
     lang = {}
 
     def change(data, locked_project):
         lang["code"] = cert_locale.detect_language(docx_certification.page_text(data)) or cert_locale.cert_language(
             locked_project.target_language
         )
-        out, _ = docx_certification.update_fields(data, payload.fields.model_dump(exclude_none=True), lang["code"])
+        if switch is not None:
+            cert, content = switch
+            old = docx_certification.read_fields(data)
+            if old is None:
+                raise DocxEditError("There is no certification page")
+            cert_page.remember(locked_project, cert)
+            if _current_choice(db, locked_project, data) != content.template_ref:
+                _carry_fields(content, old, typed, lang["code"])
+                return docx_certification.add_certification(data, content)
+        out, _ = docx_certification.update_fields(data, typed, lang["code"])
         return out
 
-    new_version = _edit(db, project_id, user, payload.version, "Updated the certification page", change)
+    note = "Changed the certification template" if switch is not None else "Updated the certification page"
+    new_version = _edit(db, project_id, user, payload.version, note, change)
     project = get_user_project_or_404(db, project_id, user)
     data, _ = document_editor.current_document(db, project, user, _initial_builder(db, project, user))
-    return {"version": new_version, "present": True, "fields": docx_certification.read_fields(data) or {}}
+    return {
+        "version": new_version,
+        "present": True,
+        "fields": docx_certification.read_fields(data) or {},
+        "template_id": _current_choice(db, project, data),
+    }
 
 
 @router.delete("/{project_id}/document/certification", dependencies=_cert_feature)

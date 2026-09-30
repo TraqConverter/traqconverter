@@ -958,7 +958,8 @@ def update_project(
 
     if data.certification_template_id is not None:
 
-        if data.certification_template_id == "":
+        project.certification_standard = data.certification_template_id == "standard"
+        if data.certification_template_id in ("", "standard"):
             project.certification_template_id = None
         else:
             try:
@@ -983,7 +984,7 @@ def update_project(
         "certification_template_id": (
             str(project.certification_template_id)
             if project.certification_template_id
-            else None
+            else "standard" if project.certification_standard else None
         ),
     }
 

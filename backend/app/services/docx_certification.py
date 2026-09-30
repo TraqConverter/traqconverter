@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import re
 import secrets
+import uuid
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -33,6 +34,8 @@ class CertContent:
     template_docx: bytes | None = None
     statement_override: str | None = None
     extra_tokens: dict[str, str] = field(default_factory=dict)
+    # Template id or "standard"; kept on the page so the editor knows which one built it.
+    template_ref: str | None = None
 
 
 def _body(doc: _Doc):
@@ -56,6 +59,31 @@ def _marker_units(doc: _Doc) -> list:
 
 def has_certification(data: bytes) -> bool:
     return bool(_marker_units(_Doc.load(data)))
+
+
+def page_template(data: bytes) -> str | None:
+    """Template id (or "standard") the page was built from; None when unknown or there's no page."""
+    for unit in _marker_units(_Doc.load(data)):
+        for bm in unit.iter(w("bookmarkStart")):
+            name = bm.get(w("name")) or ""
+            if name.startswith(blocks.CERT_TEMPLATE_PREFIX):
+                ref = name[len(blocks.CERT_TEMPLATE_PREFIX):]
+                if ref == "std":
+                    return "standard"
+                try:
+                    return str(uuid.UUID(hex=ref))
+                except ValueError:
+                    return None
+    return None
+
+
+def _template_marker(ref: str) -> str | None:
+    if ref == "standard":
+        return blocks.CERT_TEMPLATE_PREFIX + "std"
+    try:
+        return blocks.CERT_TEMPLATE_PREFIX + uuid.UUID(ref).hex
+    except ValueError:
+        return None
 
 
 def _sdts(root, name: str | None = None):
@@ -262,20 +290,24 @@ def _place_stamp(doc: _Doc, signature, stamp: images.PreparedImage) -> None:
     signature.insert(images._insertion_index(signature), images._new_run(frame))
 
 
-def _remove_units(doc: _Doc) -> bool:
+def _remove_units(doc: _Doc):
+    """Take the page out; returns the element it sat before (None at the end), or False when there was none."""
     units = _marker_units(doc)
+    if not units:
+        return False
     body = _body(doc)
+    after = units[-1].getnext()
     for unit in units:
         body.remove(unit)
-    return bool(units)
+    return after
 
 
 def add_certification(data: bytes, content: CertContent, report=None) -> bytes:
-    """Append the certification page (replacing an existing one) at the end of the document."""
+    """Add the certification page at the end, or in place of the existing one."""
     from app.services import docx_cert_template
 
     doc = _Doc.load(data)
-    _remove_units(doc)
+    after = _remove_units(doc)
     if content.template_docx:
         report = report if report is not None else docx_cert_template.TemplateReport()
         units, signature = docx_cert_template.import_template(doc, content.template_docx, content, report)
@@ -296,11 +328,14 @@ def add_certification(data: bytes, content: CertContent, report=None) -> bytes:
     bid = doc.next_bookmark_id()
     _add_marker(units[0], START, bid, at_start=True)
     _add_marker(units[-1], END, bid + 1, at_start=False)
+    marker = _template_marker(content.template_ref) if content.template_ref else None
+    if marker:
+        _add_marker(units[0], marker, bid + 2, at_start=False)
     body = _body(doc)
-    sect = body.find(w("sectPr"))
+    anchor = after if isinstance(after, etree._Element) else body.find(w("sectPr"))
     for unit in units:
-        if sect is not None:
-            sect.addprevious(unit)
+        if anchor is not None:
+            anchor.addprevious(unit)
         else:
             body.append(unit)
     _ensure_page_style(doc)
@@ -331,7 +366,7 @@ def standalone(content: CertContent, report=None, page_break: bool = True) -> by
 
 def remove_certification(data: bytes) -> bytes:
     doc = _Doc.load(data)
-    if not _remove_units(doc):
+    if _remove_units(doc) is False:
         raise DocxEditError("There is no certification page")
     body = _body(doc)
     if not any(c.tag in (w("p"), w("tbl")) for c in body):
@@ -361,7 +396,7 @@ def _set_sdt_text(sdt, value: str) -> None:
         placeholder.getparent().remove(placeholder)
 
 
-_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def update_fields(data: bytes, fields: dict[str, str], lang: str) -> tuple[bytes, list[str]]:
@@ -377,7 +412,7 @@ def update_fields(data: bytes, fields: dict[str, str], lang: str) -> tuple[bytes
         for unit in units:
             for _, sdt in _sdts(unit, name):
                 display = value
-                if name == "date" and _ISO_DATE.match(value):
+                if name == "date" and ISO_DATE.match(value):
                     try:
                         day = date.fromisoformat(value)
                     except ValueError as e:

@@ -43,10 +43,21 @@ type CertFields = {
   target_language: string
   document: string
 }
-type CertState = { present: boolean; fields: CertFields | null }
+export type CertTemplate = { id: string; name: string; is_default: boolean }
+// templateId is a template's id or STANDARD_PAGE: the page's own, or what adding one would use.
+export type CertChoice = { present: boolean; templateId: string; templates: CertTemplate[] }
+type CertState = CertChoice & { fields: CertFields | null }
+type CertResponse = { version: number; present: boolean; fields: CertFields; template_id: string; templates?: CertTemplate[] }
+
+export const STANDARD_PAGE = "standard"
+
+export function templateLabel(t: CertTemplate): string {
+  return t.name.replace(/\.docx$/i, "")
+}
 
 export type DocumentEditorHandle = {
-  ensureCertification: () => Promise<boolean>
+  certificationState: () => Promise<CertChoice | null>
+  ensureCertification: (templateId?: string) => Promise<boolean>
   openChecks: () => void
   focusBlock: (id: string) => void
 }
@@ -964,6 +975,10 @@ export default function DocumentEditor({
       const res = await api.post<{ version: number }>(`/projects/${projectId}/document/undo`, {})
       setVersion(res.data.version)
       await reloadDocument()
+      if (certOpen) {
+        const state = await loadCertification()
+        if (!state?.present) setCertOpen(false)
+      }
     } catch (err) {
       setNotice(statusOf(err) === 404 ? "Nothing to undo." : apiErrorDetail(err, "Couldn't undo."))
     } finally {
@@ -1144,8 +1159,13 @@ export default function DocumentEditor({
 
   const loadCertification = async (): Promise<CertState | null> => {
     try {
-      const res = await api.get<{ present: boolean; fields: CertFields }>(`/projects/${projectId}/document/certification`)
-      const state = { present: res.data.present, fields: res.data.present ? { ...EMPTY_FIELDS, ...res.data.fields } : null }
+      const res = await api.get<CertResponse>(`/projects/${projectId}/document/certification`)
+      const state: CertState = {
+        present: res.data.present,
+        fields: res.data.present ? { ...EMPTY_FIELDS, ...res.data.fields } : null,
+        templateId: res.data.template_id || STANDARD_PAGE,
+        templates: res.data.templates ?? [],
+      }
       setCert(state)
       if (state.fields) setCertDraft(state.fields)
       return state
@@ -1159,24 +1179,26 @@ export default function DocumentEditor({
     }
   }
 
-  const addCertification = async (): Promise<boolean> => {
-    let fields: CertFields | null = null
+  const addCertification = async (templates: CertTemplate[], templateId?: string): Promise<boolean> => {
+    let added: CertState | null = null
     const ok = await runChange(
       "cert",
       async (version) => {
-        const res = await api.post<{ version: number; fields: CertFields }>(
-          `/projects/${projectId}/document/certification`,
-          { version },
-        )
-        fields = { ...EMPTY_FIELDS, ...res.data.fields }
+        const res = await api.post<CertResponse>(`/projects/${projectId}/document/certification`, {
+          version,
+          template_id: templateId,
+        })
+        const fields = { ...EMPTY_FIELDS, ...res.data.fields }
+        added = { present: true, fields, templateId: res.data.template_id || STANDARD_PAGE, templates }
         return res.data
       },
       scrollToCertification,
       "Couldn't add the certification page.",
     )
-    if (ok && fields) {
-      setCert({ present: true, fields })
-      setCertDraft(fields)
+    if (ok && added) {
+      const state: CertState = added
+      setCert(state)
+      if (state.fields) setCertDraft(state.fields)
       setCertOpen(true)
     }
     return ok
@@ -1196,7 +1218,7 @@ export default function DocumentEditor({
     const state = await loadCertification()
     if (!state) return
     if (!state.present) {
-      await addCertification()
+      await addCertification(state.templates)
       return
     }
     setCertError("")
@@ -1227,7 +1249,38 @@ export default function DocumentEditor({
       "Couldn't update the certification page.",
     )
     if (ok && fields) {
-      setCert({ present: true, fields })
+      const saved: CertFields = fields
+      setCert((c) => (c ? { ...c, present: true, fields: saved } : c))
+      setCertDraft(saved)
+      setNotice("Certification page updated.")
+    }
+  }
+
+  // Rebuilds the page from another template, keeping what the panel shows (saved or not).
+  const switchTemplate = async (templateId: string) => {
+    if (!cert || templateId === cert.templateId) return
+    setCertError("")
+    const { date_iso, translator, source_language, target_language, document: doc } = certDraft
+    let res: CertResponse | null = null
+    const ok = await runChange(
+      "cert",
+      async (version) => {
+        res = (
+          await api.put<CertResponse>(`/projects/${projectId}/document/certification`, {
+            version,
+            template_id: templateId,
+            fields: { date: date_iso || undefined, translator, source_language, target_language, document: doc },
+          })
+        ).data
+        return res
+      },
+      scrollToCertification,
+      "Couldn't change the certification template.",
+    )
+    if (ok && res) {
+      const done: CertResponse = res
+      const fields = { ...EMPTY_FIELDS, ...done.fields }
+      setCert((c) => (c ? { ...c, present: true, fields, templateId: done.template_id || templateId } : c))
       setCertDraft(fields)
       setNotice("Certification page updated.")
     }
@@ -1242,13 +1295,21 @@ export default function DocumentEditor({
       "Couldn't remove the certification page.",
     )
     if (ok) {
-      setCert({ present: false, fields: null })
+      setCert((c) => (c ? { ...c, present: false, fields: null } : c))
       setCertOpen(false)
       setConfirmRemove(false)
     }
   }
 
-  const ensureCertification = async (): Promise<boolean> => {
+  const certificationState = async (): Promise<CertChoice | null> => {
+    if (certLocked) {
+      setNotice(CERT_UPGRADE)
+      return null
+    }
+    return loadCertification()
+  }
+
+  const ensureCertification = async (templateId?: string): Promise<boolean> => {
     if (certLocked) {
       setNotice(CERT_UPGRADE)
       return false
@@ -1260,7 +1321,7 @@ export default function DocumentEditor({
       if (idoc) scrollToCertification(idoc)
       return true
     }
-    return addCertification()
+    return addCertification(state.templates, templateId)
   }
 
   const focusBlock = (id: string) => {
@@ -1296,7 +1357,7 @@ export default function DocumentEditor({
     if (!checks && !checking) onRecheck?.()
   }
 
-  useImperativeHandle(ref, () => ({ ensureCertification, openChecks, focusBlock }))
+  useImperativeHandle(ref, () => ({ certificationState, ensureCertification, openChecks, focusBlock }))
 
   const issueNavRef = useRef<(step: number) => void>(() => {})
   useEffect(() => {
@@ -1524,7 +1585,7 @@ export default function DocumentEditor({
 
           {certOpen && cert?.present && (
             <div
-              className="absolute right-4 top-full mt-1 w-80 rounded-xl p-3 z-30 tq-pop text-[12px] font-normal tracking-normal"
+              className="absolute right-4 top-full mt-1 w-80 rounded-xl p-3 z-30 tq-pop text-[12px] font-normal tracking-normal max-sm:fixed max-sm:inset-x-3 max-sm:top-auto max-sm:bottom-3 max-sm:w-auto max-sm:max-h-[85vh] max-sm:overflow-auto max-sm:z-50"
               style={{ background: "#ffffff", border: "1px solid #e7ddc5", boxShadow: "0 12px 32px rgba(30,30,20,0.14)", color: "#1f2a2e" }}
             >
               <div className="flex items-center justify-between mb-2">
@@ -1547,6 +1608,28 @@ export default function DocumentEditor({
                 }}
                 className="space-y-2"
               >
+                {cert.templates.length > 0 && (
+                  <Field label={busy === "cert" ? "Template · updating…" : "Template"}>
+                    <select
+                      value={cert.templateId}
+                      onChange={(e) => void switchTemplate(e.target.value)}
+                      disabled={busy !== null}
+                      aria-busy={busy === "cert"}
+                      className="tq-input disabled:opacity-60"
+                    >
+                      {cert.templateId !== STANDARD_PAGE && !cert.templates.some((t) => t.id === cert.templateId) && (
+                        <option value={cert.templateId}>Template no longer in Settings</option>
+                      )}
+                      {cert.templates.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {templateLabel(t)}
+                          {t.is_default ? " (team default)" : ""}
+                        </option>
+                      ))}
+                      <option value={STANDARD_PAGE}>Standard page</option>
+                    </select>
+                  </Field>
+                )}
                 <Field label="Date">
                   <input
                     type="date"

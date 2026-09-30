@@ -25,6 +25,9 @@ EXAMPLE_PROJECT = {
 }
 
 
+STANDARD = "standard"
+
+
 class TemplateNotFound(LookupError):
     pass
 
@@ -41,8 +44,18 @@ def team_default(db: Session, team_id) -> Optional[Certification]:
     )
 
 
-def template_for(db: Session, project, template_id: Optional[UUID] = None) -> Optional[Certification]:
-    """The explicitly chosen template, else the project's, else the team default."""
+def templates(db: Session, team_id) -> list[Certification]:
+    """The team's Word templates, default first."""
+    rows = db.query(Certification).filter(Certification.team_id == team_id).all()
+    return sorted((c for c in rows if is_docx(c)), key=lambda c: (not c.is_default, (c.file_name or "").lower()))
+
+
+def template_for(db: Session, project, template_id: Optional[UUID | str] = None) -> Optional[Certification]:
+    """The explicitly chosen template, else the project's, else the team default. STANDARD means the built-in page."""
+    if template_id == STANDARD:
+        return None
+    if not template_id and getattr(project, "certification_standard", False):
+        return None
     wanted = template_id or getattr(project, "certification_template_id", None)
     if wanted:
         cert = (
@@ -55,6 +68,25 @@ def template_for(db: Session, project, template_id: Optional[UUID] = None) -> Op
         return cert
     cert = team_default(db, project.team_id)
     return cert if cert is not None and is_docx(cert) else None
+
+
+def page_template_for(db: Session, project, template_id: Optional[UUID | str] = None) -> Optional[Certification]:
+    """What an add uses. A saved pick that isn't a Word file (a PDF certificate) falls back to the team default."""
+    cert = template_for(db, project, template_id)
+    if cert is None or is_docx(cert) or template_id:
+        return cert
+    default = team_default(db, project.team_id)
+    return default if default is not None and is_docx(default) else None
+
+
+def choice_id(cert: Optional[Certification]) -> str:
+    return str(cert.id) if cert is not None else STANDARD
+
+
+def remember(project, cert: Optional[Certification]) -> None:
+    """Save the pick on the project so later exports and re-adds use it."""
+    project.certification_template_id = cert.id if cert is not None else None
+    project.certification_standard = cert is None
 
 
 def load_bytes(cert: Certification) -> bytes:

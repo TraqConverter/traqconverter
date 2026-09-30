@@ -32,6 +32,8 @@ BLOCK_ID_RE = re.compile(r"^_b[0-9a-f]{8}$")
 IMAGE_ID_RE = re.compile(r"^img_[0-9a-f]{8}$")
 IMAGE_MARKER_PREFIX = "_"
 CERT_MARKERS = ("_cert_start", "_cert_end")
+# Names which template the page was built from: _cert_t_<uuid hex> or _cert_t_std (Word caps names at 40).
+CERT_TEMPLATE_PREFIX = "_cert_t_"
 UNIT_TAGS = {w("p"), w("tbl"), w("sdt")}
 CONTAINER_TAGS = {w("body"), w("hdr"), w("ftr")}
 PART_RE = re.compile(r"^word/(document|header\d*|footer\d*)\.xml$")
@@ -265,7 +267,7 @@ def strip_blocks(data: bytes) -> bytes:
 
 
 def _is_editor_marker(name: str) -> bool:
-    return bool(BLOCK_ID_RE.match(name)) or name in CERT_MARKERS or (
+    return bool(BLOCK_ID_RE.match(name)) or name in CERT_MARKERS or name.startswith(CERT_TEMPLATE_PREFIX) or (
         name.startswith(IMAGE_MARKER_PREFIX) and bool(IMAGE_ID_RE.match(name[len(IMAGE_MARKER_PREFIX):]))
     )
 
