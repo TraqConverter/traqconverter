@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { api } from "@/lib/api"
+import { isPaidTier, planDisplayName } from "@/lib/plans"
 
 const POLL_INTERVAL_MS = 1500
 const MAX_POLLS = 20
@@ -23,7 +24,7 @@ export default function CheckoutSuccessPage() {
     const settle = (t: string) => {
       if (cancelled) return
       setTier(t)
-      if (t === "PRO" || t === "BASIC") {
+      if (isPaidTier(t)) {
         setTimeout(() => router.push("/billing"), 800)
       }
     }
@@ -39,7 +40,7 @@ export default function CheckoutSuccessPage() {
           )
           const data = res.data || {}
           const t = (data.tier || "").toUpperCase()
-          if (t === "PRO" || t === "BASIC") {
+          if (isPaidTier(t)) {
             settle(t)
             return
           }
@@ -61,7 +62,7 @@ export default function CheckoutSuccessPage() {
           if (cancelled) return
           const t = (res.data?.tier || "").toUpperCase()
           setTier(t)
-          if (t === "PRO" || t === "BASIC") {
+          if (isPaidTier(t)) {
             setTimeout(() => router.push("/billing"), 800)
             return
           }
@@ -95,7 +96,7 @@ export default function CheckoutSuccessPage() {
 
   const stillWaiting = tries >= MAX_POLLS
 
-  const upgraded = tier === "PRO" || tier === "BASIC"
+  const upgraded = isPaidTier(tier)
   const creditsLanded = tier === "CREDITS"
   const settled = upgraded || creditsLanded
 
@@ -139,7 +140,7 @@ export default function CheckoutSuccessPage() {
           style={{ color: "#1f2a2e" }}
         >
           {upgraded
-            ? `You're on the ${tier === "PRO" ? "Pro" : "Basic"} plan!`
+            ? `You're on the ${planDisplayName(tier)} plan!`
             : creditsLanded
             ? "Credits added to your wallet"
             : "Thanks for your payment"}

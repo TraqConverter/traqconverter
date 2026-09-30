@@ -166,11 +166,12 @@ def _zip_name(file_name: str, ext: str, used: set) -> str:
 def export_batch(
     batch_id: UUID,
     background_tasks: BackgroundTasks,
-    format: str = Query("docx", pattern="^(docx|pdf)$"),
+    format: str = Query("docx", pattern="^(docx|pdf|delivery)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     from app.routers.export import render_export
+    from app.services.delivery_pdf import DeliveryError, build_delivery_pdf
 
     batch = _batch_or_404(db, batch_id, current_user)
     done = [p for p in _projects(db, batch) if p.status == ProjectStatus.COMPLETED]
@@ -183,21 +184,28 @@ def export_batch(
     with zipfile.ZipFile(spool, "w", zipfile.ZIP_DEFLATED) as zf:
         for p in done:
             try:
-                data = render_export(db, p, current_user, format).getvalue()
+                if format == "delivery":
+                    data = build_delivery_pdf(db, p, current_user)
+                else:
+                    data = render_export(db, p, current_user, format).getvalue()
+            except DeliveryError as e:
+                failed.append(f"{p.file_name}: {e}")
+                continue
             except Exception:
                 logger.exception("Batch export failed for project %s", p.id)
                 failed.append(p.file_name)
                 continue
-            zf.writestr(_zip_name(p.file_name, format, used), data)
+            zf.writestr(_zip_name(p.file_name, "pdf" if format == "delivery" else format, used), data)
             background_tasks.add_task(capture_template_in_background, p.id, current_user.id)
         if failed:
             zf.writestr("NOT_EXPORTED.txt", "These documents could not be exported:\n" + "\n".join(failed) + "\n")
     spool.seek(0)
     safe = re.sub(r"[^A-Za-z0-9 _.-]+", "_", batch.name).strip() or "batch"
+    label = "Delivery PDF" if format == "delivery" else format.upper()
     return StreamingResponse(
         spool,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{safe} ({format.upper()}).zip"'},
+        headers={"Content-Disposition": f'attachment; filename="{safe} ({label}).zip"'},
     )
 
 

@@ -12,7 +12,8 @@ from app.models.team_member import TeamMember
 from app.models.credit import CreditWallet
 from app.models.stripe_event import StripeEvent
 from app.config import settings
-from app.core.plan_features import SUBSCRIPTION_GRANTS
+from app.core.plan_features import CREDIT_PACKS as PLAN_CREDIT_PACKS
+from app.core.plan_features import PAID_PLANS, SALES_EMAIL, SUBSCRIPTION_GRANTS
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +46,12 @@ stripe.max_network_retries = 3
 
 
 
-PLAN_PRICE_MAP = {
-    "PRO": settings.STRIPE_PRICE_PRO,
-    "BASIC": settings.STRIPE_PRICE_BASIC,
-}
+def plan_price_id(plan: str):
+    """The Stripe price for a paid plan, from STRIPE_PRICE_<PLAN>; None when unset."""
+    return getattr(settings, f"STRIPE_PRICE_{plan}", None) or None
+
+
+PLAN_PRICE_MAP = {plan: plan_price_id(plan) for plan in PAID_PLANS}
 
 
 
@@ -68,9 +71,14 @@ def create_checkout_session(
     """
 
 
-    price_id = PLAN_PRICE_MAP.get(plan.upper())
-    if not price_id:
+    if plan.upper() not in PLAN_PRICE_MAP:
         raise HTTPException(status_code=400, detail="Invalid plan")
+    price_id = PLAN_PRICE_MAP[plan.upper()]
+    if not price_id:
+        raise HTTPException(
+            status_code=503,
+            detail=f"This plan isn't available yet. Contact us at {SALES_EMAIL} to sign up.",
+        )
 
 
     team = _resolve_user_team(db, current_user)
@@ -281,9 +289,8 @@ def sync_session(
 
 
 CREDIT_PACKS = {
-    10: settings.STRIPE_PRICE_CREDITS_10,
-    25: settings.STRIPE_PRICE_CREDITS_25,
-    50: settings.STRIPE_PRICE_CREDITS_50,
+    pack["credits"]: getattr(settings, f"STRIPE_PRICE_CREDITS_{pack['credits']}", None)
+    for pack in PLAN_CREDIT_PACKS
 }
 
 

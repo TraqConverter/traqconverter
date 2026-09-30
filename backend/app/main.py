@@ -261,6 +261,7 @@ from app.routers import usage as usage_router
 from app.routers import batches as batches_router
 from app.routers import review as review_router
 from app.routers import saved_instructions as saved_instructions_router
+from app.routers import delivery_links as delivery_links_router
 
 app.include_router(settings_router.router)
 app.include_router(stripe.router)
@@ -283,6 +284,8 @@ app.include_router(usage_router.router)
 app.include_router(batches_router.router)
 app.include_router(review_router.router)
 app.include_router(saved_instructions_router.router)
+app.include_router(delivery_links_router.router)
+app.include_router(delivery_links_router.public_router)
 
 logger.info("All routers registered successfully")
 
@@ -298,6 +301,7 @@ import threading
 from app.services.watchdog import recover_stalled_jobs
 from app.services.learning import process_pending as process_pending_learning
 from app.services.template_upload import purge_expired as purge_template_uploads
+from app.services.delivery_links import purge_expired_files as purge_delivery_files
 
 WATCHDOG_INTERVAL_SECONDS = 60
 
@@ -317,6 +321,10 @@ async def _watchdog_loop():
             await asyncio.to_thread(purge_template_uploads)
         except Exception:
             logger.exception("Template upload cleanup errored")
+        try:
+            await asyncio.to_thread(purge_delivery_files)
+        except Exception:
+            logger.exception("Delivery link cleanup errored")
         await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)
 
 

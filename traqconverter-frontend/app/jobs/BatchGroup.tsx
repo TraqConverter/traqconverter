@@ -42,6 +42,18 @@ export type BatchDetail = BatchSummary & {
 }
 
 const KIND_ORDER = ["person", "institution", "place", "degree", "term"]
+
+const ZIP_FORMATS = ["docx", "pdf", "delivery"] as const
+type ZipFormat = (typeof ZIP_FORMATS)[number]
+const ZIP_LABELS: Record<ZipFormat, { button: string; file: string; title: string }> = {
+  docx: { button: "DOCX ZIP", file: "DOCX", title: "Every finished document as DOCX, in one ZIP" },
+  pdf: { button: "PDF ZIP", file: "PDF", title: "Every finished document as PDF, in one ZIP" },
+  delivery: {
+    button: "Delivery PDFs ZIP",
+    file: "Delivery PDF",
+    title: "Every finished document as one PDF with its certification page and a copy of the original, in one ZIP",
+  },
+}
 const KIND_LABEL: Record<string, string> = {
   person: "Names",
   institution: "Institutions",
@@ -90,7 +102,7 @@ const BatchGroup = forwardRef<HTMLDivElement, Props>(function BatchGroup(
   const canAct = completed > 0 && !busy
   const pct = documents ? Math.round((completed / documents) * 100) : 0
 
-  const download = async (format: "docx" | "pdf") => {
+  const download = async (format: ZipFormat) => {
     setBusy(`zip:${format}`)
     setNotice(null)
     try {
@@ -98,7 +110,7 @@ const BatchGroup = forwardRef<HTMLDivElement, Props>(function BatchGroup(
       const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/zip" }))
       const a = document.createElement("a")
       a.href = url
-      a.download = `${(name || "batch").replace(/[^\w .-]+/g, "_")} (${format.toUpperCase()}).zip`
+      a.download = `${(name || "batch").replace(/[^\w .-]+/g, "_")} (${ZIP_LABELS[format].file}).zip`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -218,13 +230,13 @@ const BatchGroup = forwardRef<HTMLDivElement, Props>(function BatchGroup(
           >
             Terms{summary.terms ? ` · ${summary.terms}` : ""}
           </button>
-          {(["docx", "pdf"] as const).map((f) => (
+          {ZIP_FORMATS.map((f) => (
             <button
               key={f}
               type="button"
               onClick={() => download(f)}
               disabled={!canAct}
-              title={completed ? `Every finished document as ${f.toUpperCase()}, in one ZIP` : "No finished documents yet"}
+              title={completed ? ZIP_LABELS[f].title : "No finished documents yet"}
               className={actionBtn}
               style={{
                 background: "#ffffff",
@@ -234,7 +246,7 @@ const BatchGroup = forwardRef<HTMLDivElement, Props>(function BatchGroup(
                 cursor: canAct ? "pointer" : "not-allowed",
               }}
             >
-              {busy === `zip:${f}` ? "Preparing…" : `${f.toUpperCase()} ZIP`}
+              {busy === `zip:${f}` ? "Preparing…" : ZIP_LABELS[f].button}
             </button>
           ))}
           {confirming ? (

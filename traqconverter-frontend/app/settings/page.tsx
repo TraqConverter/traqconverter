@@ -24,6 +24,7 @@ type Snapshot = {
   team_name: string
   members: Member[]
   pending_invites: Invite[]
+  seats?: { used: number; limit: number | null }
 }
 
 const ROLES = [
@@ -228,6 +229,8 @@ export default function MembersPage() {
             {memberCount} member{memberCount === 1 ? "" : "s"}
             {inviteCount > 0 &&
               ` · ${inviteCount} pending invite${inviteCount === 1 ? "" : "s"}`}
+            {snapshot?.seats?.limit != null &&
+              ` · ${snapshot.seats.used} of ${snapshot.seats.limit} seats used`}
           </p>
         </div>
 

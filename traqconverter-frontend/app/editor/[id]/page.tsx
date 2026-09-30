@@ -13,6 +13,8 @@ import DocumentEditor, {
   type DocumentEditorHandle,
 } from "@/components/editor/DocumentEditor"
 import SourceViewer from "@/components/editor/SourceViewer"
+import ExportMenu, { type ExportKind } from "@/components/editor/ExportMenu"
+import ShareWithClient from "@/components/editor/ShareWithClient"
 import { blocking, useReview, type CheckItem, type SourceRef } from "@/components/editor/useReview"
 
 type Segment = {
@@ -156,6 +158,7 @@ export default function EditorPage() {
   const [busy, setBusy] = useState<string | null>(null)
   const certLocked = useFeature("certifications") === "locked"
   const [showStatusMenu, setShowStatusMenu] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
 
   const [chatOpen, setChatOpen] = useState(false)
   const [sourcePreview, setSourcePreview] = useState<{
@@ -643,7 +646,7 @@ export default function EditorPage() {
         await api.post(`/projects/${id}/certify`)
         setProject((p) => (p ? { ...p, review_status: "CERTIFIED" } : p))
       }
-      setNotice("Certified. The certification page is at the end of the document; Export DOCX or PDF to deliver.")
+      setNotice("Certified. The certification page is at the end of the document; Export it or share it with your client to deliver.")
     } catch (err: unknown) {
       if ((err as { response?: { status?: number } })?.response?.status === 403) {
         setError("Certification is a Pro feature. Upgrade in Billing to unlock.")
@@ -655,16 +658,21 @@ export default function EditorPage() {
     }
   }
 
-  const exportFile = async (kind: "docx" | "pdf") => {
+  const exportFile = async (kind: ExportKind) => {
     try {
       setBusy(`export:${kind}`)
-      const url = kind === "docx" ? `/projects/${id}/export` : `/projects/${id}/export/pdf`
+      const url = {
+        docx: `/projects/${id}/export`,
+        pdf: `/projects/${id}/export/pdf`,
+        delivery: `/projects/${id}/export/delivery.pdf`,
+      }[kind]
       const res = await api.get(url, { responseType: "blob" })
       const blob = new Blob([res.data])
       const dl = window.URL.createObjectURL(blob)
       const a = document.createElement("a")
       a.href = dl
-      a.download = `${(project?.file_name || "translation").replace(/\.[^.]+$/, "")}.${kind}`
+      const stem = (project?.file_name || "translation").replace(/\.[^.]+$/, "")
+      a.download = kind === "delivery" ? `${stem} - translation.pdf` : `${stem}.${kind}`
       document.body.appendChild(a)
       a.click()
       a.remove()
@@ -1055,47 +1063,11 @@ export default function EditorPage() {
           ))}
         </div>
 
-        {}
-        <button
-          type="button"
-          onClick={() => exportFile("docx")}
-          disabled={busy === "export:docx"}
-          className="px-3 py-2 rounded-full text-sm font-semibold flex items-center gap-1.5 transition"
-          style={{
-            background: "#ffffff",
-            color: "#1f2a2e",
-            border: "1px solid #e7ddc5",
-          }}
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="7 10 12 15 17 10" />
-            <line x1="12" y1="15" x2="12" y2="3" />
-          </svg>
-          {busy === "export:docx" ? "Preparing…" : "Export DOCX"}
-        </button>
-        <button
-          type="button"
-          onClick={() => exportFile("pdf")}
-          disabled={busy === "export:pdf"}
-          className="px-3 py-2 rounded-full text-sm font-semibold flex items-center gap-1.5 transition"
-          style={{
-            background: "#ffffff",
-            color: "#1f2a2e",
-            border: "1px solid #e7ddc5",
-          }}
-        >
-          {busy === "export:pdf" ? "Preparing…" : "Export PDF"}
-        </button>
+        <ExportMenu
+          busy={busy?.startsWith("export:") ? (busy.slice(7) as ExportKind) : null}
+          onExport={(kind) => void exportFile(kind)}
+          onShare={() => setShareOpen(true)}
+        />
         {!isDtp && (
           <button
             type="button"
@@ -1907,6 +1879,8 @@ export default function EditorPage() {
           onRegenerate={(text) => void runRegenerate(text)}
         />
       )}
+
+      {shareOpen && <ShareWithClient projectId={id}onClose={() => setShareOpen(false)} />}
 
       {confirmState && (
         <ConfirmDialog

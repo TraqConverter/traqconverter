@@ -1,0 +1,269 @@
+"use client"
+
+import { useCallback, useEffect, useState } from "react"
+import { api, apiErrorDetail } from "@/lib/api"
+
+type LinkKind = "delivery_pdf" | "pdf" | "docx"
+
+type DeliveryLink = {
+  id: string
+  kind: LinkKind
+  file_name: string
+  token_prefix: string
+  status: "active" | "expired" | "revoked"
+  expires_at: string
+  created_at: string
+  download_count: number
+  last_downloaded_at: string | null
+}
+
+const KINDS: { value: LinkKind; label: string }[] = [
+  { value: "delivery_pdf", label: "Delivery PDF (translation + certification + original)" },
+  { value: "pdf", label: "PDF (translation + certification)" },
+  { value: "docx", label: "DOCX" },
+]
+
+const EXPIRY = [1, 7, 30] as const
+
+const KIND_SHORT: Record<LinkKind, string> = { delivery_pdf: "Delivery PDF", pdf: "PDF", docx: "DOCX" }
+
+function shortDate(iso: string | null) {
+  if (!iso) return ""
+  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
+}
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export default function ShareWithClient({ projectId, onClose }: { projectId: string; onClose: () => void }) {
+  const [kind, setKind] = useState<LinkKind>("delivery_pdf")
+  const [days, setDays] = useState<(typeof EXPIRY)[number]>(7)
+  const [creating, setCreating] = useState(false)
+  const [url, setUrl] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [links, setLinks] = useState<DeliveryLink[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [revoking, setRevoking] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api.get<DeliveryLink[]>(`/projects/${projectId}/delivery-links`)
+      setLinks(res.data)
+    } catch {
+      setLinks([])
+    }
+  }, [projectId])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
+
+  const create = async () => {
+    setCreating(true)
+    setError(null)
+    setUrl(null)
+    setCopied(false)
+    try {
+      const res = await api.post<{ url: string }>(`/projects/${projectId}/delivery-links`, {
+        kind,
+        expires_in_days: days,
+      })
+      setUrl(res.data.url)
+      setCopied(await copyText(res.data.url))
+      void load()
+    } catch (err) {
+      setError(apiErrorDetail(err, "Couldn't create the link."))
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const revoke = async (id: string) => {
+    setRevoking(id)
+    setError(null)
+    try {
+      await api.delete(`/projects/${projectId}/delivery-links/${id}`)
+      await load()
+    } catch (err) {
+      setError(apiErrorDetail(err, "Couldn't revoke the link."))
+    } finally {
+      setRevoking(null)
+    }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center sm:p-4"
+      style={{ background: "rgba(31,42,46,0.45)", backdropFilter: "blur(2px)" }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Share with client"
+        onClick={(e) => e.stopPropagation()}
+        className="w-full sm:w-[520px] max-h-[90vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl p-5 sm:p-6"
+        style={{ background: "#fbf6ea", border: "1px solid #e7ddc5", boxShadow: "0 18px 40px rgba(0,0,0,0.25)" }}
+      >
+        <div className="flex items-start justify-between gap-3 mb-1">
+          <h2 className="text-lg font-semibold" style={{ color: "#1f2a2e" }}>
+            Share with client
+          </h2>
+          <button type="button" onClick={onClose} aria-label="Close" className="text-sm font-semibold px-1" style={{ color: "#6b6558" }}>
+            ✕
+          </button>
+        </div>
+        <p className="text-[13px] mb-4" style={{ color: "#6b6558" }}>
+          Your client gets a download page, no account needed. The file is saved as it is now; later edits don&apos;t change it.
+        </p>
+
+        <label className="block text-[12px] font-semibold mb-1" style={{ color: "#4a4638" }} htmlFor="share-kind">
+          File
+        </label>
+        <select
+          id="share-kind"
+          value={kind}
+          onChange={(e) => setKind(e.target.value as LinkKind)}
+          className="w-full rounded-lg px-3 py-2 text-sm mb-3"
+          style={{ background: "#ffffff", border: "1px solid #e7ddc5", color: "#1f2a2e" }}
+        >
+          {KINDS.map((k) => (
+            <option key={k.value} value={k.value}>
+              {k.label}
+            </option>
+          ))}
+        </select>
+
+        <div className="text-[12px] font-semibold mb-1" style={{ color: "#4a4638" }}>
+          Expires after
+        </div>
+        <div className="flex gap-2 mb-4" role="radiogroup" aria-label="Expires after">
+          {EXPIRY.map((d) => (
+            <button
+              key={d}
+              type="button"
+              role="radio"
+              aria-checked={days === d}
+              onClick={() => setDays(d)}
+              className="flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition"
+              style={
+                days === d
+                  ? { background: "#e1efec", color: "#0a5e58", border: "1px solid #0a7870" }
+                  : { background: "#ffffff", color: "#1f2a2e", border: "1px solid #e7ddc5" }
+              }
+            >
+              {d === 1 ? "1 day" : `${d} days`}
+            </button>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => void create()}
+          disabled={creating}
+          className="w-full rounded-full px-4 py-2.5 text-sm font-semibold transition"
+          style={{ background: "#0a7870", color: "#ffffff", opacity: creating ? 0.7 : 1 }}
+        >
+          {creating ? "Preparing the file…" : "Create link"}
+        </button>
+
+        {url && (
+          <div className="mt-3 rounded-xl p-3" style={{ background: "#ffffff", border: "1px solid #cfe6e2" }}>
+            <div className="flex items-center gap-2">
+              <input
+                readOnly
+                value={url}
+                aria-label="Link for your client"
+                onFocus={(e) => e.currentTarget.select()}
+                className="flex-1 min-w-0 text-[13px] bg-transparent outline-none"
+                style={{ color: "#1f2a2e" }}
+              />
+              <button
+                type="button"
+                onClick={async () => setCopied(await copyText(url))}
+                className="shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold"
+                style={{ background: copied ? "#d8ead6" : "#e1efec", color: copied ? "#2d5a24" : "#0a5e58" }}
+              >
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+            <div className="text-[12px] mt-1.5" style={{ color: "#8a8270" }}>
+              The full link is shown only now. Revoke it below if it goes to the wrong person.
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="text-sm rounded-lg px-3 py-2 mt-3" style={{ background: "#f2d4cf", color: "#7a2f24" }}>
+            {error}
+          </div>
+        )}
+
+        <div className="mt-5">
+          <div className="text-[11px] font-semibold tracking-[0.12em] mb-2" style={{ color: "#8a8270" }}>
+            LINKS FOR THIS PROJECT
+          </div>
+          {links === null ? (
+            <div className="text-sm" style={{ color: "#8a8270" }}>
+              Loading…
+            </div>
+          ) : links.length === 0 ? (
+            <div className="text-sm" style={{ color: "#8a8270" }}>
+              No links yet.
+            </div>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {links.map((l) => (
+                <li
+                  key={l.id}
+                  className="flex items-center gap-3 rounded-xl px-3 py-2"
+                  style={{ background: "#ffffff", border: "1px solid #efe6d0" }}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold truncate" style={{ color: "#1f2a2e" }}>
+                      {KIND_SHORT[l.kind]} <span style={{ color: "#8a8270", fontWeight: 400 }}>· /d/{l.token_prefix}…</span>
+                    </div>
+                    <div className="text-[12px]" style={{ color: "#8a8270" }}>
+                      {l.status === "active"
+                        ? `Expires ${shortDate(l.expires_at)}`
+                        : l.status === "revoked"
+                        ? "Revoked"
+                        : `Expired ${shortDate(l.expires_at)}`}
+                      {" · "}
+                      {l.download_count === 1 ? "1 download" : `${l.download_count} downloads`}
+                    </div>
+                  </div>
+                  {l.status === "active" && (
+                    <button
+                      type="button"
+                      onClick={() => void revoke(l.id)}
+                      disabled={revoking === l.id}
+                      className="shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold"
+                      style={{ background: "#ffffff", color: "#b14a3a", border: "1px solid #ecc9c1" }}
+                    >
+                      {revoking === l.id ? "Revoking…" : "Revoke"}
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
