@@ -228,7 +228,6 @@ def test_worker_records_terms_after_segment_translation(client, db, storage, mak
     monkeypatch.setattr(tp, "extract_segments", lambda path: ("DOCX", [SimpleNamespace(text=s, layout={}) for s, _ in PAIRS]))
     monkeypatch.setattr(tp.learning, "profile_project", lambda *a, **kw: None)
     monkeypatch.setattr(tp, "translate_batch", lambda texts, *a, **kw: order.append("translate") or [dict(PAIRS)[t] for t in texts])
-    monkeypatch.setattr(tp, "store_tm_entry", lambda **kw: None)
 
     def rebuild(**kw):
         order.append("rebuild")

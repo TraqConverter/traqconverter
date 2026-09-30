@@ -9,7 +9,7 @@ import re
 
 from app.services import claude_params
 
-from app.services.translation_memory_service import get_tm_entries
+from app.services.translation_memory_service import lookup, project_pair
 from app.services.glossary_service import (
     build_glossary_prompt,
     get_glossary,
@@ -414,30 +414,12 @@ def translate_batch(
 
     if db and project and scope_id and project_use_tm:
         try:
-            tm_entries = []
-
-            for t in texts:
-                entries = get_tm_entries(
-                    db=db,
-                    team_id=scope_id,
-                    source_language=source_lang,
-                    target_language=target_lang,
-                    source_text=t
-                )
-                tm_entries.extend(entries)
-
-            unique_tm = {
-                e.source_text: e.translated_text
-                for e in tm_entries
-            }
-
-            if unique_tm:
-                tm_context = "\n".join(
-                    [f"{k} → {v}" for k, v in unique_tm.items()]
-                )
-
-        except Exception as e:
-            print("TM ERROR:", e)
+            src, tgt = project_pair(project)
+            found = lookup(db, scope_id, src, tgt, texts)
+            if found:
+                tm_context = "\n".join(f"{r.source_text} → {r.translated_text}" for r in found.values())
+        except Exception:
+            logger.exception("TM lookup for segment translation failed")
 
 
 

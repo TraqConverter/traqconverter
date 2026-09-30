@@ -90,9 +90,11 @@ def run_rebuild(project_id: str, instructions: str | None) -> None:
             src_path = tmp_dir / "source.pdf"
             download_file_from_s3(project.file_path, src_path)
             pdf_bytes = src_path.read_bytes()
-            from app.services.learning import team_terminology
+            from app.services.learning import source_text_of, team_terminology
+            from app.services.translation_memory_service import with_memory
 
-            terminology = team_terminology(db, project)
+            source_text = source_text_of(db, project)
+            terminology = with_memory(db, project, team_terminology(db, project, source_text), source_text)
             saved = project.ai_instructions or ""
             if instructions:
                 from app.services.claude_multiturn_rebuild import author_rebuild_docx_multiturn

@@ -14,7 +14,7 @@ from app.dependencies.tenant import get_user_project_or_404
 from app.models.project import TranslationProject
 from app.models.translation_segment import TranslationSegment
 from app.models.user import User
-from app.services import ai_allowance, ai_usage, docx_blocks, document_editor, learning
+from app.services import ai_allowance, ai_usage, docx_blocks, document_editor, learning, tm_capture
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +117,7 @@ def edit_document(
     if changed:
         document_editor.save_version(db, project, new_data, f"Edited {len(changed)} paragraph(s)", user)
         learning.record_changes(db, project, data, new_data, "typed")
+        tm_capture.record_edit(db, project, data, new_data)
     db.commit()
     return {"version": project.document_version}
 

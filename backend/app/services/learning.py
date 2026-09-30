@@ -284,6 +284,7 @@ def capture_template(db: Session, project: TranslationProject, user) -> Optional
 
 
 def capture_template_in_background(project_id, user_id) -> None:
+    """On export or certification: save the template and store the document's pairs in the translation memory."""
     from app.database import SessionLocal
     from app.models.user import User
 
@@ -296,8 +297,29 @@ def capture_template_in_background(project_id, user_id) -> None:
     except Exception:
         db.rollback()
         logger.exception("Template capture failed (project=%s)", project_id)
+    try:
+        capture_memory(db, project_id, user_id)
     finally:
         db.close()
+
+
+def capture_memory(db: Session, project_id, user_id) -> int:
+    """Store the delivered document's paragraphs as approved translations; never raises."""
+    from app.models.user import User
+    from app.routers.document import _initial_builder
+    from app.services import document_editor, tm_capture
+
+    try:
+        project = db.query(TranslationProject).filter(TranslationProject.id == project_id).first()
+        user = db.query(User).filter(User.id == user_id).first()
+        if not project or not user or project.status != ProjectStatus.COMPLETED or not project.use_tm:
+            return 0
+        data, _ = document_editor.current_document(db, project, user, _initial_builder(db, project, user))
+        return tm_capture.record_delivery(db, project, data)
+    except Exception:
+        db.rollback()
+        logger.exception("Translation memory capture failed (project=%s)", project_id)
+        return 0
 
 
 def mark_template_used(db: Session, project: TranslationProject, template: DocumentTemplate) -> None:
