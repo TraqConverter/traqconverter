@@ -16,7 +16,7 @@ from app.models.project import TranslationProject
 from app.models.user import User
 
 from app.services import ai_usage
-from app.services.translation_memory_service import store_tm_entry
+from app.services.translation_memory_service import project_pair, store_tm_entry
 
 logger = logging.getLogger(__name__)
 
@@ -101,18 +101,18 @@ def update_segment(
 
 
 
-    try:
+    if project.use_tm:
+        src, tgt = project_pair(project)
         store_tm_entry(
             db=db,
             team_id=project.team_id,
-            source_language=project.source_language,
-            target_language=project.target_language,
+            source_language=src,
+            target_language=tgt,
             source_text=segment.source_text,
             translated_text=data.translated_text,
+            origin="approved",
+            project_id=project.id,
         )
-    except Exception:
-
-        pass
 
     return {
         "id": str(segment.id),

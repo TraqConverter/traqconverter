@@ -48,14 +48,14 @@ from sqlalchemy.orm import Session
 
 from app.models.project import TranslationProject, ProjectStatus
 from app.models.translation_segment import TranslationSegment
-from app.models.translation_memory import TranslationMemory
 from app.database import SessionLocal
 from app.services.s3_service import (
     download_file_from_s3,
     upload_file_to_s3
 )
 from app.services.ai_translation_service import translate_batch, translate_text
-from app.services.translation_memory_service import store_tm_entry
+from app.services import tm_keys
+from app.services import translation_memory_service as tm_service
 from app.services.layout_translator import (
     extract_segments,
     rebuild_output,
@@ -305,7 +305,7 @@ def process_translation_job(project_id: str):
         source_bytes = input_file.read_bytes()
         source_text = "\n".join(item.text or "" for item in extracted)
         learning.profile_project(db, project, source_bytes, source_text)
-        terminology = learning.team_terminology(db, project, source_text)
+        terminology = tm_service.with_memory(db, project, learning.team_terminology(db, project, source_text), source_text)
         # The template fill runs next to segment translation so neither waits for the other.
         template_job = _start_template_fill(db, project, source_kind, source_bytes, source_text, terminology)
 
@@ -366,25 +366,10 @@ def process_translation_job(project_id: str):
             apply_glossary,
             bool(getattr(project, "add_certification", False)),
         )
+        tm_src, tm_tgt = tm_service.project_pair(project)
         if use_tm:
             try:
-                tm_rows = (
-                    db.query(
-                        TranslationMemory.source_text,
-                        TranslationMemory.translated_text,
-                    )
-                    .filter(
-                        TranslationMemory.team_id == project.team_id,
-                        TranslationMemory.source_language == source_lang,
-                        TranslationMemory.target_language == target_lang,
-                    )
-                    .all()
-                )
-                tm_map: dict[str, str] = {
-                    row.source_text: row.translated_text
-                    for row in tm_rows
-                    if row.source_text and row.translated_text
-                }
+                tm_map = tm_service.exact_map(db, project, [seg.source_text for seg in segments])
             except Exception as e:
                 logger.warning(
                     "TM bulk-load failed; proceeding without it: %s", e
@@ -398,7 +383,7 @@ def process_translation_job(project_id: str):
         miss_indices: list[int] = []
         miss_texts: list[str] = []
         for idx, seg in enumerate(segments):
-            cached = tm_map.get(seg.source_text)
+            cached = tm_map.get(tm_keys.normalise_text(seg.source_text))
             if cached:
                 seg.translated_text = cached
                 seg.tm_pct = 100
@@ -534,30 +519,16 @@ def process_translation_job(project_id: str):
 
 
 
-            if use_tm:
-                for src_text, tgt_text in tm_candidates:
-                    try:
-                        store_tm_entry(
-                            db=db,
-                            team_id=project.team_id,
-                            source_language=source_lang,
-                            target_language=target_lang,
-                            source_text=src_text,
-                            translated_text=tgt_text,
-                        )
-                    except Exception as tm_err:
-                        logger.warning(
-                            "TM store skipped (%d-char source): %s",
-                            len(src_text or ""),
-                            tm_err,
-                        )
-                        try:
-                            db.rollback()
-                        except Exception:
-                            pass
-
-
-
+            if use_tm and tm_src:
+                tm_service.upsert_entries(
+                    db,
+                    project.team_id,
+                    [
+                        {"source_language": tm_src, "target_language": tm_tgt, "source_text": src_text,
+                         "translated_text": tgt_text, "origin": "machine", "project_id": project.id}
+                        for src_text, tgt_text in tm_candidates
+                    ],
+                )
 
             progress = int(
                 (
