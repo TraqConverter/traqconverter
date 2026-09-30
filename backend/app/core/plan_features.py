@@ -103,6 +103,11 @@ PAID_PLANS = tuple(p["code"] for p in PLANS)
 
 SUBSCRIPTION_GRANTS = {p["code"]: p["credits"] for p in PLANS}
 
+
+def price_lookup_key(plan: str) -> str:
+    """The lookup_key scripts/stripe_setup.py gives a plan's monthly EUR price."""
+    return f"traq_{plan.lower()}_monthly_eur"
+
 # Team size including the owner.
 SEAT_LIMITS = {"TRIAL": 1, **{p["code"]: p["seats"] for p in PLANS}}
 

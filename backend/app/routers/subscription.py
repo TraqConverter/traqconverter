@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 import stripe
 
@@ -14,6 +15,12 @@ from app.models.stripe_event import StripeEvent
 from app.config import settings
 from app.core.plan_features import CREDIT_PACKS as PLAN_CREDIT_PACKS
 from app.core.plan_features import PAID_PLANS, SALES_EMAIL, SUBSCRIPTION_GRANTS
+from app.services.stripe_billing import (
+    has_active_subscription,
+    stripe_id,
+    team_customer_id,
+    team_users,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,14 +92,29 @@ def create_checkout_session(
     if not team:
         raise HTTPException(status_code=400, detail="Team not found")
 
-
-
+    # A second checkout would start a second subscription; plan changes go through the portal.
+    if has_active_subscription(db, team):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "Your team already has a subscription. Change plan from the billing portal.",
+                "portal": True,
+            },
+        )
 
     base_success = settings.STRIPE_SUCCESS_URL
     join = "&" if "?" in base_success else "?"
     success_url = f"{base_success}{join}session_id={{CHECKOUT_SESSION_ID}}"
 
+    customer_kwargs = {}
+    customer_id = next(
+        (u.stripe_customer_id for u in team_users(db, team) if u.stripe_customer_id), None
+    )
+    if customer_id:
+        customer_kwargs["customer"] = customer_id
+
     session = stripe.checkout.Session.create(
+        **customer_kwargs,
         payment_method_types=["card"],
         mode="subscription",
         line_items=[
@@ -124,11 +146,39 @@ def create_checkout_session(
     return {"checkout_url": session.url}
 
 
+@router.post("/portal")
+def create_portal_session(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Stripe Customer Portal for the team's customer: change plan, update card, invoices, cancel."""
+    team = _resolve_user_team(db, current_user)
+    if not team:
+        raise HTTPException(status_code=400, detail="Team not found")
 
+    customer_id = team_customer_id(db, team)
+    if not customer_id:
+        raise HTTPException(
+            status_code=404,
+            detail="No subscription to manage yet. Choose a plan to subscribe.",
+        )
 
+    params = {
+        "customer": customer_id,
+        "return_url": f"{settings.FRONTEND_URL.rstrip('/')}/billing",
+    }
+    if settings.STRIPE_PORTAL_CONFIGURATION:
+        params["configuration"] = settings.STRIPE_PORTAL_CONFIGURATION
 
-
-
+    try:
+        session = stripe.billing_portal.Session.create(**params)
+    except Exception as e:
+        logger.warning(f"Portal session failed for team {team.id}: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail="Couldn't open the billing portal. Please try again.",
+        )
+    return {"portal_url": session.url}
 
 
 @router.post("/sync-session")
@@ -274,7 +324,8 @@ def sync_session(
     if user:
         user.subscription_status = "ACTIVE"
         user.subscription_plan = plan
-        user.stripe_subscription_id = session.get("subscription")
+        user.stripe_subscription_id = stripe_id(session.get("subscription"))
+        user.stripe_customer_id = stripe_id(session.get("customer")) or user.stripe_customer_id
 
     db.add(StripeEvent(id=reference, event_type="subscription_grant"))
     db.commit()
