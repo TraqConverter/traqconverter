@@ -1,3 +1,4 @@
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from datetime import datetime
@@ -7,6 +8,33 @@ from app.models.credit import CreditWallet, CreditTransaction
 
 
 
+
+
+TRIAL_TOPUP_REFERENCE = "trial_topup:{target}"
+
+_TOP_UP_TRIALS = text("""
+    WITH due AS (
+        SELECT w.id, :target - COALESCE(w.subscription_credits, 0) AS amount
+          FROM credit_wallets w
+         WHERE upper(w.plan_type) = 'TRIAL'
+           AND (w.subscription_expires_at IS NULL OR w.subscription_expires_at > timezone('utc', now()))
+           AND COALESCE(w.subscription_credits, 0) < :target
+           AND NOT EXISTS (
+               SELECT 1 FROM credit_transactions t WHERE t.wallet_id = w.id AND t.reference_id = :ref)
+         FOR UPDATE OF w
+    ), bumped AS (
+        UPDATE credit_wallets w SET subscription_credits = :target FROM due WHERE w.id = due.id
+    )
+    INSERT INTO credit_transactions (id, wallet_id, type, amount, reference_id, created_at)
+    SELECT gen_random_uuid(), due.id, 'TRIAL_GRANT', due.amount, :ref, timezone('utc', now()) FROM due
+    RETURNING wallet_id
+""")
+
+
+def top_up_trial_wallets(bind, target: int) -> int:
+    """Raise running trials below `target` credits to it, once per wallet, with a ledger row. Returns wallets topped up."""
+    ref = TRIAL_TOPUP_REFERENCE.format(target=target)
+    return len(bind.execute(_TOP_UP_TRIALS, {"target": target, "ref": ref}).fetchall())
 
 
 class WalletNotFoundError(Exception):

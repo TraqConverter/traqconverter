@@ -14,7 +14,7 @@ from app.dependencies import get_current_user
 from app.dependencies.rate_limit import rate_limit
 from app.models.user import User
 from app.models.team import Team
-from app.models.credit import CreditWallet
+from app.models.credit import CreditTransaction, CreditWallet
 from app.schemas.auth import UserRegister, UserLogin, TokenResponse
 from app.core.security import hash_password, verify_password, create_access_token
 from app.core.plan_features import TRIAL_DAYS, TRIAL_CREDITS
@@ -400,6 +400,10 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
             subscription_expires_at=datetime.utcnow() + timedelta(days=TRIAL_DAYS),
         )
         db.add(wallet)
+        db.flush()
+        db.add(CreditTransaction(
+            wallet_id=wallet.id, type="TRIAL_GRANT", amount=TRIAL_CREDITS, reference_id="trial",
+        ))
 
         user.subscription_plan = "TRIAL"
         user.subscription_status = "TRIAL"

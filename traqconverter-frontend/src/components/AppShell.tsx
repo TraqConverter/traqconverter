@@ -8,6 +8,7 @@ import { clearToken } from "@/lib/auth"
 import { isPublicRoute } from "@/lib/routes"
 import { isStaffRole } from "@/lib/staff"
 import { loadWallet, planFor, resetWallet, useWallet, type PlanFeature } from "@/lib/plan"
+import { findPlan, usePlans } from "@/lib/plans"
 
 type NavItem = {
   name: string
@@ -101,6 +102,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   const [projectCount, setProjectCount] = useState<number | null>(null)
   const wallet = useWallet(false) ?? null
+  const catalog = usePlans()
   const credits = wallet ? wallet.total_credits : null
   const [user, setUser] = useState<{
     full_name: string | null
@@ -188,19 +190,22 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }
 
   const tier = wallet?.tier || ""
-  const planLabel =
-    tier === "PRO"
-      ? "Pro plan"
-      : tier === "BASIC"
-      ? "Basic plan"
-      : tier === "TRIAL"
-      ? "Free trial"
-      : tier === "EXPIRED"
-      ? "Trial ended"
-      : "—"
+  const paidPlan = findPlan(catalog, tier)
+  const planLabel = paidPlan
+    ? `${paidPlan.name} plan`
+    : tier === "TRIAL"
+    ? "Free trial"
+    : tier === "EXPIRED"
+    ? "Trial ended"
+    : tier
+    ? `${tier.charAt(0)}${tier.slice(1).toLowerCase()} plan`
+    : "—"
 
-  const subscriptionAllowance =
-    tier === "PRO" ? 29 : tier === "BASIC" ? 19 : tier === "TRIAL" ? 1 : 0
+  const subscriptionAllowance = paidPlan
+    ? paidPlan.credits
+    : tier === "TRIAL"
+    ? catalog?.trial.credits ?? 0
+    : 0
 
   const subscriptionRemaining = wallet?.subscription_credits ?? 0
   const purchasedRemaining = wallet?.purchased_credits ?? 0
@@ -396,11 +401,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                     tier === "EXPIRED"
                       ? "#cfc6ad"
                       : `conic-gradient(${
-                          tier === "PRO"
-                            ? "#0a7870"
-                            : tier === "BASIC"
-                            ? "#0a7870"
-                            : "#c88a1a"
+                          paidPlan ? "#0a7870" : "#c88a1a"
                         } 0 ${100 - pct}%, #e7ddc5 0 100%)`,
                 }}
               />

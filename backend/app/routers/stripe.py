@@ -11,7 +11,7 @@ from app.models.credit import CreditWallet
 from app.models.team import Team
 from app.models.stripe_event import StripeEvent
 from app.config import settings
-from app.core.plan_features import SUBSCRIPTION_GRANTS
+from app.core.plan_features import PAID_PLANS, SUBSCRIPTION_GRANTS
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +32,10 @@ stripe.max_network_retries = 3
 
 def _build_plan_config():
     cfg = {}
-    if getattr(settings, "STRIPE_PRICE_BASIC", None):
-        cfg[settings.STRIPE_PRICE_BASIC] = {
-            "plan": "BASIC",
-            "credits": SUBSCRIPTION_GRANTS["BASIC"],
-        }
-    if getattr(settings, "STRIPE_PRICE_PRO", None):
-        cfg[settings.STRIPE_PRICE_PRO] = {
-            "plan": "PRO",
-            "credits": SUBSCRIPTION_GRANTS["PRO"],
-        }
+    for plan in PAID_PLANS:
+        price_id = getattr(settings, f"STRIPE_PRICE_{plan}", None)
+        if price_id:
+            cfg[price_id] = {"plan": plan, "credits": SUBSCRIPTION_GRANTS[plan]}
     return cfg
 
 
@@ -148,8 +142,6 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
 
             if mode == "subscription" or metadata.get("plan"):
-                from app.core.plan_features import SUBSCRIPTION_GRANTS
-
                 plan = (metadata.get("plan") or "").upper()
                 if plan not in SUBSCRIPTION_GRANTS:
                     logger.warning(f"Unknown plan in subscription session: {plan}")
