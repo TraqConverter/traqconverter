@@ -76,7 +76,7 @@ def claim_rebuild(project: TranslationProject) -> None:
 
 
 def run_rebuild(project_id: str, instructions: str | None) -> None:
-    """Background task: author a fresh DOCX from the source PDF; a failure gives the attempt back."""
+    """Background task: author a fresh DOCX from the source PDF using the saved and this regenerate's instructions; a failure gives the attempt back."""
     from app.database import SessionLocal
     from app.services.s3_service import download_file_from_s3, upload_file_to_s3
 
@@ -93,6 +93,7 @@ def run_rebuild(project_id: str, instructions: str | None) -> None:
             from app.services.learning import team_terminology
 
             terminology = team_terminology(db, project)
+            saved = project.ai_instructions or ""
             if instructions:
                 from app.services.claude_multiturn_rebuild import author_rebuild_docx_multiturn
 
@@ -102,6 +103,7 @@ def run_rebuild(project_id: str, instructions: str | None) -> None:
                     project.target_language or "",
                     extra_instructions=instructions,
                     terminology=terminology,
+                    instructions=saved,
                 )
             else:
                 from app.services.claude_authored_rebuild import author_rebuild_docx
@@ -111,6 +113,7 @@ def run_rebuild(project_id: str, instructions: str | None) -> None:
                     source_lang=project.source_language or "",
                     target_lang=project.target_language or "",
                     terminology=terminology,
+                    instructions=saved,
                 )
             out_path = tmp_dir / f"authored_{project.id}.docx"
             out_path.write_bytes(docx_bytes)

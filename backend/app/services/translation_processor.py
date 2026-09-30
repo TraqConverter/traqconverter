@@ -206,6 +206,7 @@ def _start_template_fill(db, project, source_kind, source_bytes, source_text, te
         source_lang=project_source_language(project) or project.source_language,
         target_lang=project.target_language,
         terminology=terminology,
+        instructions=project.ai_instructions or "",
     )
     template_key = template.s3_key
 
@@ -672,6 +673,7 @@ def process_translation_job(project_id: str):
                     source_lang=source_lang,
                     target_lang=target_lang,
                     terminology=terminology,
+                    instructions=project.ai_instructions or "",
                 )
                 authored_path = (
                     temp_dir / f"authored_{project.id}.docx"

@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import JSON, Column, String, Integer, DateTime, Boolean, ForeignKey, Enum
+from sqlalchemy import JSON, Column, String, Integer, DateTime, Boolean, ForeignKey, Enum, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -90,6 +90,7 @@ class TranslationProject(Base):
 
 
     model = Column(String, nullable=False, default="balanced")
+    ai_instructions = Column(Text, nullable=True)
 
 
 

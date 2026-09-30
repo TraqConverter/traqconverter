@@ -314,6 +314,13 @@ def _batch_terms_prompt(db, project, text: str) -> str:
     return f"\n{block}" if block else ""
 
 
+def _instructions_prompt(project) -> str:
+    from app.services.project_instructions import prompt_block
+
+    block = prompt_block(getattr(project, "ai_instructions", None))
+    return f"\n{block}" if block else ""
+
+
 def translate_text(
     text: str,
     source_lang: str,
@@ -367,7 +374,7 @@ STRICT RULES:
 - The entire output must be in {tgt_name}.
 
 {glossary_prompt}
-{_batch_terms_prompt(db, project, text)}
+{_batch_terms_prompt(db, project, text)}{_instructions_prompt(project)}
 Return ONLY the translated text — no preamble, no quotes, no commentary."""
 
     return _call_model(
@@ -506,7 +513,8 @@ ABSOLUTE RULES — these are non-negotiable for legal and identity documents:
         " No numbering, no labels, no commentary. The number of segments in your output must match the input exactly.\n"
     )
 
-    prompt = ""
+    # Per-project text stays out of the cached rules.
+    prompt = _instructions_prompt(project)
     if tm_context:
         prompt += (
             "\nREFERENCE TRANSLATIONS (use these verbatim if the segment matches):\n"

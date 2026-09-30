@@ -54,6 +54,8 @@ const TARGET_LANGUAGES: LangOption[] = SOURCE_LANGUAGES.filter(
 
 const LANGUAGES: LangOption[] = SOURCE_LANGUAGES
 
+const MAX_INSTRUCTIONS = 1000
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 function defaultBatchName() {
@@ -261,6 +263,7 @@ export default function NewProjectPage() {
 
   const [source, setSource] = useState("auto")
   const [target, setTarget] = useState("it-IT")
+  const [instructions, setInstructions] = useState("")
 
   // null until known; /certifications answers 403 on plans without the feature.
   const [certsEnabled, setCertsEnabled] = useState<boolean | null>(null)
@@ -330,6 +333,7 @@ export default function NewProjectPage() {
       formData.append("certification_template_id", certTemplateId)
     }
     if (batch) formData.append("batch_id", batch)
+    if (instructions.trim()) formData.append("ai_instructions", instructions.trim())
     return formData
   }
 
@@ -587,6 +591,35 @@ export default function NewProjectPage() {
               options={TARGET_LANGUAGES}
             />
 
+            <div className="mt-5">
+              <div className="flex items-baseline justify-between gap-3 mb-3">
+                <label
+                  htmlFor="ai-instructions"
+                  className="text-[11px] font-semibold tracking-[0.14em] uppercase"
+                  style={{ color: "#9a9178" }}
+                >
+                  Instructions for the AI (optional)
+                </label>
+                <span
+                  className="text-[11px] tabular-nums shrink-0"
+                  style={{ color: instructions.length >= MAX_INSTRUCTIONS ? "#b14a3a" : "#9a9178" }}
+                >
+                  {instructions.length}/{MAX_INSTRUCTIONS}
+                </span>
+              </div>
+              <textarea
+                id="ai-instructions"
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                maxLength={MAX_INSTRUCTIONS}
+                rows={3}
+                disabled={loading}
+                placeholder="e.g. Use British spelling"
+                className="w-full min-w-0 block text-sm outline-none rounded-xl px-4 py-3 resize-y"
+                style={{ background: "#faf5ee", border: "1px solid #e7ddc5", color: "#1f2a2e", minHeight: 76 }}
+              />
+            </div>
+
             {certsEnabled && certTemplates.length > 0 && (
               <div className="mt-5 pt-5" style={{ borderTop: "1px solid #f1e8d1" }}>
                 <label
@@ -657,7 +690,7 @@ export default function NewProjectPage() {
             </button>
             <div className="text-xs text-center mt-3" style={{ color: "#8a8270" }}>
               {multi
-                ? "1 credit per page · same languages for every document"
+                ? "1 credit per page · same languages and instructions for every document"
                 : "1 credit per page · review every segment before export"}
             </div>
           </div>

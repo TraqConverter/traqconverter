@@ -23,7 +23,7 @@ from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
 from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import can_manage_project, get_user_project_or_404
-from app.services import ai_actions, ai_usage
+from app.services import ai_actions, ai_usage, project_instructions
 from app.services.learning import capture_template_in_background
 from app.services.project_lifecycle import enqueue_job, job_charge_reference
 from app.models.project import TranslationProject, ProjectStatus
@@ -87,6 +87,13 @@ def _sanitize_edited_html(raw: str) -> str:
         clean_content_tags={"script"},
         link_rel="noopener noreferrer",
     )
+
+
+def _clean_instructions(text: str | None) -> str | None:
+    try:
+        return project_instructions.clean(text)
+    except project_instructions.InstructionsTooLong as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 def _can_download(db: Session, user: User) -> bool:
@@ -172,6 +179,7 @@ async def upload_project(
     request_certification: bool = Form(False),
     certification_template_id: Optional[str] = Form(None),
     batch_id: Optional[UUID] = Form(None),
+    ai_instructions: Optional[str] = Form(None),
 
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
@@ -180,6 +188,7 @@ async def upload_project(
     validate_file_extension(file.filename)
     validate_file_size(file)
     _validate_model_key(model)
+    ai_instructions = _clean_instructions(ai_instructions)
 
     file_path = None
     project = None
@@ -272,6 +281,7 @@ async def upload_project(
             source_language=source_language,
             target_language=target_language,
             model=model,
+            ai_instructions=ai_instructions,
 
 
             use_tm=use_tm,
@@ -644,6 +654,7 @@ def get_project_status(
         "file_name": project.file_name,
         "source_language": project.source_language,
         "target_language": project.target_language,
+        "ai_instructions": project.ai_instructions,
         "stats": {
             "total_segments": total,
             "translated_segments": translated,
@@ -913,6 +924,7 @@ def download_project(
 class _PatchProjectPayload(BaseModel):
     file_name: Optional[str] = None
     certification_template_id: Optional[str] = None
+    ai_instructions: Optional[str] = None
 
 
 @router.patch("/{project_id}")
@@ -922,8 +934,7 @@ def update_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Partial update — supports rename + changing the cert template
-    independently. Only the fields the caller sends are touched."""
+    """Partial update: rename, cert template, instructions for the AI. Only the fields the caller sends are touched."""
     project = get_user_project_or_404(db, project_id, current_user)
 
     if data.file_name is not None:
@@ -957,11 +968,15 @@ def update_project(
                     detail="Invalid certification_template_id",
                 )
 
+    if "ai_instructions" in data.model_fields_set:
+        project.ai_instructions = _clean_instructions(data.ai_instructions)
+
     db.commit()
     db.refresh(project)
     return {
         "id": str(project.id),
         "file_name": project.file_name,
+        "ai_instructions": project.ai_instructions,
         "certification_template_id": (
             str(project.certification_template_id)
             if project.certification_template_id
@@ -1590,6 +1605,9 @@ def _revise_background(project_id: str, model_key: str | None, instructions: str
             f"numbers, dates, IDs exactly. Fix grammar, terminology, and "
             f"awkward phrasings. Do not change correct translations."
         )
+        saved = project_instructions.prompt_block(project.ai_instructions)
+        if saved:
+            system_prompt += "\n\n" + saved
         if instructions:
             system_prompt += "\n\nUSER INSTRUCTIONS (follow strictly):\n" + instructions
         system_prompt += "\n\nReturn ONLY the revised translation — no preamble, no commentary, no quotes."

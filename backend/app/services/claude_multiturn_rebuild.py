@@ -1049,6 +1049,7 @@ def author_rebuild_docx_multiturn(
     timeout_per_run_seconds: int = 180,
     extra_instructions: Optional[str] = None,
     terminology: str = "",
+    instructions: str = "",
 ) -> bytes:
     """End-to-end multi-turn Claude-authored rebuild.
 
@@ -1069,6 +1070,7 @@ def author_rebuild_docx_multiturn(
         timeout_per_run_seconds=timeout_per_run_seconds,
         extra_instructions=extra_instructions,
         terminology=terminology,
+        instructions=instructions,
     )
 
 
@@ -1104,6 +1106,7 @@ def _author_rebuild_docx_multiturn_core(
     timeout_per_run_seconds: int = 180,
     extra_instructions: Optional[str] = None,
     terminology: str = "",
+    instructions: str = "",
     _force_doc_type: Optional[str] = None,
     _disable_page_by_page: bool = False,
 ) -> bytes:
@@ -1169,6 +1172,7 @@ def _author_rebuild_docx_multiturn_core(
             timeout_per_run_seconds=timeout_per_run_seconds,
             extra_instructions=extra_instructions,
             terminology=terminology,
+            instructions=instructions,
         )
 
     out_dir = Path(tempfile.mkdtemp(prefix="claude_multiturn_"))
@@ -1227,6 +1231,11 @@ def _author_rebuild_docx_multiturn_core(
     initial_prompt = prompt_template.format(**format_kwargs)
     if terminology:
         initial_prompt += "\n\n" + terminology
+    from app.services.project_instructions import prompt_block
+
+    project_block = prompt_block(instructions)
+    if project_block:
+        initial_prompt += "\n\n" + project_block
 
     if extra_instructions and extra_instructions.strip():
         initial_prompt += (
@@ -1479,6 +1488,7 @@ def _author_rebuild_form_page_by_page(
     timeout_per_run_seconds: int = 180,
     extra_instructions: Optional[str] = None,
     terminology: str = "",
+    instructions: str = "",
 ) -> bytes:
     """Multi-page FORM rebuild: split into single pages, run a full
     multi-turn rebuild on each, then merge the resulting DOCXs.
@@ -1504,6 +1514,7 @@ def _author_rebuild_form_page_by_page(
             timeout_per_run_seconds=timeout_per_run_seconds,
             extra_instructions=extra_instructions,
             terminology=terminology,
+            instructions=instructions,
             _force_doc_type="FORM",
             _disable_page_by_page=True,
         )
@@ -1536,6 +1547,7 @@ def _author_rebuild_form_page_by_page(
                 timeout_per_run_seconds=timeout_per_run_seconds,
                 extra_instructions=page_extra,
                 terminology=terminology,
+                instructions=instructions,
                 _force_doc_type="FORM",
                 _disable_page_by_page=True,
             )

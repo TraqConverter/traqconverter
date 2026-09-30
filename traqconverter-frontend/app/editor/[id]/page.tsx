@@ -31,6 +31,7 @@ type ProjectInfo = {
   file_name: string
   source_language: string
   target_language: string
+  ai_instructions?: string | null
 
   model?: string | null
   stats: {
@@ -68,6 +69,8 @@ function revisionCostText(left: number | undefined) {
   if (left <= 0) return "You've used both regenerations for this document. Use Ask AI for further changes."
   return `${left} of 2 regenerations left for this document.`
 }
+
+const MAX_INSTRUCTIONS = 1000
 
 type Tab = "learning" | "status"
 
@@ -138,6 +141,7 @@ export default function EditorPage() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null)
+  const [regenerateOpen, setRegenerateOpen] = useState(false)
   const [tab, setTab] = useState<Tab>("learning")
   const [compareReloadKey, setCompareReloadKey] = useState(0)
 
@@ -251,29 +255,43 @@ export default function EditorPage() {
     }
   }
 
-  const startRegenerate = () => {
-    setConfirmState({
-      title: "Regenerate the translation",
-      body:
-        "The whole translation is redone from the original, replacing your edits (you can undo it). It runs in the background and usually takes 1-3 minutes.\n\n" +
-        revisionCostText(project?.free_revisions_left),
-      confirmLabel: "Regenerate",
-      onConfirm: async () => {
-        try {
-          setCompareActionBusy("rerun")
-          setError(null)
-          const res = await api.post(`/projects/${id}/rebuild-with-claude`)
-          markRebuildRunning(res.data?.revision_count)
-          setNotice(
-            "Regenerating. The document updates here when it finishes.",
-          )
-        } catch (err: unknown) {
-          setError(apiErrorDetail(err, "Couldn't start regenerating."))
-        } finally {
-          setCompareActionBusy(null)
-        }
-      },
-    })
+  const startRegenerate = () => setRegenerateOpen(true)
+
+  const saveInstructions = async (text: string) => {
+    const next = text.trim()
+    if (next === (project?.ai_instructions || "")) return
+    const res = await api.patch(`/projects/${id}`, { ai_instructions: next })
+    const saved = (res.data?.ai_instructions as string | null) ?? null
+    setProject((p) => (p ? { ...p, ai_instructions: saved } : p))
+  }
+
+  const saveInstructionsOnly = async (text: string) => {
+    setRegenerateOpen(false)
+    try {
+      setError(null)
+      await saveInstructions(text)
+      setNotice("Instructions saved. Regenerate and Ask AI will follow them.")
+    } catch (err: unknown) {
+      setError(apiErrorDetail(err, "Couldn't save the instructions."))
+    }
+  }
+
+  const runRegenerate = async (text: string) => {
+    setRegenerateOpen(false)
+    try {
+      setCompareActionBusy("rerun")
+      setError(null)
+      await saveInstructions(text)
+      const res = await api.post(`/projects/${id}/rebuild-with-claude`)
+      markRebuildRunning(res.data?.revision_count)
+      setNotice(
+        "Regenerating. The document updates here when it finishes.",
+      )
+    } catch (err: unknown) {
+      setError(apiErrorDetail(err, "Couldn't start regenerating."))
+    } finally {
+      setCompareActionBusy(null)
+    }
   }
 
   const requestRevision = openRevisionModal
@@ -1812,6 +1830,16 @@ export default function EditorPage() {
         />
       )}
 
+      {regenerateOpen && (
+        <RegenerateDialog
+          initial={project.ai_instructions || ""}
+          left={project.free_revisions_left}
+          onClose={() => setRegenerateOpen(false)}
+          onSave={(text) => void saveInstructionsOnly(text)}
+          onRegenerate={(text) => void runRegenerate(text)}
+        />
+      )}
+
       {confirmState && (
         <ConfirmDialog
           state={confirmState}
@@ -1992,6 +2020,141 @@ function ConfirmDialog({
             }}
           >
             {state.confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RegenerateDialog({
+  initial,
+  left,
+  onClose,
+  onSave,
+  onRegenerate,
+}: {
+  initial: string
+  left: number | undefined
+  onClose: () => void
+  onSave: (text: string) => void
+  onRegenerate: (text: string) => void
+}) {
+  const [text, setText] = useState(initial)
+  const changed = text.trim() !== initial.trim()
+  const outOfRegenerations = left !== undefined && left <= 0
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(31,42,46,0.45)",
+        backdropFilter: "blur(2px)",
+        zIndex: 100,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Regenerate the translation"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 500,
+          maxWidth: "100%",
+          maxHeight: "100%",
+          overflowY: "auto",
+          background: "#fbf6ea",
+          borderRadius: 18,
+          boxShadow: "0 18px 40px rgba(0,0,0,0.25)",
+          padding: 24,
+          border: "1px solid #e7ddc5",
+        }}
+      >
+        <div className="text-[16px] font-semibold" style={{ color: "#1f2a2e", marginBottom: 12 }}>
+          Regenerate the translation
+        </div>
+        <div className="text-[13px] leading-relaxed" style={{ color: "#4a4638", marginBottom: 16 }}>
+          The whole translation is redone from the original, replacing your edits (you can undo it). It runs in the
+          background and usually takes 1-3 minutes.
+        </div>
+        <div className="flex items-baseline justify-between gap-3" style={{ marginBottom: 6 }}>
+          <label
+            htmlFor="regenerate-instructions"
+            className="text-[11px] font-semibold tracking-[0.08em] uppercase"
+            style={{ color: "#6b6558" }}
+          >
+            Instructions for the AI (optional)
+          </label>
+          <span
+            className="text-[11px] tabular-nums shrink-0"
+            style={{ color: text.length >= MAX_INSTRUCTIONS ? "#b14a3a" : "#8a8270" }}
+          >
+            {text.length}/{MAX_INSTRUCTIONS}
+          </span>
+        </div>
+        <textarea
+          id="regenerate-instructions"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          maxLength={MAX_INSTRUCTIONS}
+          rows={4}
+          placeholder="e.g. Keep company names in Italian"
+          className="w-full block text-[13px] px-3 py-2 rounded-lg outline-none resize-y"
+          style={{ background: "#ffffff", border: "1px solid #e7ddc5", color: "#1f2a2e", fontFamily: "inherit" }}
+        />
+        <div className="text-[12px]" style={{ color: "#8a8270", marginTop: 6, marginBottom: 16 }}>
+          Saved with this document. Ask AI follows them too.
+        </div>
+        <div
+          className="text-[12px] rounded-lg px-3 py-2"
+          style={{ background: "#f3ecdb", color: "#4a4638", marginBottom: 16 }}
+        >
+          {revisionCostText(left)}
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {changed && (
+            <button
+              type="button"
+              onClick={() => onSave(text)}
+              className="text-[13px] font-semibold px-3 py-2 rounded-full transition mr-auto"
+              style={{ color: "#0a7870" }}
+            >
+              Save without regenerating
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-[13px] font-semibold px-4 py-2 rounded-full transition"
+            style={{ background: "#ffffff", color: "#1f2a2e", border: "1px solid #e7ddc5" }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onRegenerate(text)}
+            disabled={outOfRegenerations}
+            className="text-[13px] font-semibold px-4 py-2 rounded-full transition"
+            style={{
+              background: outOfRegenerations ? "#9bc9c5" : "#0a7870",
+              color: "#ffffff",
+              border: `1px solid ${outOfRegenerations ? "#9bc9c5" : "#0a7870"}`,
+              cursor: outOfRegenerations ? "not-allowed" : "pointer",
+            }}
+          >
+            Regenerate
           </button>
         </div>
       </div>
