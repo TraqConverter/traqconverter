@@ -84,6 +84,32 @@ NOTATION_RULES = """\
   * Crossed-out text stays readable: [Crossed out: <translation>].
   * These notes are required output, not placeholders to avoid."""
 
+# Editable copy (DTP): the same layout rules, but the text is copied, not translated.
+_REPRODUCE_TEMPLATE = """\
+EDITABLE COPY: DO NOT TRANSLATE
+===============================
+This job is not a translation. Rebuild the attached document as an
+editable Word file in its own language, {lang}. Copy every word
+verbatim, exactly as it appears in the source: same language, same
+spelling, capitalisation and punctuation. Do not translate,
+paraphrase, correct, shorten or summarise anything, and do not add
+glosses, explanations or a translator's note. Wherever the rules
+below say "translate", "translation" or "target language", read it
+as "copy verbatim in {lang}".
+All layout, page-for-page and table rules below still apply, and
+numbers, dates, codes and amounts are copied exactly.
+The bracketed notes for signatures, stamps, seals, logos, photos,
+codes, handwriting, crossed-out and unreadable text are still
+required, written in {lang}. Legible text inside a stamp,
+handwriting or crossed-out text is copied as written, not
+translated. Mark unreadable parts as illegible and never guess them.
+"""
+
+
+def reproduce_block(lang: str) -> str:
+    """Prompt preamble that turns a layout rebuild into a verbatim same-language copy."""
+    return _REPRODUCE_TEMPLATE.format(lang=(lang or "").strip() or "the document's own language")
+
 
 _AUTHOR_PROMPT_TEMPLATE = textwrap.dedent("""
 TASK
@@ -894,6 +920,7 @@ def _call_claude_to_author(
     model: Optional[str] = None,
     terminology: str = "",
     instructions: str = "",
+    reproduce: bool = False,
 ) -> str:
     """Send the PDF + prompt to Claude (falling back down the model chain) and return the raw reply."""
     try:
@@ -921,6 +948,8 @@ def _call_claude_to_author(
         sandbox_rules=SANDBOX_RULES,
         notation_rules=NOTATION_RULES,
     )
+    if reproduce:
+        prompt = reproduce_block(source_lang) + prompt
     if terminology:
         prompt += "\n" + terminology
     from app.services.project_instructions import prompt_block
@@ -2298,8 +2327,9 @@ def author_rebuild_docx(
     timeout_seconds: int = 300,
     terminology: str = "",
     instructions: str = "",
+    reproduce: bool = False,
 ) -> bytes:
-    """End-to-end Claude-authored rebuild.
+    """End-to-end Claude-authored rebuild; `reproduce` copies the text verbatim instead of translating it.
 
     Sends the PDF to Claude, gets back a python-docx script, executes
     it in a sandboxed subprocess, and returns the rebuilt DOCX bytes.
@@ -2330,6 +2360,7 @@ def author_rebuild_docx(
                 model=model,
                 terminology=terminology,
                 instructions=instructions,
+                reproduce=reproduce,
             )
         except Exception:
             logger.exception(
@@ -2366,6 +2397,7 @@ def author_rebuild_docx(
             model=model,
             terminology=terminology,
             instructions=instructions,
+            reproduce=reproduce,
         )
         script = _strip_code_fence(raw)
         _validate_script(script, output_path)

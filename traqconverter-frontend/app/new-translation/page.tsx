@@ -6,6 +6,7 @@ import Link from "next/link"
 import { api } from "@/lib/api"
 import { useFeature } from "@/lib/plan"
 import { LangSelect, SOURCE_LANGUAGES, TARGET_LANGUAGES } from "@/components/LangSelect"
+import { SaveForLater, SavedInstructionPicker, useSavedInstructions } from "@/components/SavedInstructions"
 
 const MAX_INSTRUCTIONS = 1000
 
@@ -109,9 +110,12 @@ export default function NewProjectPage() {
   const [dragOver, setDragOver] = useState(false)
   const [loading, setLoading] = useState(false)
 
+  const [mode, setMode] = useState<"translate" | "dtp">("translate")
+  const dtp = mode === "dtp"
   const [source, setSource] = useState("auto")
   const [target, setTarget] = useState("it-IT")
   const [instructions, setInstructions] = useState("")
+  const saved = useSavedInstructions()
 
   // null until known; stays null on plans without certifications.
   const [certsEnabled, setCertsEnabled] = useState<boolean | null>(null)
@@ -175,17 +179,18 @@ export default function NewProjectPage() {
   const buildForm = (file: File, batch?: string) => {
     const formData = new FormData()
     formData.append("file", file)
+    formData.append("mode", mode)
     formData.append("source_language", source)
-    formData.append("target_language", target)
+    formData.append("target_language", dtp ? source : target)
     formData.append("model", "claude-authored")
-    formData.append("use_tm", "true")
-    formData.append("apply_glossary", "true")
-    formData.append("request_certification", String(!!certsEnabled))
-    if (certsEnabled && certTemplateId) {
+    formData.append("use_tm", String(!dtp))
+    formData.append("apply_glossary", String(!dtp))
+    formData.append("request_certification", String(!dtp && !!certsEnabled))
+    if (!dtp && certsEnabled && certTemplateId) {
       formData.append("certification_template_id", certTemplateId)
     }
     if (batch) formData.append("batch_id", batch)
-    if (instructions.trim()) formData.append("ai_instructions", instructions.trim())
+    if (!dtp && instructions.trim()) formData.append("ai_instructions", instructions.trim())
     return formData
   }
 
@@ -411,68 +416,90 @@ export default function NewProjectPage() {
               boxShadow: "0 1px 2px rgba(30,30,20,0.03)",
             }}
           >
+            <ModeSwitch mode={mode} onChange={setMode} disabled={loading} />
+
             <LangSelect
               value={source}
               onChange={setSource}
-              label="SOURCE LANGUAGE"
+              label={dtp ? "DOCUMENT LANGUAGE" : "SOURCE LANGUAGE"}
               options={SOURCE_LANGUAGES}
             />
 
-            <div className="flex justify-center my-3">
-              <button
-                onClick={swap}
-                disabled={source === "auto"}
-                className="w-9 h-9 rounded-full flex items-center justify-center transition"
-                style={{
-                  background: source === "auto" ? "#f3ecdb" : "#e1efec",
-                  border: "1px solid #cfe6e2",
-                  cursor: source === "auto" ? "not-allowed" : "pointer",
-                  opacity: source === "auto" ? 0.5 : 1,
-                }}
-                aria-label="Swap languages"
-                title={source === "auto" ? "Cannot swap when source is auto-detect" : "Swap languages"}
-              >
-                <IconSwap />
-              </button>
-            </div>
+            {!dtp && (
+              <>
+                <div className="flex justify-center my-3">
+                  <button
+                    onClick={swap}
+                    disabled={source === "auto"}
+                    className="w-9 h-9 rounded-full flex items-center justify-center transition"
+                    style={{
+                      background: source === "auto" ? "#f3ecdb" : "#e1efec",
+                      border: "1px solid #cfe6e2",
+                      cursor: source === "auto" ? "not-allowed" : "pointer",
+                      opacity: source === "auto" ? 0.5 : 1,
+                    }}
+                    aria-label="Swap languages"
+                    title={source === "auto" ? "Cannot swap when source is auto-detect" : "Swap languages"}
+                  >
+                    <IconSwap />
+                  </button>
+                </div>
 
-            <LangSelect
-              value={target}
-              onChange={setTarget}
-              label="TARGET LANGUAGE"
-              options={TARGET_LANGUAGES}
-            />
+                <LangSelect
+                  value={target}
+                  onChange={setTarget}
+                  label="TARGET LANGUAGE"
+                  options={TARGET_LANGUAGES}
+                />
+              </>
+            )}
 
-            <div className="mt-5">
-              <div className="flex items-baseline justify-between gap-3 mb-3">
-                <label
-                  htmlFor="ai-instructions"
-                  className="text-[11px] font-semibold tracking-[0.14em] uppercase"
-                  style={{ color: "#9a9178" }}
-                >
-                  Instructions for the AI (optional)
-                </label>
-                <span
-                  className="text-[11px] tabular-nums shrink-0"
-                  style={{ color: instructions.length >= MAX_INSTRUCTIONS ? "#b14a3a" : "#9a9178" }}
-                >
-                  {instructions.length}/{MAX_INSTRUCTIONS}
-                </span>
+            {!dtp && (
+              <div className="mt-5">
+                <div className="flex items-baseline justify-between gap-3 mb-3">
+                  <label
+                    htmlFor="ai-instructions"
+                    className="text-[11px] font-semibold tracking-[0.14em] uppercase"
+                    style={{ color: "#9a9178" }}
+                  >
+                    Instructions for the AI (optional)
+                  </label>
+                  <span
+                    className="text-[11px] tabular-nums shrink-0"
+                    style={{ color: instructions.length >= MAX_INSTRUCTIONS ? "#b14a3a" : "#9a9178" }}
+                  >
+                    {instructions.length}/{MAX_INSTRUCTIONS}
+                  </span>
+                </div>
+                {saved.enabled && saved.items.length > 0 && (
+                  <div className="mb-2">
+                    <SavedInstructionPicker
+                      items={saved.items}
+                      disabled={loading}
+                      onPick={(text) => setInstructions(text.slice(0, MAX_INSTRUCTIONS))}
+                    />
+                  </div>
+                )}
+                <textarea
+                  id="ai-instructions"
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                  maxLength={MAX_INSTRUCTIONS}
+                  rows={3}
+                  disabled={loading}
+                  placeholder="e.g. Use British spelling"
+                  className="w-full min-w-0 block text-sm outline-none rounded-xl px-4 py-3 resize-y"
+                  style={{ background: "#faf5ee", border: "1px solid #e7ddc5", color: "#1f2a2e", minHeight: 76 }}
+                />
+                {saved.enabled && (
+                  <div className="mt-2">
+                    <SaveForLater text={instructions} onSave={saved.create} />
+                  </div>
+                )}
               </div>
-              <textarea
-                id="ai-instructions"
-                value={instructions}
-                onChange={(e) => setInstructions(e.target.value)}
-                maxLength={MAX_INSTRUCTIONS}
-                rows={3}
-                disabled={loading}
-                placeholder="e.g. Use British spelling"
-                className="w-full min-w-0 block text-sm outline-none rounded-xl px-4 py-3 resize-y"
-                style={{ background: "#faf5ee", border: "1px solid #e7ddc5", color: "#1f2a2e", minHeight: 76 }}
-              />
-            </div>
+            )}
 
-            {certsEnabled && certTemplates.length > 0 && (
+            {!dtp && certsEnabled && certTemplates.length > 0 && (
               <div className="mt-5 pt-5" style={{ borderTop: "1px solid #f1e8d1" }}>
                 <label
                   htmlFor="cert-template"
@@ -510,7 +537,9 @@ export default function NewProjectPage() {
               className="mt-5 pt-4 text-xs leading-relaxed"
               style={{ borderTop: "1px solid #f1e8d1", color: "#8a8270" }}
             >
-              {memoryAccess === "locked"
+              {dtp
+                ? "Nothing is translated; signatures, stamps and unreadable parts are marked in brackets."
+                : memoryAccess === "locked"
                 ? "Translation memory and glossary come with Pro."
                 : "Translation memory and glossary are applied automatically."}{" "}
               Layout and page orientation follow the source.
@@ -539,13 +568,19 @@ export default function NewProjectPage() {
                 : multi
                 ? batchId
                   ? "Upload remaining documents"
+                  : dtp
+                  ? `Create ${files.length} editable copies`
                   : `Translate ${files.length} documents`
+                : dtp
+                ? "Create editable copy"
                 : "Start OCR & translation"}
               {!loading && <IconArrowRight />}
             </button>
             <div className="text-xs text-center mt-3" style={{ color: "#8a8270" }}>
               {multi
-                ? "1 credit per page · same languages and instructions for every document"
+                ? dtp
+                  ? "1 credit per page · same settings for every document"
+                  : "1 credit per page · same languages and instructions for every document"
                 : "1 credit per page · review every segment before export"}
             </div>
           </div>
@@ -562,6 +597,60 @@ function IconUploadWhite() {
       <path d="m7 9 5-5 5 5" />
       <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
     </svg>
+  )
+}
+
+const MODES = [
+  { value: "translate" as const, label: "Translate" },
+  { value: "dtp" as const, label: "Editable copy" },
+]
+
+function ModeSwitch({
+  mode,
+  onChange,
+  disabled,
+}: {
+  mode: "translate" | "dtp"
+  onChange: (m: "translate" | "dtp") => void
+  disabled: boolean
+}) {
+  return (
+    <div className="mb-5">
+      <div
+        role="radiogroup"
+        aria-label="Project type"
+        className="grid grid-cols-2 gap-1 p-1 rounded-full"
+        style={{ background: "#f3ecdb", border: "1px solid #ede3cc" }}
+      >
+        {MODES.map((m) => {
+          const active = mode === m.value
+          return (
+            <button
+              key={m.value}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              disabled={disabled}
+              onClick={() => onChange(m.value)}
+              className="text-[13px] font-semibold px-3 py-2 rounded-full transition whitespace-nowrap"
+              style={{
+                background: active ? "#ffffff" : "transparent",
+                color: active ? "#0a7870" : "#6b6558",
+                boxShadow: active ? "0 1px 2px rgba(30,30,20,0.08)" : "none",
+                cursor: disabled ? "not-allowed" : "pointer",
+              }}
+            >
+              {m.label}
+            </button>
+          )
+        })}
+      </div>
+      {mode === "dtp" && (
+        <div className="text-xs mt-2 px-1" style={{ color: "#8a8270" }}>
+          Same language, editable Word file for your CAT tool
+        </div>
+      )}
+    </div>
   )
 }
 

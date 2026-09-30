@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.project import TranslationProject
+from app.models.project import TranslationProject, is_dtp
 from app.models.user import User
 from app.services.credit_service import (
     CreditService,
@@ -93,29 +93,36 @@ def run_rebuild(project_id: str, instructions: str | None) -> None:
             from app.services.learning import source_text_of, team_terminology
             from app.services.translation_memory_service import with_memory
 
-            source_text = source_text_of(db, project)
-            terminology = with_memory(db, project, team_terminology(db, project, source_text), source_text)
-            saved = project.ai_instructions or ""
+            dtp = is_dtp(project)
+            source_lang = project.target_language if dtp else project.source_language
+            if dtp:
+                terminology, saved = "", ""
+            else:
+                source_text = source_text_of(db, project)
+                terminology = with_memory(db, project, team_terminology(db, project, source_text), source_text)
+                saved = project.ai_instructions or ""
             if instructions:
                 from app.services.claude_multiturn_rebuild import author_rebuild_docx_multiturn
 
                 docx_bytes = author_rebuild_docx_multiturn(
                     pdf_bytes,
-                    project.source_language or "",
+                    source_lang or "",
                     project.target_language or "",
                     extra_instructions=instructions,
                     terminology=terminology,
                     instructions=saved,
+                    reproduce=dtp,
                 )
             else:
                 from app.services.claude_authored_rebuild import author_rebuild_docx
 
                 docx_bytes = author_rebuild_docx(
                     pdf_bytes=pdf_bytes,
-                    source_lang=project.source_language or "",
+                    source_lang=source_lang or "",
                     target_lang=project.target_language or "",
                     terminology=terminology,
                     instructions=saved,
+                    reproduce=dtp,
                 )
             out_path = tmp_dir / f"authored_{project.id}.docx"
             out_path.write_bytes(docx_bytes)

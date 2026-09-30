@@ -20,6 +20,7 @@ type Project = {
   progress: number
   source_lang: string
   target_lang: string
+  mode?: "translate" | "dtp"
   page_count: number
   credits_used: number
   created_at: string
@@ -139,6 +140,7 @@ function fromBatchDoc(d: BatchDoc, batch: BatchRef): Project {
     progress: d.progress,
     source_lang: d.source_lang,
     target_lang: d.target_lang,
+    mode: d.mode,
     page_count: d.page_count,
     credits_used: d.page_count,
     created_at: d.created_at || "",
@@ -609,15 +611,27 @@ function Jobs() {
         {st.label}
       </span>
     )
-    const langs = (
-      <div className="flex items-center gap-1.5">
-        <LangChip text={langChip(p.source_lang)} />
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9a9178" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M5 12h14M13 6l6 6-6 6" />
-        </svg>
-        <LangChip text={langChip(p.target_lang)} />
-      </div>
-    )
+    const langs =
+      p.mode === "dtp" ? (
+        <div className="flex items-center gap-1.5">
+          <LangChip text={langChip(p.target_lang)} />
+          <span
+            className="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap"
+            style={{ background: "#f3ecdb", color: "#6b6558", border: "1px solid #e7ddc5" }}
+            title="Same-language editable copy, not a translation"
+          >
+            Editable copy
+          </span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5">
+          <LangChip text={langChip(p.source_lang)} />
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9a9178" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
+          <LangChip text={langChip(p.target_lang)} />
+        </div>
+      )
     const fileIcon = (
       <div
         className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"

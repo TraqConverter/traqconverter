@@ -1050,6 +1050,7 @@ def author_rebuild_docx_multiturn(
     extra_instructions: Optional[str] = None,
     terminology: str = "",
     instructions: str = "",
+    reproduce: bool = False,
 ) -> bytes:
     """End-to-end multi-turn Claude-authored rebuild.
 
@@ -1071,6 +1072,7 @@ def author_rebuild_docx_multiturn(
         extra_instructions=extra_instructions,
         terminology=terminology,
         instructions=instructions,
+        reproduce=reproduce,
     )
 
 
@@ -1107,6 +1109,7 @@ def _author_rebuild_docx_multiturn_core(
     extra_instructions: Optional[str] = None,
     terminology: str = "",
     instructions: str = "",
+    reproduce: bool = False,
     _force_doc_type: Optional[str] = None,
     _disable_page_by_page: bool = False,
 ) -> bytes:
@@ -1173,6 +1176,7 @@ def _author_rebuild_docx_multiturn_core(
             extra_instructions=extra_instructions,
             terminology=terminology,
             instructions=instructions,
+            reproduce=reproduce,
         )
 
     out_dir = Path(tempfile.mkdtemp(prefix="claude_multiturn_"))
@@ -1229,6 +1233,10 @@ def _author_rebuild_docx_multiturn_core(
         notation_rules=NOTATION_RULES,
     )
     initial_prompt = prompt_template.format(**format_kwargs)
+    if reproduce:
+        from app.services.claude_authored_rebuild import reproduce_block
+
+        initial_prompt = reproduce_block(source_lang) + initial_prompt
     if terminology:
         initial_prompt += "\n\n" + terminology
     from app.services.project_instructions import prompt_block
@@ -1489,6 +1497,7 @@ def _author_rebuild_form_page_by_page(
     extra_instructions: Optional[str] = None,
     terminology: str = "",
     instructions: str = "",
+    reproduce: bool = False,
 ) -> bytes:
     """Multi-page FORM rebuild: split into single pages, run a full
     multi-turn rebuild on each, then merge the resulting DOCXs.
@@ -1515,6 +1524,7 @@ def _author_rebuild_form_page_by_page(
             extra_instructions=extra_instructions,
             terminology=terminology,
             instructions=instructions,
+            reproduce=reproduce,
             _force_doc_type="FORM",
             _disable_page_by_page=True,
         )
@@ -1534,7 +1544,7 @@ def _author_rebuild_form_page_by_page(
         page_extra = (
             (extra_instructions or "")
             + f"\n\nThis is PAGE {i} of {len(pages)} of a multi-page "
-            "form. Translate this page only. Do not add masthead or "
+            f"form. {'Copy' if reproduce else 'Translate'} this page only. Do not add masthead or "
             "cert blocks — the wrapper handles those."
         ).strip()
         try:
@@ -1548,6 +1558,7 @@ def _author_rebuild_form_page_by_page(
                 extra_instructions=page_extra,
                 terminology=terminology,
                 instructions=instructions,
+                reproduce=reproduce,
                 _force_doc_type="FORM",
                 _disable_page_by_page=True,
             )

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 import { clearToken, setToken, getRemembered } from "@/lib/auth"
+import SavedInstructionsSection from "@/components/settings/SavedInstructionsSection"
 
 type Me = {
   id: string
@@ -437,6 +438,8 @@ export default function AccountSettingsPage() {
           </button>
         </div>
       </section>
+
+      <SavedInstructionsSection />
 
       {}
       <section

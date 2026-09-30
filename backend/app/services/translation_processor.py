@@ -46,7 +46,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.models.project import TranslationProject, ProjectStatus
+from app.models.project import TranslationProject, ProjectStatus, is_dtp
 from app.models.translation_segment import TranslationSegment
 from app.database import SessionLocal
 from app.services.s3_service import (
@@ -245,6 +245,14 @@ def _finish_template_fill(db, project, job, temp_dir) -> bool:
     return True
 
 
+def _image_to_pdf(data: bytes, file_name: str) -> bytes:
+    img = fitz.open(stream=data, filetype=Path(file_name).suffix.lstrip(".").lower() or "png")
+    try:
+        return img.convert_to_pdf()
+    finally:
+        img.close()
+
+
 @ai_usage.project_task("translation")
 def process_translation_job(project_id: str):
     logger.info(f"Worker starting processing for {project_id}")
@@ -305,14 +313,21 @@ def process_translation_job(project_id: str):
 
         source_bytes = input_file.read_bytes()
         source_text = "\n".join(item.text or "" for item in extracted)
+        dtp = is_dtp(project)
         # Resolved once here and cached on the project for the rest of the job.
-        has_templates = project_has_feature(db, project, "templates")
+        has_templates = project_has_feature(db, project, "templates") and not dtp
         # The profile picks the template and detects an "auto" source language; otherwise it's skipped.
         if has_templates or not lang_key(project.source_language):
             learning.profile_project(db, project, source_bytes, source_text)
-        terminology = tm_service.with_memory(db, project, learning.team_terminology(db, project, source_text), source_text)
-        # The template fill runs next to segment translation so neither waits for the other.
-        template_job = _start_template_fill(db, project, source_kind, source_bytes, source_text, terminology)
+        if dtp:
+            # An editable copy stays in the source language and uses no memory, glossary or template.
+            project.target_language = project_source_language(project) or project.source_language
+            db.commit()
+            terminology, template_job = "", None
+        else:
+            terminology = tm_service.with_memory(db, project, learning.team_terminology(db, project, source_text), source_text)
+            # The template fill runs next to segment translation so neither waits for the other.
+            template_job = _start_template_fill(db, project, source_kind, source_bytes, source_text, terminology)
 
 
 
@@ -353,6 +368,12 @@ def process_translation_job(project_id: str):
 
         source_lang = project.source_language or "English"
         target_lang = project.target_language or "Spanish"
+        if dtp:
+            source_lang = target_lang = project.target_language
+            for seg in segments:
+                seg.translated_text = seg.source_text
+            project.translated_segments = len(segments)
+            db.commit()
 
 
 
@@ -362,7 +383,7 @@ def process_translation_job(project_id: str):
 
 
 
-        use_tm = bool(getattr(project, "use_tm", True))
+        use_tm = bool(getattr(project, "use_tm", True)) and not dtp
         apply_glossary = bool(getattr(project, "apply_glossary", True))
         logger.info(
             "Project options for %s: use_tm=%s apply_glossary=%s add_certification=%s",
@@ -422,7 +443,7 @@ def process_translation_job(project_id: str):
 
 
 
-        texts = miss_texts
+        texts = [] if dtp else miss_texts
 
         def _translate_resilient(batch_texts, depth=0):
             """Translate a batch with automatic fall-back on count
@@ -563,7 +584,7 @@ def process_translation_job(project_id: str):
                 f"{len(untranslated)} of {len(segments)} segments could not be translated"
             )
 
-        if project.batch_id:
+        if project.batch_id and not dtp:
             from app.services import batch_terms
 
             batch_terms.record_from_segments(db, project, [(s.source_text, s.translated_text) for s in segments])
@@ -616,11 +637,15 @@ def process_translation_job(project_id: str):
 
 
         used_template = _finish_template_fill(db, project, template_job, temp_dir)
-        wants_authored = (
-            source_kind == "PDF"
-            and (getattr(project, "model", "") or "") == "claude-authored"
-            and not used_template
-        )
+        if dtp:
+            # The editable copy is the layout rebuild; scans uploaded as images get one too.
+            wants_authored = source_kind in ("PDF", "IMAGE")
+        else:
+            wants_authored = (
+                source_kind == "PDF"
+                and (getattr(project, "model", "") or "") == "claude-authored"
+                and not used_template
+            )
         if wants_authored:
             try:
                 from app.services.claude_authored_rebuild import (
@@ -632,12 +657,15 @@ def process_translation_job(project_id: str):
                 )
                 with open(input_file, "rb") as _pdf_in:
                     pdf_bytes = _pdf_in.read()
+                if source_kind == "IMAGE":
+                    pdf_bytes = _image_to_pdf(pdf_bytes, project.file_name or "")
                 authored_bytes = author_rebuild_docx(
                     pdf_bytes=pdf_bytes,
                     source_lang=source_lang,
                     target_lang=target_lang,
                     terminology=terminology,
-                    instructions=project.ai_instructions or "",
+                    instructions="" if dtp else project.ai_instructions or "",
+                    reproduce=dtp,
                 )
                 authored_path = (
                     temp_dir / f"authored_{project.id}.docx"
