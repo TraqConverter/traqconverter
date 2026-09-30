@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { api } from "@/lib/api"
+import AddFromPastJob from "@/components/learning/AddFromPastJob"
 
 type Template = {
   id: string
@@ -44,6 +45,11 @@ function capitalise(s: string) {
   return s ? s[0].toUpperCase() + s.slice(1) : "—"
 }
 
+async function fetchTemplates(): Promise<[Template[], Summary]> {
+  const [list, sum] = await Promise.all([api.get("/templates"), api.get("/learning/summary")])
+  return [list.data || [], sum.data]
+}
+
 export default function TemplatesPage() {
   const [templates, setTemplates] = useState<Template[]>([])
   const [summary, setSummary] = useState<Summary | null>(null)
@@ -52,12 +58,14 @@ export default function TemplatesPage() {
   const [confirming, setConfirming] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
 
+  const [adding, setAdding] = useState(false)
+
   useEffect(() => {
     const load = async () => {
       try {
-        const [list, sum] = await Promise.all([api.get("/templates"), api.get("/learning/summary")])
-        setTemplates(list.data || [])
-        setSummary(sum.data)
+        const [list, sum] = await fetchTemplates()
+        setTemplates(list)
+        setSummary(sum)
       } catch (err) {
         setError((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Couldn't load templates")
       } finally {
@@ -66,6 +74,18 @@ export default function TemplatesPage() {
     }
     load()
   }, [])
+
+  const refresh = useCallback(async () => {
+    try {
+      const [list, sum] = await fetchTemplates()
+      setTemplates(list)
+      setSummary(sum)
+    } catch {
+      setError("Couldn't refresh the templates")
+    }
+  }, [])
+
+  const closeAdding = useCallback(() => setAdding(false), [])
 
   const remove = async (id: string) => {
     setBusy(id)
@@ -106,17 +126,33 @@ export default function TemplatesPage() {
         <span style={{ color: "#cfc6ad" }}>›</span> <span style={{ color: "#1f2a2e" }}>Templates</span>
       </div>
 
-      <div>
-        <div className="text-[11px] font-semibold tracking-[0.18em] mb-1" style={{ color: "#9a9178" }}>
-          TEMPLATES
+      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+        <div>
+          <div className="text-[11px] font-semibold tracking-[0.18em] mb-1" style={{ color: "#9a9178" }}>
+            TEMPLATES
+          </div>
+          <h1 className="text-[28px] font-semibold tracking-tight" style={{ color: "#1f2a2e" }}>
+            Your team&apos;s templates
+          </h1>
+          <p className="text-sm mt-1" style={{ color: "#8a8270" }}>
+            Templates come from projects you deliver or from past jobs you add here. The next document of the same
+            kind is built from its template.
+          </p>
         </div>
-        <h1 className="text-[28px] font-semibold tracking-tight" style={{ color: "#1f2a2e" }}>
-          Your team&apos;s templates
-        </h1>
-        <p className="text-sm mt-1" style={{ color: "#8a8270" }}>
-          Finished documents are saved here. The next document of the same kind is built from them.
-        </p>
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="self-start sm:self-auto shrink-0 flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold text-white transition hover:bg-[#0a645d]"
+          style={{ background: "#0a7870" }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          Add from a past job
+        </button>
       </div>
+
+      {adding && <AddFromPastJob onClose={closeAdding} onSaved={refresh} />}
 
       {error && (
         <div className="text-sm rounded-lg px-3 py-2" style={{ background: "#f2d4cf", color: "#7a2f24" }}>
@@ -153,7 +189,7 @@ export default function TemplatesPage() {
                 No templates yet
               </div>
               <div className="text-sm" style={{ color: "#8a8270" }}>
-                Export or certify a translation, or use Save as template in the editor.
+                Export or certify a translation, use Save as template in the editor, or add a past job.
               </div>
             </div>
           ) : (

@@ -61,8 +61,8 @@ def storage(monkeypatch):
     objects: dict[str, bytes] = {}
     deleted: list[str] = []
 
-    def upload(path):
-        key = f"uploads/{uuid.uuid4()}_{Path(path).name}"
+    def upload(path, prefix="uploads"):
+        key = f"{prefix}/{uuid.uuid4()}_{Path(path).name}"
         objects[key] = Path(path).read_bytes()
         return key
 

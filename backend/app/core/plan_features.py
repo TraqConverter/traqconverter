@@ -21,6 +21,7 @@ PLAN_FEATURES = {
         "terminology_memory": False,
         "glossaries": False,
         "certifications": False,
+        "template_upload": False,
     },
     "BASIC": {
         "download_translation": True,
@@ -28,6 +29,7 @@ PLAN_FEATURES = {
         "terminology_memory": False,
         "glossaries": False,
         "certifications": False,
+        "template_upload": True,
     },
     "PRO": {
         "download_translation": True,
@@ -35,6 +37,7 @@ PLAN_FEATURES = {
         "terminology_memory": True,
         "glossaries": True,
         "certifications": True,
+        "template_upload": True,
     },
 }
 
