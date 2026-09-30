@@ -36,6 +36,7 @@ One supported path:
    | `S3_BUCKET_NAME` | `traqconverter` |
    | `stripe_secret_key`, `stripe_publishable_key`, `stripe_webhook_secret` | Stripe dashboard |
    | `STRIPE_PRICE_BASIC`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_CREDITS_10/25/50` | Stripe price IDs |
+   | `STRIPE_PRICE_STUDIO`, `STRIPE_PRICE_AGENCY` | Optional Stripe price IDs (€79/month and €249/month). Unset: the plan shows "Contact us" |
    | `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | `https://<vercel-domain>/success`, `/cancel` |
    | `CORS_ORIGINS` | `https://<vercel-domain>` |
 

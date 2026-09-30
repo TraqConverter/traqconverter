@@ -1,6 +1,7 @@
 "use client"
 
 import { useRouter } from "next/navigation"
+import { euro, findPlan, usePlans } from "@/lib/plans"
 
 type Props = {
   feature: "Translation Memory" | "Glossary" | "Certifications" | "Templates"
@@ -10,9 +11,7 @@ type Props = {
 
 const PLAN_COPY = {
   Pro: {
-    price: "€29/mo",
     bullets: [
-      "29 credits each month",
       "Translation Memory across projects",
       "Custom Glossary enforcement",
       "Certification statement page & certifications library",
@@ -20,9 +19,7 @@ const PLAN_COPY = {
     ],
   },
   Basic: {
-    price: "€19/mo",
     bullets: [
-      "19 credits each month",
       "Templates from your delivered documents",
       "Download finished translations (DOCX & PDF)",
       "Team collaboration",
@@ -33,6 +30,16 @@ const PLAN_COPY = {
 export default function ProPaywall({ feature, description, plan = "Pro" }: Props) {
   const router = useRouter()
   const copy = PLAN_COPY[plan]
+  const catalog = usePlans()
+  const info = findPlan(catalog, plan)
+  const larger = plan === "Pro" && info ? (catalog?.plans ?? []).filter((p) => p.price_eur > info.price_eur) : []
+  const bullets = [
+    ...(info ? [`${info.credits} pages each month, up to ${info.seats} team members`] : []),
+    ...copy.bullets,
+    ...(larger.length
+      ? [`Need more pages? ${larger.map((p) => `${p.name}: ${p.credits} a month`).join(", ")}`]
+      : []),
+  ]
 
   return (
     <div className="space-y-6 pb-16">
@@ -89,7 +96,7 @@ export default function ProPaywall({ feature, description, plan = "Pro" }: Props
         </p>
 
         <ul className="text-sm mb-7 space-y-2 max-w-md text-left">
-          {copy.bullets.map((b) => (
+          {bullets.map((b) => (
             <li key={b} className="flex items-start gap-2">
               <span
                 className="mt-0.5 w-4 h-4 rounded-full flex items-center justify-center shrink-0"
@@ -122,7 +129,8 @@ export default function ProPaywall({ feature, description, plan = "Pro" }: Props
             onMouseEnter={(e) => (e.currentTarget.style.background = "#0a645d")}
             onMouseLeave={(e) => (e.currentTarget.style.background = "#0a7870")}
           >
-            Upgrade to {plan} · {copy.price}
+            Upgrade to {plan}
+            {info ? ` · ${euro(info.price_eur)}/mo` : ""}
           </button>
           <button
             type="button"

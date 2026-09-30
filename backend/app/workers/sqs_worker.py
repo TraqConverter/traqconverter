@@ -48,7 +48,7 @@ def _pick_job(db, skip: list[str]):
                    AND j.attempts < :max_attempts
                    AND j.id::text <> ALL(:skip)
                    AND (p.batch_id IS NULL OR {_BATCH_OPEN.format(bid='p.batch_id', jid='j.id')})
-                 ORDER BY j.created_at
+                 ORDER BY j.priority DESC, j.created_at
                  LIMIT 1
                  FOR UPDATE OF j SKIP LOCKED
                 """

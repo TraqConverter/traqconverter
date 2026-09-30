@@ -4,6 +4,15 @@ import Image from "next/image"
 
 import { useState } from "react"
 import Link from "next/link"
+import {
+  contactHref,
+  euro,
+  pagesLabel,
+  planBullets,
+  usePlans,
+  type Plan,
+  type PlanCatalog,
+} from "@/lib/plans"
 
 const CREAM = "#faf5ee"
 const CREAM_DARK = "#f3ecdb"
@@ -27,6 +36,7 @@ export default function LandingPage() {
       <ValueProps />
       <HowItWorks />
       <DeepFeatures />
+      <Security />
       <Pricing />
       <FAQ />
       <FinalCTA />
@@ -77,6 +87,7 @@ function TopBar() {
         <nav className="hidden md:flex items-center gap-8">
           <a href="#features" style={navLink}>Features</a>
           <a href="#how-it-works" style={navLink}>How it works</a>
+          <a href="#security" style={navLink}>Security</a>
           <a href="#pricing" style={navLink}>Pricing</a>
           <a href="#faq" style={navLink}>FAQ</a>
         </nav>
@@ -121,6 +132,10 @@ const navLink = {
 }
 
 function Hero() {
+  const catalog = usePlans()
+  const trialLine = catalog
+    ? `${catalog.trial.days}-day trial with ${pagesLabel(catalog.trial.credits)} free`
+    : "Free trial"
   return (
     <section style={{ position: "relative", overflow: "hidden" }}>
       {}
@@ -233,7 +248,7 @@ function Hero() {
             <div className="flex flex-wrap items-center gap-x-7 gap-y-2">
               {[
                 "No credit card required",
-                "7-day trial with 1 free page",
+                trialLine,
                 "You review and sign every document",
               ].map((t) => (
                 <div
@@ -485,7 +500,7 @@ function HowItWorks() {
             {
               n: "03",
               t: "Certify & deliver",
-              b: "Export DOCX or PDF with the original layout. On Pro, your certification page with your details, logo, and stamp is added for you to sign.",
+              b: "Export DOCX or PDF with the original layout. On Pro and above, your certification page with your details, logo, and stamp is added for you to sign.",
             },
           ].map((s, i) => (
             <div
@@ -581,6 +596,127 @@ function DeepFeatures() {
   )
 }
 
+const SECURITY_POINTS: { icon: React.ReactNode; title: string; body: string }[] = [
+  {
+    icon: <IconGlobe />,
+    title: "Stored in the EU",
+    body: "Your documents and data are stored in the EU (Ireland), in the database and file storage behind your account.",
+  },
+  {
+    icon: <IconLock />,
+    title: "Encrypted in transit and at rest",
+    body: "Every connection runs over HTTPS, and stored files are encrypted at rest.",
+  },
+  {
+    icon: <IconNoTrain />,
+    title: "Not used to train AI models",
+    body: "Documents are processed only to deliver your translation. They're not used to train AI models.",
+  },
+  {
+    icon: <IconUsers />,
+    title: "Team access control",
+    body: "Projects belong to your team, and roles (admin, PM, reviewer, member) decide who can do what.",
+  },
+  {
+    icon: <IconShield />,
+    title: "Tamper-evident certifications",
+    body: "Every file in your Certifications library is stored with its SHA-256 hash, so any later change to it shows.",
+  },
+  {
+    icon: <IconTrash />,
+    title: "Delete whenever you want",
+    body: "Delete a project and its files, text and memory entries go with it. You can delete your whole account from Settings.",
+  },
+]
+
+const CERTIFIED_STRENGTHS = [
+  {
+    t: "Your own certification template",
+    b: "Upload your Word certification with merge fields; it's filled in and exported with the translation.",
+  },
+  {
+    t: "Learns from every delivered job",
+    b: "Templates, approved memory, TMX import and export, and the terms you correct.",
+  },
+  {
+    t: "Ready-to-certify check",
+    b: "Numbers, uncertain readings and a missing certification page are flagged before you sign.",
+  },
+  {
+    t: "Click any line to see it in the original",
+    b: "Every translated paragraph is linked to where it sits on the source.",
+  },
+  {
+    t: "Highlight and ask the AI to edit in place",
+    b: "Only the passage you point at changes, and undo is one click.",
+  },
+  {
+    t: "Batches with shared terms",
+    b: "Names, institutions and places read the same across a client's documents.",
+  },
+]
+
+function Security() {
+  return (
+    <section
+      id="security"
+      style={{ padding: "80px 24px" }}
+    >
+      <div className="max-w-[1200px] mx-auto">
+        <SectionHeader
+          eyebrow="SECURITY & PRIVACY"
+          title="Your clients' documents stay private"
+          subtitle="Certified work means passports, birth certificates and medical records. Here is how they're handled."
+        />
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5 mt-12">
+          {SECURITY_POINTS.map((p) => (
+            <FeatureCard key={p.title} icon={p.icon} title={p.title} body={p.body} />
+          ))}
+        </div>
+        <div
+          className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 mt-8 text-center"
+          style={{ fontSize: 14, color: MUTED }}
+        >
+          <span style={{ color: TEAL, fontWeight: 600 }}>GDPR-ready:</span>
+          <span>EU data residency, data processing agreement on request.</span>
+        </div>
+
+        <div
+          className="mt-16"
+          style={{
+            background: "#ffffff",
+            border: `1px solid ${BORDER}`,
+            borderRadius: 20,
+            padding: "30px 26px",
+          }}
+        >
+          <div style={{ fontSize: 11, letterSpacing: "0.16em", color: TEAL, fontWeight: 600, marginBottom: 10 }}>
+            WHY TRANSLATORS SWITCH
+          </div>
+          <div
+            style={{
+              fontSize: 26,
+              lineHeight: 1.2,
+              fontWeight: 700,
+              color: TEXT,
+              letterSpacing: "-0.02em",
+              marginBottom: 24,
+            }}
+          >
+            Built for certified translation, not just layout
+          </div>
+          <div className="grid md:grid-cols-2 gap-x-10">
+            <FeatureList items={CERTIFIED_STRENGTHS.slice(0, 3)} />
+            <div className="mt-5 md:mt-0">
+              <FeatureList items={CERTIFIED_STRENGTHS.slice(3)} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 function ShowcaseRow({
   image,
   eyebrow,
@@ -655,6 +791,7 @@ function FeatureList({
 }
 
 function Pricing() {
+  const catalog = usePlans()
   return (
     <section
       id="pricing"
@@ -672,139 +809,142 @@ function Pricing() {
           subtitle="One credit translates one page. Subscriptions refill monthly; credit packs top you up. No setup fees."
         />
 
-        <div className="grid md:grid-cols-3 gap-5 mt-12">
-          <PlanCard
-            name="Free trial"
-            price="0"
-            period="7 days"
-            credits="1 page"
-            highlight={false}
-            cta="Start free"
-            ctaHref="/register"
-            features={[
-              "1 page translated",
-              "Layout-preserving rebuild",
-              "Review in the editor",
-              "Preview only: downloads need a paid plan",
-            ]}
-          />
-          <PlanCard
-            name="Basic"
-            price="19"
-            period="/month"
-            credits="19 pages / month"
-            highlight={false}
-            cta="Choose Basic"
-            ctaHref="/register?plan=basic"
-            features={[
-              "19 pages translated / month",
-              "Layout-preserving rebuild",
-              "DOCX & PDF export",
-              "Team members & roles",
-              "Top up with credit packs",
-            ]}
-          />
-          <PlanCard
-            name="Pro"
-            price="29"
-            period="/month"
-            credits="29 pages / month"
-            highlight={true}
-            cta="Choose Pro"
-            ctaHref="/register?plan=pro"
-            features={[
-              "29 pages translated / month",
-              "Everything in Basic",
-              "Translation memory",
-              "Glossary",
-              "Certification statement page",
-              "Certifications library",
-            ]}
-          />
-        </div>
-
-        {}
-        <div className="mt-12">
+        {catalog === undefined ? (
           <div
-            className="text-center"
+            className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5 mt-12"
+            aria-busy="true"
+            aria-label="Loading plans"
+          >
+            {[0, 1, 2, 3].map((i) => (
+              <div
+                key={i}
+                style={{
+                  background: "#ffffff",
+                  border: `1px solid ${BORDER}`,
+                  borderRadius: 22,
+                  height: 420,
+                  opacity: 0.6,
+                }}
+              />
+            ))}
+          </div>
+        ) : catalog === null ? (
+          <div
+            className="mt-12 text-center"
+            style={{ fontSize: 15, color: MUTED }}
+          >
+            Plans couldn&apos;t load right now.{" "}
+            <Link href="/register" style={{ color: TEAL, fontWeight: 600 }}>
+              Start the free trial
+            </Link>{" "}
+            and see them in Billing.
+          </div>
+        ) : (
+          <PricingPlans catalog={catalog} />
+        )}
+      </div>
+    </section>
+  )
+}
+
+function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
+  const trial = catalog.trial
+  return (
+    <>
+      <div
+        className="mt-12 flex flex-wrap items-center justify-between gap-4"
+        style={{
+          background: "#ffffff",
+          border: `1px solid ${BORDER}`,
+          borderRadius: 22,
+          padding: "22px 28px",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div
             style={{
-              fontSize: 11,
-              letterSpacing: "0.18em",
-              color: SUBTLE,
+              fontSize: 13,
+              letterSpacing: "0.12em",
               fontWeight: 600,
+              color: SUBTLE,
               marginBottom: 6,
             }}
           >
-            NEED MORE? ADD CREDIT PACKS ANYTIME
+            FREE TRIAL
           </div>
-          <h3
-            style={{
-              fontSize: 22,
-              fontWeight: 600,
-              textAlign: "center",
-              color: TEXT,
-              marginBottom: 24,
-            }}
-          >
-            One-off credit packs — never expire
-          </h3>
-          <div className="grid md:grid-cols-3 gap-4 max-w-[860px] mx-auto">
-            {[
-              {
-                name: "Starter pack",
-                credits: 10,
-                price: "€10",
-                note: "Top up a small project",
-                featured: false,
-              },
-              {
-                name: "Studio pack",
-                credits: 25,
-                price: "€25",
-                note: "For a few documents",
-                featured: true,
-              },
-              {
-                name: "Scale pack",
-                credits: 50,
-                price: "€50",
-                note: "Best for high-volume work",
-                featured: false,
-              },
-            ].map((pack) => (
+          <div style={{ fontSize: 20, fontWeight: 700, color: TEXT }}>
+            {pagesLabel(trial.credits)} free for {trial.days} days
+          </div>
+          <div style={{ fontSize: 14, color: MUTED, marginTop: 4 }}>
+            Layout-preserving rebuild and the full editor. Preview only:
+            downloads need a paid plan. No card required.
+          </div>
+        </div>
+        <Link
+          href="/register"
+          style={{
+            background: TEAL,
+            color: "#ffffff",
+            padding: "12px 22px",
+            borderRadius: 999,
+            fontWeight: 600,
+            fontSize: 14,
+            whiteSpace: "nowrap",
+          }}
+        >
+          Start free
+        </Link>
+      </div>
+
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5 mt-8">
+        {catalog.plans.map((p) => (
+          <PlanCard key={p.code} plan={p} catalog={catalog} highlight={p.code === "PRO"} />
+        ))}
+      </div>
+
+      {}
+      <div className="mt-12">
+        <div
+          className="text-center"
+          style={{
+            fontSize: 11,
+            letterSpacing: "0.18em",
+            color: SUBTLE,
+            fontWeight: 600,
+            marginBottom: 6,
+          }}
+        >
+          NEED MORE? ADD CREDIT PACKS ANYTIME
+        </div>
+        <h3
+          style={{
+            fontSize: 22,
+            fontWeight: 600,
+            textAlign: "center",
+            color: TEXT,
+            marginBottom: 24,
+          }}
+        >
+          One-off credit packs — never expire
+        </h3>
+        <div className="grid md:grid-cols-3 gap-4 max-w-[860px] mx-auto">
+          {catalog.credit_packs.map((pack, i) => {
+            const featured = i === 1
+            return (
               <div
-                key={pack.name}
+                key={pack.credits}
                 style={{
                   background: "#ffffff",
-                  border: `1px solid ${pack.featured ? TEAL : BORDER}`,
+                  border: `1px solid ${featured ? TEAL : BORDER}`,
                   borderRadius: 16,
                   padding: 22,
                   textAlign: "center",
                   position: "relative",
-                  boxShadow: pack.featured
+                  boxShadow: featured
                     ? "0 8px 20px rgba(10,120,112,0.10)"
                     : "0 1px 2px rgba(30,30,20,0.03)",
                 }}
               >
-                {pack.featured && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: -10,
-                      left: "50%",
-                      transform: "translateX(-50%)",
-                      background: ACCENT_GOLD,
-                      color: "#fff",
-                      fontSize: 9,
-                      fontWeight: 700,
-                      padding: "3px 10px",
-                      borderRadius: 999,
-                      letterSpacing: "0.1em",
-                    }}
-                  >
-                    POPULAR
-                  </div>
-                )}
                 <div
                   style={{
                     fontSize: 11,
@@ -845,39 +985,34 @@ function Pricing() {
                   style={{
                     fontSize: 22,
                     fontWeight: 700,
-                    color: pack.featured ? TEAL : TEXT,
+                    color: featured ? TEAL : TEXT,
                   }}
                 >
-                  {pack.price}
+                  {euro(pack.price_eur)}
                 </div>
               </div>
-            ))}
-          </div>
+            )
+          })}
         </div>
       </div>
-    </section>
+    </>
   )
 }
 
 function PlanCard({
-  name,
-  price,
-  period,
-  credits,
-  features,
+  plan,
+  catalog,
   highlight,
-  cta,
-  ctaHref,
 }: {
-  name: string
-  price: string
-  period: string
-  credits: string
-  features: string[]
+  plan: Plan
+  catalog: PlanCatalog
   highlight: boolean
-  cta: string
-  ctaHref: string
 }) {
+  const features = planBullets(catalog, plan)
+  const ctaHref = plan.available
+    ? `/register?plan=${plan.code.toLowerCase()}`
+    : contactHref(catalog, plan)
+  const cta = plan.available ? `Choose ${plan.name}` : "Contact us"
   return (
     <div
       style={{
@@ -885,7 +1020,7 @@ function PlanCard({
         color: highlight ? "#ffffff" : TEXT,
         border: `1px solid ${highlight ? TEAL_DARK : BORDER}`,
         borderRadius: 22,
-        padding: 32,
+        padding: 28,
         position: "relative",
         boxShadow: highlight ? "0 14px 36px rgba(10,120,112,0.20)" : "0 2px 6px rgba(30,30,20,0.04)",
       }}
@@ -918,12 +1053,12 @@ function PlanCard({
           color: highlight ? "rgba(255,255,255,0.7)" : SUBTLE,
         }}
       >
-        {name.toUpperCase()}
+        {plan.name.toUpperCase()}
       </div>
       <div className="flex items-baseline gap-1">
         <span style={{ fontSize: 16, fontWeight: 500, opacity: 0.7 }}>€</span>
         <span style={{ fontSize: 44, fontWeight: 700, letterSpacing: "-0.02em" }}>
-          {price}
+          {plan.price_eur}
         </span>
         <span
           style={{
@@ -932,7 +1067,7 @@ function PlanCard({
             marginLeft: 4,
           }}
         >
-          {period}
+          /month
         </span>
       </div>
       <div
@@ -943,9 +1078,9 @@ function PlanCard({
           marginBottom: 22,
         }}
       >
-        {credits}
+        {plan.credits} pages / month · {euro(plan.price_per_page_eur)} a page
       </div>
-      <Link
+      <a
         href={ctaHref}
         style={{
           display: "block",
@@ -960,7 +1095,7 @@ function PlanCard({
         }}
       >
         {cta}
-      </Link>
+      </a>
       <div className="space-y-3">
         {features.map((f) => (
           <div
@@ -968,7 +1103,9 @@ function PlanCard({
             className="flex items-start gap-2"
             style={{ fontSize: 13, color: highlight ? "rgba(255,255,255,0.92)" : TEXT }}
           >
-            <Check />
+            <span style={{ flexShrink: 0, marginTop: 2 }}>
+              <Check />
+            </span>
             <span>{f}</span>
           </div>
         ))}
@@ -979,10 +1116,20 @@ function PlanCard({
 
 function FAQ() {
   const [open, setOpen] = useState<number | null>(0)
+  const catalog = usePlans()
+  const pricingAnswer = catalog
+    ? `Each page is one credit. Subscriptions include a monthly allowance (${catalog.plans
+        .map((p) => `${p.credits} on ${p.name}`)
+        .join(", ")}) that resets each billing period. Credit packs of ${catalog.credit_packs
+        .map((c) => c.credits)
+        .join(", ")} credits don't expire. The ${catalog.trial.days}-day trial includes ${pagesLabel(
+        catalog.trial.credits,
+      )}.`
+    : "Each page is one credit. Subscriptions include a monthly allowance that resets each billing period, and credit packs don't expire. The plans are listed above."
   const items = [
     {
       q: "Is the output ready to certify?",
-      a: "It's a draft for you to review, not a certified translation. You check it, correct it, and sign your statement; TraqConverter never certifies anything itself. On Pro, your certification page with your details, logo, and stamp is added to the export. Acceptance still depends on your credentials and the receiving authority's rules.",
+      a: "It's a draft for you to review, not a certified translation. You check it, correct it, and sign your statement; TraqConverter never certifies anything itself. On Pro and above, your certification page with your details, logo, and stamp is added to the export. Acceptance still depends on your credentials and the receiving authority's rules.",
     },
     {
       q: "How are signatures, stamps, and unreadable parts handled?",
@@ -1002,7 +1149,7 @@ function FAQ() {
     },
     {
       q: "How does pricing work?",
-      a: "Each page is one credit. Subscriptions include a monthly allowance (19 on Basic, 29 on Pro) that resets each billing period. Credit packs of 10, 25, or 50 don't expire. The 7-day trial includes 1 page.",
+      a: pricingAnswer,
     },
     {
       q: "What does a page credit include?",
@@ -1018,7 +1165,7 @@ function FAQ() {
     },
     {
       q: "Can my team work together?",
-      a: "Paid plans include team members with roles (admin, PM, reviewer, member), and project assignment. Pro adds a shared translation memory and glossary.",
+      a: "Paid plans include team members with roles (admin, PM, reviewer, member), and project assignment; each plan's team size is listed under Pricing. Pro and above add a shared translation memory and glossary.",
     },
   ]
   return (
@@ -1134,7 +1281,7 @@ function FinalCTA() {
             margin: "0 auto 30px",
           }}
         >
-          Upload one page, correct it next to the original, and export it with your certification page. No credit card needed for the trial.
+          Upload a document, correct it next to the original, and export it with your certification page. No credit card needed for the trial.
         </p>
         <div className="flex items-center justify-center gap-3 flex-wrap">
           <Link
@@ -1364,6 +1511,30 @@ function IconUsers() {
       <path d="M2.5 20c.5-3.5 3.3-5.5 6.5-5.5s6 2 6.5 5.5" />
       <circle cx="17" cy="9" r="2.8" />
       <path d="M15.5 14.5c2.6 0 5 1.6 5.5 4" />
+    </svg>
+  )
+}
+function IconGlobe() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+    </svg>
+  )
+}
+function IconNoTrain() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+      <path d="M14 3v5h5" />
+      <path d="m4 4 16 16" />
+    </svg>
+  )
+}
+function IconTrash() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
     </svg>
   )
 }
