@@ -20,6 +20,7 @@ Claude-authored output.
 from __future__ import annotations
 
 import logging
+from contextvars import ContextVar
 import shutil
 import tempfile
 from copy import deepcopy
@@ -38,6 +39,10 @@ logger = logging.getLogger(__name__)
 
 
 
+
+
+# The delivery PDF appends the original itself, so it asks for the export without the page images.
+SKIP_SOURCE_PAGES: ContextVar[bool] = ContextVar("skip_source_pages", default=False)
 
 
 def _render_source_pages_as_images(pdf_path: Path, work_dir: Path) -> list:
@@ -454,7 +459,8 @@ def build_full_export_docx(
                 source_path = None
 
             if (
-                source_path
+                not SKIP_SOURCE_PAGES.get()
+                and source_path
                 and source_path.exists()
                 and str(source_path).lower().endswith(".pdf")
             ):
