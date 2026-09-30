@@ -75,6 +75,12 @@ _STOPWORDS = {
 }
 
 
+def _has(db: Session, project, feature: str) -> bool:
+    from app.dependencies.feature_guard import project_has_feature
+
+    return project_has_feature(db, project, feature)
+
+
 def slug(text: str, limit: int = 40) -> str:
     ascii_text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode().lower()
     words = [w for w in re.split(r"[^a-z0-9]+", ascii_text) if w and w not in _STOPWORDS]
@@ -329,7 +335,7 @@ def capture_template_in_background(project_id, user_id) -> None:
     try:
         project = db.query(TranslationProject).filter(TranslationProject.id == project_id).first()
         user = db.query(User).filter(User.id == user_id).first()
-        if project and user:
+        if project and user and _has(db, project, "templates"):
             capture_template(db, project, user)
     except Exception:
         db.rollback()
@@ -351,6 +357,8 @@ def capture_memory(db: Session, project_id, user_id) -> int:
         user = db.query(User).filter(User.id == user_id).first()
         if not project or not user or project.status != ProjectStatus.COMPLETED or not project.use_tm:
             return 0
+        if not _has(db, project, "terminology_memory"):
+            return 0
         data, _ = document_editor.current_document(db, project, user, _initial_builder(db, project, user))
         return tm_capture.record_delivery(db, project, data)
     except Exception:
@@ -367,7 +375,7 @@ def mark_template_used(db: Session, project: TranslationProject, template: Docum
 
 
 def team_terms(db: Session, project: TranslationProject, source_text: str) -> list[Glossary]:
-    if not getattr(project, "apply_glossary", True):
+    if not getattr(project, "apply_glossary", True) or not _has(db, project, "glossaries"):
         return []
     try:
         entries = get_glossary(db, project.team_id, project_source_language(project), project.target_language)
@@ -418,6 +426,9 @@ def paragraph_changes(before: bytes, after: bytes) -> list[tuple[Optional[str], 
 def record_changes(db: Session, project: TranslationProject, before: bytes, after: bytes, origin: str = "typed") -> int:
     """Queue changed paragraphs for terminology mining; never raises, never calls a model."""
     try:
+        # Mining costs a model call later; plans without a glossary queue nothing.
+        if not _has(db, project, "glossaries"):
+            return 0
         changes = paragraph_changes(before, after)
         if not changes:
             return 0
@@ -625,7 +636,8 @@ def process_pending(now: Optional[datetime] = None, quiet_seconds: int = QUIET_S
             try:
                 project = db.query(TranslationProject).filter(TranslationProject.id == project_id).first()
                 rows = db.query(PendingLearning).filter(PendingLearning.id.in_(ids)).all()
-                if project:
+                # Edits queued before a downgrade are dropped without a model call.
+                if project and _has(db, project, "glossaries"):
                     learn_from_rows(db, project, rows)
                 db.query(PendingLearning).filter(PendingLearning.id.in_(ids)).delete(synchronize_session=False)
                 db.commit()

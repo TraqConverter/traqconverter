@@ -567,8 +567,11 @@ def check_uncertain(ctx: _Ctx) -> list[dict]:
 
 
 def glossary_signature(db: Session, project: TranslationProject) -> str:
+    from app.dependencies.feature_guard import project_has_feature
     from app.services.glossary_service import get_glossary
 
+    if not project_has_feature(db, project, "glossaries"):
+        return ""
     try:
         rows = get_glossary(db, project.team_id, project_source_language(project), project.target_language)
     except Exception:

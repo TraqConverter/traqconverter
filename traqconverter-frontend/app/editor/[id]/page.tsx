@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { api, apiErrorDetail, fetchObjectUrl } from "@/lib/api"
 import LearningPanel from "@/components/learning/LearningPanel"
+import { useFeature } from "@/lib/plan"
 import DocumentEditor, { type DocumentEditorHandle } from "@/components/editor/DocumentEditor"
 import SourceViewer from "@/components/editor/SourceViewer"
 import { blocking, useReview, type CheckItem, type SourceRef } from "@/components/editor/useReview"
@@ -146,7 +147,7 @@ export default function EditorPage() {
   const [compareReloadKey, setCompareReloadKey] = useState(0)
 
   const [busy, setBusy] = useState<string | null>(null)
-  const [glossaryCount, setGlossaryCount] = useState<number>(0)
+  const certLocked = useFeature("certifications") === "locked"
   const [showStatusMenu, setShowStatusMenu] = useState(false)
 
   const [chatOpen, setChatOpen] = useState(false)
@@ -565,13 +566,6 @@ export default function EditorPage() {
     }
   }, [rebuildRunning, id, fetchProject])
 
-  useEffect(() => {
-    api
-      .get("/glossary")
-      .then((res) => setGlossaryCount((res.data || []).length))
-      .catch(() => setGlossaryCount(0))
-  }, [])
-
   const statusSeqRef = useRef(0)
   const refreshDocStatus = useCallback(async () => {
     const seq = ++statusSeqRef.current
@@ -598,6 +592,11 @@ export default function EditorPage() {
 
   const certify = async (force = false) => {
     if (!project) return
+    if (certLocked) {
+      setError(null)
+      setNotice("Certification is part of Pro. Upgrade in Billing to add the certification page and certify.")
+      return
+    }
     if (project.status !== "COMPLETED") {
       setError("The translation must finish before it can be certified.")
       return
@@ -1057,7 +1056,7 @@ export default function EditorPage() {
           type="button"
           onClick={() => void certify()}
           disabled={busy === "certify"}
-          title="Adds the certification page if it's missing, then marks the project certified"
+          title={certLocked ? "Certification is part of Pro" : "Adds the certification page if it's missing, then marks the project certified"}
           className="px-4 py-2 rounded-full text-sm font-semibold flex items-center gap-1.5 transition"
           style={{
             background: project.review_status === "CERTIFIED" ? "#9bc9c5" : "#0a7870",
@@ -1082,6 +1081,14 @@ export default function EditorPage() {
             : busy === "certify"
             ? "Certifying…"
             : "Certify & deliver"}
+          {certLocked && (
+            <span
+              className="text-[10px] font-semibold tracking-[0.06em] px-1.5 py-0.5 rounded-full uppercase"
+              style={{ background: "rgba(255,255,255,0.22)" }}
+            >
+              Pro
+            </span>
+          )}
         </button>
       </div>
 

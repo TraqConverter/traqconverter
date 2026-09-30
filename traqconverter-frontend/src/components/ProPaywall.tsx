@@ -3,12 +3,36 @@
 import { useRouter } from "next/navigation"
 
 type Props = {
-  feature: "Translation Memory" | "Glossary" | "Certifications"
+  feature: "Translation Memory" | "Glossary" | "Certifications" | "Templates"
   description: string
+  plan?: "Basic" | "Pro"
 }
 
-export default function ProPaywall({ feature, description }: Props) {
+const PLAN_COPY = {
+  Pro: {
+    price: "€29/mo",
+    bullets: [
+      "29 credits each month",
+      "Translation Memory across projects",
+      "Custom Glossary enforcement",
+      "Certification statement page & certifications library",
+      "Everything in Basic",
+    ],
+  },
+  Basic: {
+    price: "€19/mo",
+    bullets: [
+      "19 credits each month",
+      "Templates from your delivered documents",
+      "Download finished translations (DOCX & PDF)",
+      "Team collaboration",
+    ],
+  },
+}
+
+export default function ProPaywall({ feature, description, plan = "Pro" }: Props) {
   const router = useRouter()
+  const copy = PLAN_COPY[plan]
 
   return (
     <div className="space-y-6 pb-16">
@@ -49,13 +73,13 @@ export default function ProPaywall({ feature, description }: Props) {
           className="text-[11px] font-semibold tracking-[0.18em] mb-2"
           style={{ color: "#0a7870" }}
         >
-          PRO FEATURE
+          {plan.toUpperCase()} FEATURE
         </div>
         <h1
           className="text-[26px] font-semibold tracking-tight mb-2"
           style={{ color: "#1f2a2e" }}
         >
-          {feature} is available on Pro
+          {feature} {feature === "Templates" ? "are" : "is"} available on {plan}
         </h1>
         <p
           className="text-sm max-w-md mb-6 leading-relaxed"
@@ -65,13 +89,7 @@ export default function ProPaywall({ feature, description }: Props) {
         </p>
 
         <ul className="text-sm mb-7 space-y-2 max-w-md text-left">
-          {[
-            "29 credits each month",
-            "Translation Memory across projects",
-            "Custom Glossary enforcement",
-            "Certification statement page & certifications library",
-            "Everything in Basic",
-          ].map((b) => (
+          {copy.bullets.map((b) => (
             <li key={b} className="flex items-start gap-2">
               <span
                 className="mt-0.5 w-4 h-4 rounded-full flex items-center justify-center shrink-0"
@@ -104,7 +122,7 @@ export default function ProPaywall({ feature, description }: Props) {
             onMouseEnter={(e) => (e.currentTarget.style.background = "#0a645d")}
             onMouseLeave={(e) => (e.currentTarget.style.background = "#0a7870")}
           >
-            Upgrade to Pro · €29/mo
+            Upgrade to {plan} · {copy.price}
           </button>
           <button
             type="button"

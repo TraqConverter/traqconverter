@@ -24,6 +24,13 @@ PROMPT_HEADING = (
 _KEY = ("team_id", "source_language", "target_language", "source_hash")
 
 
+def enabled_for(db: Session, project) -> bool:
+    """The project's team plan includes the memory; resolved once per project object."""
+    from app.dependencies.feature_guard import project_has_feature
+
+    return project_has_feature(db, project, "terminology_memory")
+
+
 def project_pair(project) -> tuple[str, str]:
     """(source, target) BCP-47 codes for a project; source is '' while the language is unknown."""
     from app.services.glossary_service import project_source_language
@@ -166,6 +173,8 @@ def _preference(row: TranslationMemory, tgt: str) -> tuple:
 
 def exact_map(db: Session, project, source_texts: list[str]) -> dict[str, str]:
     """Normalised source text -> stored translation, for the segment fast path."""
+    if not enabled_for(db, project):
+        return {}
     src, tgt = project_pair(project)
     found = lookup(db, project.team_id, src, tgt, source_texts)
     return {tm_keys.normalise_text(r.source_text): r.translated_text for r in found.values()}
@@ -184,7 +193,7 @@ def _windows(lines: list[str]) -> list[str]:
 
 def prompt_block(db: Session, project, source_text: str) -> str:
     """Approved, manual and imported translations whose source appears in this document, for the rebuild prompts."""
-    if not getattr(project, "use_tm", True) or not (source_text or "").strip():
+    if not getattr(project, "use_tm", True) or not (source_text or "").strip() or not enabled_for(db, project):
         return ""
     try:
         src, tgt = project_pair(project)

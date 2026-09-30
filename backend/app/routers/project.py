@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.dependencies.feature_guard import require_feature
+from app.dependencies.feature_guard import require_feature, user_has_feature
 from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import can_manage_project, get_user_project_or_404
 from app.services import ai_actions, ai_usage, project_instructions
@@ -268,6 +268,9 @@ async def upload_project(
 
 
 
+
+        if not user_has_feature(db, current_user, "certifications"):
+            request_certification, certification_template_id = False, None
 
         project = TranslationProject(
             user_id=current_user.id,

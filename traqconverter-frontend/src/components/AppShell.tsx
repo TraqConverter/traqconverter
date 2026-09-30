@@ -7,12 +7,14 @@ import { api } from "@/lib/api"
 import { clearToken } from "@/lib/auth"
 import { isPublicRoute } from "@/lib/routes"
 import { isStaffRole } from "@/lib/staff"
+import { loadWallet, planFor, resetWallet, useWallet, type PlanFeature } from "@/lib/plan"
 
 type NavItem = {
   name: string
   path: string
   match: string
   icon: ReactNode
+  feature?: PlanFeature
 }
 
 type NavGroup = {
@@ -72,10 +74,10 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "ASSETS",
     items: [
-      { name: "Translation Memory", path: "/translation-memory", match: "/translation-memory", icon: IconMemory },
-      { name: "Glossary", path: "/settings/glossary", match: "/settings/glossary", icon: IconBook },
-      { name: "Templates", path: "/templates", match: "/templates", icon: IconTemplate },
-      { name: "Certifications", path: "/certifications", match: "/certifications", icon: IconShield },
+      { name: "Translation Memory", path: "/translation-memory", match: "/translation-memory", icon: IconMemory, feature: "terminology_memory" },
+      { name: "Glossary", path: "/settings/glossary", match: "/settings/glossary", icon: IconBook, feature: "glossaries" },
+      { name: "Templates", path: "/templates", match: "/templates", icon: IconTemplate, feature: "templates" },
+      { name: "Certifications", path: "/certifications", match: "/certifications", icon: IconShield, feature: "certifications" },
     ],
   },
   {
@@ -97,15 +99,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter()
   const pathname = usePathname() || "/"
 
-  const [credits, setCredits] = useState<number | null>(null)
   const [projectCount, setProjectCount] = useState<number | null>(null)
-  const [wallet, setWallet] = useState<{
-    tier: string
-    trial_days_left: number | null
-    plan_type: string
-    subscription_credits: number
-    purchased_credits: number
-  } | null>(null)
+  const wallet = useWallet(false) ?? null
+  const credits = wallet ? wallet.total_credits : null
   const [user, setUser] = useState<{
     full_name: string | null
     email: string
@@ -132,22 +128,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!showChrome) return
 
-    const fetchCredits = async () => {
-      try {
-        const res = await api.get("/billing/wallet")
-        setCredits(res.data.total_credits)
-        setWallet({
-          tier: (res.data.tier || "").toUpperCase(),
-          trial_days_left: res.data.trial_days_left ?? null,
-          plan_type: res.data.plan_type || "",
-          subscription_credits: res.data.subscription_credits || 0,
-          purchased_credits: res.data.purchased_credits || 0,
-        })
-      } catch {
-        setCredits(0)
-        setWallet(null)
-      }
-    }
+    const fetchCredits = () => loadWallet(true)
 
     const fetchUser = async () => {
       try {
@@ -202,6 +183,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
     }
     clearToken()
+    resetWallet()
     router.replace("/login")
   }
 
@@ -332,6 +314,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 {group.items.map((item) => {
                   const active = item.match === activeMatch
 
+                  const locked = !!(item.feature && wallet && !wallet.features[item.feature])
                   const badge =
                     item.name === "Projects"
                       ? projectCount !== null
@@ -373,6 +356,22 @@ export default function AppShell({ children }: { children: ReactNode }) {
                           }}
                         >
                           {badge}
+                        </span>
+                      )}
+                      {locked && item.feature && (
+                        <span
+                          className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-[0.06em] px-1.5 py-0.5 rounded-full uppercase"
+                          style={{
+                            background: active ? "#e6f2f0" : "#ede3cc",
+                            color: active ? "#0a7870" : "#8a8270",
+                          }}
+                          title={`Available on ${planFor(item.feature)}`}
+                        >
+                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <rect x="4" y="11" width="16" height="10" rx="2" />
+                            <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                          </svg>
+                          {planFor(item.feature)}
                         </span>
                       )}
                     </Link>

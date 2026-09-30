@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react"
 import { api } from "@/lib/api"
 import AddFromPastJob from "@/components/learning/AddFromPastJob"
+import ProPaywall from "@/components/ProPaywall"
+import { useFeature } from "@/lib/plan"
 
 type Template = {
   id: string
@@ -59,8 +61,11 @@ export default function TemplatesPage() {
   const [busy, setBusy] = useState<string | null>(null)
 
   const [adding, setAdding] = useState(false)
+  const access = useFeature("templates")
+  const terms = useFeature("glossaries")
 
   useEffect(() => {
+    if (access !== "allowed") return
     const load = async () => {
       try {
         const [list, sum] = await fetchTemplates()
@@ -73,7 +78,7 @@ export default function TemplatesPage() {
       }
     }
     load()
-  }, [])
+  }, [access])
 
   const refresh = useCallback(async () => {
     try {
@@ -119,6 +124,16 @@ export default function TemplatesPage() {
     }
   }
 
+  if (access === "locked") {
+    return (
+      <ProPaywall
+        feature="Templates"
+        plan="Basic"
+        description="A template is a finished translation your team reuses: the next document of the same kind is built from it, layout and wording included. Upgrade to Basic to start saving templates."
+      />
+    )
+  }
+
   return (
     <div className="space-y-6 pb-16">
       <div className="text-[12px] tracking-wide" style={{ color: "#9a9178" }}>
@@ -160,9 +175,9 @@ export default function TemplatesPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className={`grid grid-cols-1 gap-4 ${terms === "locked" ? "" : "md:grid-cols-2"}`}>
         <Kpi label="TEMPLATES" value={summary?.templates ?? 0} accent />
-        <Kpi label="LEARNED TERMS" value={summary?.learned_terms ?? 0} />
+        {terms !== "locked" && <Kpi label="LEARNED TERMS" value={summary?.learned_terms ?? 0} />}
       </div>
 
       <div className="rounded-2xl overflow-x-auto" style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}>

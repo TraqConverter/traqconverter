@@ -1,7 +1,9 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import Link from "next/link"
 import { api } from "@/lib/api"
+import { useFeature } from "@/lib/plan"
 
 type Term = {
   id: string
@@ -42,6 +44,10 @@ export default function LearningPanel({ projectId }: { projectId: string }) {
   const [data, setData] = useState<Learning | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const templates = useFeature("templates")
+  const terms = useFeature("glossaries")
+  const ready = templates !== "loading" && terms !== "loading"
+  const locked = templates === "locked" && terms === "locked"
 
   const load = useCallback(async () => {
     try {
@@ -53,10 +59,11 @@ export default function LearningPanel({ projectId }: { projectId: string }) {
   }, [projectId])
 
   useEffect(() => {
+    if (!ready || locked) return
     load()
     const t = setInterval(load, POLL_MS)
     return () => clearInterval(t)
-  }, [load])
+  }, [load, ready, locked])
 
   const reject = async (term: Term) => {
     setBusy(term.id)
@@ -84,6 +91,30 @@ export default function LearningPanel({ projectId }: { projectId: string }) {
     } finally {
       setBusy(null)
     }
+  }
+
+  if (locked) {
+    return (
+      <div
+        className="rounded-2xl p-4 space-y-2 text-sm"
+        style={{ background: "#ffffff", border: "1px solid #e7ddc5", color: "#1f2a2e" }}
+      >
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.14em]" style={{ color: "#9a9178" }}>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="4" y="11" width="16" height="10" rx="2" />
+            <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+          </svg>
+          LEARNING
+        </div>
+        <p className="text-xs leading-relaxed" style={{ color: "#6b6558" }}>
+          Templates come with Basic: the next document of the same kind is built from this one. Pro adds the
+          translation memory and the team terms learned from your edits.
+        </p>
+        <Link href="/billing" className="inline-block text-xs font-semibold" style={{ color: "#0a7870" }}>
+          See plans
+        </Link>
+      </div>
+    )
   }
 
   if (!data) return null

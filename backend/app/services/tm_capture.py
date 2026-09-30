@@ -205,6 +205,8 @@ def _store(db: Session, project: TranslationProject, pairs: list[tuple[str, str]
 def record_edit(db: Session, project: TranslationProject, before: bytes, after: bytes) -> int:
     """Store the translator's edited paragraphs as approved; never raises and leaves committing to the caller."""
     try:
+        if not tm.enabled_for(db, project):
+            return 0
         old, new = _paragraph_texts(before), _paragraph_texts(after)
         changed = {bid for bid, text in new.items() if bid in old and tm_keys.normalise_text(old[bid]) != tm_keys.normalise_text(text)}
         if not changed:
@@ -218,6 +220,8 @@ def record_edit(db: Session, project: TranslationProject, before: bytes, after: 
 def record_delivery(db: Session, project: TranslationProject, data: bytes) -> int:
     """Store every confidently mapped paragraph of the delivered document as approved."""
     try:
+        if not tm.enabled_for(db, project):
+            return 0
         return _store(db, project, approved_pairs(db, project, data), commit=True)
     except Exception:
         logger.exception("Couldn't store the delivered document in the translation memory (project=%s)", project.id)
