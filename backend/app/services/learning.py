@@ -97,6 +97,11 @@ def _base_key(doc_key: str) -> str:
     return ".".join(doc_key.split(".")[:3])
 
 
+def _kind_key(doc_key: str) -> str:
+    """Document type and country: an ANPR certificate from any Italian town shares its layout."""
+    return ".".join(doc_key.split(".")[:2])
+
+
 def _first_page_block(data: bytes, file_name: str) -> Optional[dict]:
     name = (file_name or "").lower()
     png = None
@@ -194,7 +199,7 @@ def source_text_of(db: Session, project: TranslationProject) -> str:
 
 
 def find_template(db: Session, team_id, doc_key: Optional[str], target_language: str) -> Optional[DocumentTemplate]:
-    """Exact kind first, then the same document type and issuer in another layout variant."""
+    """Exact kind first, then the same issuer in another layout variant, then the same document type and country."""
     tgt = lang_key(target_language)
     if not doc_key or not tgt:
         return None
@@ -202,12 +207,19 @@ def find_template(db: Session, team_id, doc_key: Optional[str], target_language:
     exact = base.filter(DocumentTemplate.doc_key == doc_key).first()
     if exact:
         return exact
-    prefix = _base_key(doc_key)
-    return (
-        base.filter((DocumentTemplate.doc_key == prefix) | DocumentTemplate.doc_key.like(prefix + ".%"))
-        .order_by(DocumentTemplate.updated_at.desc())
-        .first()
-    )
+    prefixes = [_base_key(doc_key)]
+    kind, country = (doc_key.split(".") + ["", ""])[:2]
+    if kind != "document" and country != "xx":
+        prefixes.append(_kind_key(doc_key))
+    for prefix in prefixes:
+        found = (
+            base.filter((DocumentTemplate.doc_key == prefix) | DocumentTemplate.doc_key.like(prefix + ".%"))
+            .order_by(DocumentTemplate.use_count.desc(), DocumentTemplate.updated_at.desc())
+            .first()
+        )
+        if found:
+            return found
+    return None
 
 
 def template_title(project: TranslationProject) -> str:
