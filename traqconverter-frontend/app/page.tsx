@@ -678,7 +678,7 @@ function Security() {
           style={{ fontSize: 14, color: MUTED }}
         >
           <span style={{ color: TEAL, fontWeight: 600 }}>GDPR-ready:</span>
-          <span>EU data residency, and your data is deleted when you delete it.</span>
+          <span>EU data residency, your data deleted when you delete it, and a data processing agreement (DPA) on request.</span>
         </div>
 
         <div
