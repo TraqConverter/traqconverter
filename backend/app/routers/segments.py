@@ -186,6 +186,11 @@ def retranslate_segment(
                     f"text — no preamble, no quotes, no commentary.\n\n"
                     f"USER INSTRUCTIONS (apply these strictly):\n{instructions}"
                 )
+                from app.services.project_instructions import prompt_block
+
+                saved = prompt_block(project.ai_instructions)
+                if saved:
+                    system_prompt += "\n\n" + saved
                 new_translation = _call_model(
                     model_key=getattr(project, "model", None),
                     system=system_prompt,

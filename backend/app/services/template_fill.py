@@ -11,7 +11,7 @@ from typing import Optional
 
 import anthropic
 
-from app.services import claude_params, docx_blocks
+from app.services import claude_params, docx_blocks, project_instructions
 from app.services.claude_multiturn_rebuild import coverage_failed, extract_number_tokens, missing_source_numbers
 
 logger = logging.getLogger(__name__)
@@ -114,7 +114,7 @@ def source_block(data: bytes, file_name: str) -> dict:
     raise TemplateFillError(f"Unsupported source for template fill: {file_name}")
 
 
-def _template_text(template_docx: bytes, template_source: str, terminology: str) -> str:
+def _template_text(template_docx: bytes, template_source: str, terminology: str, instructions: str = "") -> str:
     ids = docx_blocks.block_ids(template_docx)
     _, xml = docx_blocks.units_for_blocks(template_docx, ids, neighbours=0)
     if sum(len(x) for x in xml.values()) > MAX_TEMPLATE_XML_CHARS:
@@ -127,6 +127,9 @@ def _template_text(template_docx: bytes, template_source: str, terminology: str)
     ]
     if terminology:
         parts.append(terminology)
+    block = project_instructions.prompt_block(instructions)
+    if block:
+        parts.append(block)
     return "\n\n".join(parts)
 
 
@@ -140,6 +143,7 @@ def fill_from_template(
     source_lang: str,
     target_lang: str,
     terminology: str = "",
+    instructions: str = "",
     model: Optional[str] = None,
 ) -> tuple[bytes, dict]:
     """Return the tagged translated DOCX and timing/usage stats; raise TemplateFillError when the result can't be trusted."""
@@ -162,7 +166,7 @@ def fill_from_template(
         "role": "user",
         "content": [
             source_block(source_data, file_name),
-            {"type": "text", "text": _template_text(template_docx, template_source, terminology)},
+            {"type": "text", "text": _template_text(template_docx, template_source, terminology, instructions)},
             {"type": "text", "text": "Return the operations for the NEW source document."},
         ],
     }]

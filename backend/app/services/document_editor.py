@@ -272,6 +272,7 @@ def chat_edit(
 ) -> tuple[bytes, str, list[str]]:
     """Ask Claude for operations, apply them, retry once with the error if they don't apply."""
     from app.services.claude_authored_rebuild import NOTATION_RULES
+    from app.services.project_instructions import prompt_block
 
     key = claude_params.api_key()
     if not key:
@@ -287,6 +288,9 @@ def chat_edit(
     terminology = _team_terminology(project)
     if terminology:
         content.append({"type": "text", "text": terminology})
+    instructions = prompt_block(project.ai_instructions)
+    if instructions:
+        content.append({"type": "text", "text": instructions})
     content.append({"type": "text", "text": _request_text(data, block_ids, selected_text, message, history)})
     messages = [{"role": "user", "content": content}]
 
