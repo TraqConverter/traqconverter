@@ -14,6 +14,15 @@ class ProjectStatus(str, enum.Enum):
     FAILED = "FAILED"
 
 
+MODE_TRANSLATE = "translate"
+MODE_DTP = "dtp"
+PROJECT_MODES = (MODE_TRANSLATE, MODE_DTP)
+
+
+def is_dtp(project) -> bool:
+    return getattr(project, "mode", None) == MODE_DTP
+
+
 class TranslationProject(Base):
     __tablename__ = "translation_projects"
 
@@ -91,6 +100,8 @@ class TranslationProject(Base):
 
     model = Column(String, nullable=False, default="balanced")
     ai_instructions = Column(Text, nullable=True)
+    # "translate", or "dtp": an editable same-language copy of the original.
+    mode = Column(String, nullable=False, default=MODE_TRANSLATE, server_default=MODE_TRANSLATE)
 
 
 

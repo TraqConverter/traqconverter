@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation"
 import { api, apiErrorDetail, fetchObjectUrl } from "@/lib/api"
 import LearningPanel from "@/components/learning/LearningPanel"
 import { useFeature } from "@/lib/plan"
+import { SavedInstructionPicker, useSavedInstructions } from "@/components/SavedInstructions"
 import DocumentEditor, {
   STANDARD_PAGE,
   templateLabel,
@@ -39,6 +40,7 @@ type ProjectInfo = {
   file_name: string
   source_language: string
   target_language: string
+  mode?: "translate" | "dtp"
   ai_instructions?: string | null
 
   model?: string | null
@@ -766,6 +768,9 @@ export default function EditorPage() {
   if (!project) return null
 
   const stStyle = statusStyle(project.review_status)
+  // An editable copy is never certified.
+  const isDtp = project.mode === "dtp"
+  const reviewStatuses = isDtp ? REVIEW_STATUSES.filter((s) => s.value !== "CERTIFIED") : REVIEW_STATUSES
 
   return (
     <div className="max-w-[1400px] mx-auto pb-12" onClick={() => setShowStatusMenu(false)}>
@@ -781,11 +786,17 @@ export default function EditorPage() {
           </button>
           <div>
             <div className="text-sm" style={{ color: "#8a8270" }}>
-              {project.source_language || "—"}{" "}
-              <span className="mx-1" style={{ color: "#cfc6ad" }}>
-                →
-              </span>{" "}
-              {project.target_language || "—"}
+              {isDtp ? (
+                `${languageName(project.target_language)} · editable copy`
+              ) : (
+                <>
+                  {project.source_language || "—"}{" "}
+                  <span className="mx-1" style={{ color: "#cfc6ad" }}>
+                    →
+                  </span>{" "}
+                  {project.target_language || "—"}
+                </>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <h1
@@ -904,7 +915,7 @@ export default function EditorPage() {
                   boxShadow: "0 8px 24px rgba(30,30,20,0.12)",
                 }}
               >
-                {REVIEW_STATUSES.map((s) => (
+                {reviewStatuses.map((s) => (
                   <button
                     key={s.value}
                     type="button"
@@ -994,12 +1005,23 @@ export default function EditorPage() {
         className="flex items-center gap-4 px-5 py-3 rounded-2xl mb-4 flex-wrap"
         style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
       >
-        <LangChip text={langCode(project.source_language)} />
-        <span style={{ color: "#cfc6ad" }}>→</span>
-        <LangChip text={langCode(project.target_language)} />
-        <span className="text-[12px]" style={{ color: "#6b6558" }}>
-          {languageName(project.source_language)} to {languageName(project.target_language)}
-        </span>
+        {isDtp ? (
+          <>
+            <LangChip text={langCode(project.target_language)} />
+            <span className="text-[12px]" style={{ color: "#6b6558" }}>
+              {languageName(project.target_language)} · editable copy
+            </span>
+          </>
+        ) : (
+          <>
+            <LangChip text={langCode(project.source_language)} />
+            <span style={{ color: "#cfc6ad" }}>→</span>
+            <LangChip text={langCode(project.target_language)} />
+            <span className="text-[12px]" style={{ color: "#6b6558" }}>
+              {languageName(project.source_language)} to {languageName(project.target_language)}
+            </span>
+          </>
+        )}
         <div className="h-6 w-px mx-1" style={{ background: "#f1e8d1" }} />
         <Stat label={(docStatus?.pages ?? 0) === 1 ? "page" : "pages"} value={String(docStatus?.pages ?? "—")} />
         {docStatus && docStatus.version > 0 && (
@@ -1008,21 +1030,23 @@ export default function EditorPage() {
             value={`v${docStatus.version}`}
           />
         )}
-        <span
-          className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full transition-colors"
-          style={
-            docStatus?.certification
-              ? { background: "#d8ead6", color: "#2d5a24" }
-              : { background: "#f3ecdb", color: "#6b6558" }
-          }
-          title={docStatus?.certification ? "The certification page is part of the document" : "Add it from Certification in the translation toolbar"}
-        >
+        {!isDtp && (
           <span
-            className="w-1.5 h-1.5 rounded-full"
-            style={{ background: docStatus?.certification ? "#4a8a3a" : "#b5ab93" }}
-          />
-          {docStatus?.certification ? "Certification page added" : "No certification page"}
-        </span>
+            className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full transition-colors"
+            style={
+              docStatus?.certification
+                ? { background: "#d8ead6", color: "#2d5a24" }
+                : { background: "#f3ecdb", color: "#6b6558" }
+            }
+            title={docStatus?.certification ? "The certification page is part of the document" : "Add it from Certification in the translation toolbar"}
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full"
+              style={{ background: docStatus?.certification ? "#4a8a3a" : "#b5ab93" }}
+            />
+            {docStatus?.certification ? "Certification page added" : "No certification page"}
+          </span>
+        )}
         <div className="flex-1" />
 
         {}
@@ -1044,44 +1068,46 @@ export default function EditorPage() {
           onExport={(kind) => void exportFile(kind)}
           onShare={() => setShareOpen(true)}
         />
-        <button
-          type="button"
-          onClick={() => void certify()}
-          disabled={busy === "certify"}
-          title={certLocked ? "Certification is part of Pro" : "Adds the certification page if it's missing, then marks the project certified"}
-          className="px-4 py-2 rounded-full text-sm font-semibold flex items-center gap-1.5 transition"
-          style={{
-            background: project.review_status === "CERTIFIED" ? "#9bc9c5" : "#0a7870",
-            color: "#fff",
-          }}
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        {!isDtp && (
+          <button
+            type="button"
+            onClick={() => void certify()}
+            disabled={busy === "certify"}
+            title={certLocked ? "Certification is part of Pro" : "Adds the certification page if it's missing, then marks the project certified"}
+            className="px-4 py-2 rounded-full text-sm font-semibold flex items-center gap-1.5 transition"
+            style={{
+              background: project.review_status === "CERTIFIED" ? "#9bc9c5" : "#0a7870",
+              color: "#fff",
+            }}
           >
-            <path d="M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6Z" />
-            <path d="m9 12 2 2 4-4" />
-          </svg>
-          {project.review_status === "CERTIFIED"
-            ? "Certified"
-            : busy === "certify"
-            ? "Certifying…"
-            : "Certify & deliver"}
-          {certLocked && (
-            <span
-              className="text-[10px] font-semibold tracking-[0.06em] px-1.5 py-0.5 rounded-full uppercase"
-              style={{ background: "rgba(255,255,255,0.22)" }}
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
             >
-              Pro
-            </span>
-          )}
-        </button>
+              <path d="M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6Z" />
+              <path d="m9 12 2 2 4-4" />
+            </svg>
+            {project.review_status === "CERTIFIED"
+              ? "Certified"
+              : busy === "certify"
+              ? "Certifying…"
+              : "Certify & deliver"}
+            {certLocked && (
+              <span
+                className="text-[10px] font-semibold tracking-[0.06em] px-1.5 py-0.5 rounded-full uppercase"
+                style={{ background: "rgba(255,255,255,0.22)" }}
+              >
+                Pro
+              </span>
+            )}
+          </button>
+        )}
       </div>
 
       <div>
@@ -1112,7 +1138,7 @@ export default function EditorPage() {
                     cursor:
                       compareActionBusy !== null ? "not-allowed" : "pointer",
                   }}
-                  title="Redo the whole translation from the original, replacing your edits"
+                  title={`Redo the whole ${isDtp ? "editable copy" : "translation"} from the original, replacing your edits`}
                 >
                   {rebuildRunning ? "Regenerating…" : "↻ Regenerate"}
                 </button>
@@ -1154,6 +1180,7 @@ export default function EditorPage() {
                 ref={editorRef}
                 projectId={String(id)}
                 reloadKey={compareReloadKey}
+                editableCopy={isDtp}
                 onChatOpenChange={setChatOpen}
                 onVersionChange={(v) => {
                   setDocVersion(v)
@@ -1212,16 +1239,18 @@ export default function EditorPage() {
                   PROJECT STATUS
                 </div>
                 <div className="space-y-3">
-                  <StatusRow label="Translation" value={project.status} />
+                  <StatusRow label={isDtp ? "Editable copy" : "Translation"} value={project.status} />
                   <StatusRow label="Review" value={stStyle.label} />
                   <StatusRow
                     label="Document version"
                     value={docStatus ? `v${docStatus.version}` : "—"}
                   />
-                  <StatusRow
-                    label="Certification page"
-                    value={docStatus?.certification ? "Added" : "Not added"}
-                  />
+                  {!isDtp && (
+                    <StatusRow
+                      label="Certification page"
+                      value={docStatus?.certification ? "Added" : "Not added"}
+                    />
+                  )}
                   <StatusRow
                     label="Pictures and stamps"
                     value={String(docStatus?.images ?? 0)}
@@ -1843,6 +1872,7 @@ export default function EditorPage() {
       {regenerateOpen && (
         <RegenerateDialog
           initial={project.ai_instructions || ""}
+          editableCopy={isDtp}
           left={project.free_revisions_left}
           onClose={() => setRegenerateOpen(false)}
           onSave={(text) => void saveInstructionsOnly(text)}
@@ -2167,19 +2197,23 @@ function ConfirmDialog({
 
 function RegenerateDialog({
   initial,
+  editableCopy,
   left,
   onClose,
   onSave,
   onRegenerate,
 }: {
   initial: string
+  editableCopy: boolean
   left: number | undefined
   onClose: () => void
   onSave: (text: string) => void
   onRegenerate: (text: string) => void
 }) {
   const [text, setText] = useState(initial)
+  const saved = useSavedInstructions()
   const changed = text.trim() !== initial.trim()
+  const what = editableCopy ? "editable copy" : "translation"
   const outOfRegenerations = left !== undefined && left <= 0
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -2206,7 +2240,7 @@ function RegenerateDialog({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Regenerate the translation"
+        aria-label={`Regenerate the ${what}`}
         onClick={(e) => e.stopPropagation()}
         style={{
           width: 500,
@@ -2221,40 +2255,53 @@ function RegenerateDialog({
         }}
       >
         <div className="text-[16px] font-semibold" style={{ color: "#1f2a2e", marginBottom: 12 }}>
-          Regenerate the translation
+          Regenerate the {what}
         </div>
         <div className="text-[13px] leading-relaxed" style={{ color: "#4a4638", marginBottom: 16 }}>
-          The whole translation is redone from the original, replacing your edits (you can undo it). It runs in the
+          The whole {what} is redone from the original, replacing your edits (you can undo it). It runs in the
           background and usually takes 1-3 minutes.
         </div>
-        <div className="flex items-baseline justify-between gap-3" style={{ marginBottom: 6 }}>
-          <label
-            htmlFor="regenerate-instructions"
-            className="text-[11px] font-semibold tracking-[0.08em] uppercase"
-            style={{ color: "#6b6558" }}
-          >
-            Instructions for the AI (optional)
-          </label>
-          <span
-            className="text-[11px] tabular-nums shrink-0"
-            style={{ color: text.length >= MAX_INSTRUCTIONS ? "#b14a3a" : "#8a8270" }}
-          >
-            {text.length}/{MAX_INSTRUCTIONS}
-          </span>
-        </div>
-        <textarea
-          id="regenerate-instructions"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          maxLength={MAX_INSTRUCTIONS}
-          rows={4}
-          placeholder="e.g. Keep company names in Italian"
-          className="w-full block text-[13px] px-3 py-2 rounded-lg outline-none resize-y"
-          style={{ background: "#ffffff", border: "1px solid #e7ddc5", color: "#1f2a2e", fontFamily: "inherit" }}
-        />
-        <div className="text-[12px]" style={{ color: "#8a8270", marginTop: 6, marginBottom: 16 }}>
-          Saved with this document. Ask AI follows them too.
-        </div>
+        {!editableCopy && (
+          <>
+            <div className="flex items-baseline justify-between gap-3" style={{ marginBottom: 6 }}>
+              <label
+                htmlFor="regenerate-instructions"
+                className="text-[11px] font-semibold tracking-[0.08em] uppercase"
+                style={{ color: "#6b6558" }}
+              >
+                Instructions for the AI (optional)
+              </label>
+              <span
+                className="text-[11px] tabular-nums shrink-0"
+                style={{ color: text.length >= MAX_INSTRUCTIONS ? "#b14a3a" : "#8a8270" }}
+              >
+                {text.length}/{MAX_INSTRUCTIONS}
+              </span>
+            </div>
+            {saved.enabled && saved.items.length > 0 && (
+              <div style={{ marginBottom: 6 }}>
+                <SavedInstructionPicker
+                  id="regenerate-saved-instructions"
+                  items={saved.items}
+                  onPick={(picked) => setText(picked.slice(0, MAX_INSTRUCTIONS))}
+                />
+              </div>
+            )}
+            <textarea
+              id="regenerate-instructions"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              maxLength={MAX_INSTRUCTIONS}
+              rows={4}
+              placeholder="e.g. Keep company names in Italian"
+              className="w-full block text-[13px] px-3 py-2 rounded-lg outline-none resize-y"
+              style={{ background: "#ffffff", border: "1px solid #e7ddc5", color: "#1f2a2e", fontFamily: "inherit" }}
+            />
+            <div className="text-[12px]" style={{ color: "#8a8270", marginTop: 6, marginBottom: 16 }}>
+              Saved with this document. Ask AI follows them too.
+            </div>
+          </>
+        )}
         <div
           className="text-[12px] rounded-lg px-3 py-2"
           style={{ background: "#f3ecdb", color: "#4a4638", marginBottom: 16 }}

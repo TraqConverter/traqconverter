@@ -17,7 +17,7 @@ from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import get_user_project_or_404
 from app.models.certification import Certification
 from app.models.document_version import DocumentVersion
-from app.models.project import TranslationProject
+from app.models.project import TranslationProject, is_dtp
 from app.models.user import User
 from app.routers.document import _initial_builder, _locked_project, _require_version
 from app.services import cert_locale, cert_page, docx_certification, docx_images, document_editor
@@ -340,6 +340,11 @@ def _carry_fields(content: docx_certification.CertContent, old: dict, typed: dic
     content.values.update(kept)
 
 
+def _refuse_dtp(project: TranslationProject) -> None:
+    if is_dtp(project):
+        raise HTTPException(status_code=409, detail="An editable copy isn't a translation, so it can't be certified")
+
+
 def _templates(db: Session, project: TranslationProject) -> list[dict]:
     return [
         {"id": str(c.id), "name": c.file_name, "is_default": bool(c.is_default)}
@@ -371,6 +376,7 @@ def add_certification(
 ):
     """Adds the page; a `template_id` picks the template and is saved on the project for later exports and re-adds."""
     project = get_user_project_or_404(db, project_id, user)
+    _refuse_dtp(project)
     cert, template = _page_template(db, project, payload.template_id)
     content = cert_page.content_for_project(db, project, user, template)
     content.template_ref = cert_page.choice_id(cert)
@@ -397,6 +403,7 @@ def update_certification(
     """Updates the fields in place. A different `template_id` rebuilds the page from that template, keeping the values."""
     typed = payload.fields.model_dump(exclude_none=True)
     switch = None
+    _refuse_dtp(get_user_project_or_404(db, project_id, user))
     if payload.template_id is not None:
         project = get_user_project_or_404(db, project_id, user)
         cert, template = _page_template(db, project, payload.template_id)

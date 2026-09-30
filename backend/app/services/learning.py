@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.glossary import Glossary
 from app.models.learning import DocumentTemplate, PendingLearning
-from app.models.project import ProjectStatus, TranslationProject
+from app.models.project import ProjectStatus, TranslationProject, is_dtp
 from app.models.translation_segment import TranslationSegment
 from app.services import ai_usage, claude_params, docx_blocks
 from app.services.glossary_service import (
@@ -313,7 +313,7 @@ def store_template(
 
 def capture_template(db: Session, project: TranslationProject, user) -> Optional[DocumentTemplate]:
     """Store the project's current document as the team's template for its kind of document and target language."""
-    if not project.doc_key or project.status != ProjectStatus.COMPLETED:
+    if not project.doc_key or project.status != ProjectStatus.COMPLETED or is_dtp(project):
         return None
     from app.routers.document import _initial_builder
     from app.services import document_editor
@@ -355,7 +355,7 @@ def capture_memory(db: Session, project_id, user_id) -> int:
     try:
         project = db.query(TranslationProject).filter(TranslationProject.id == project_id).first()
         user = db.query(User).filter(User.id == user_id).first()
-        if not project or not user or project.status != ProjectStatus.COMPLETED or not project.use_tm:
+        if not project or not user or project.status != ProjectStatus.COMPLETED or not project.use_tm or is_dtp(project):
             return 0
         if not _has(db, project, "terminology_memory"):
             return 0
@@ -426,8 +426,8 @@ def paragraph_changes(before: bytes, after: bytes) -> list[tuple[Optional[str], 
 def record_changes(db: Session, project: TranslationProject, before: bytes, after: bytes, origin: str = "typed") -> int:
     """Queue changed paragraphs for terminology mining; never raises, never calls a model."""
     try:
-        # Mining costs a model call later; plans without a glossary queue nothing.
-        if not _has(db, project, "glossaries"):
+        # Mining costs a model call later; plans without a glossary queue nothing, nor do editable copies.
+        if is_dtp(project) or not _has(db, project, "glossaries"):
             return 0
         changes = paragraph_changes(before, after)
         if not changes:

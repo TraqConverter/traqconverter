@@ -13,4 +13,5 @@ from app.models.learning import DocumentTemplate, PendingLearning, TemplateUploa
 from app.models.ai_usage import AiUsage
 from app.models.batch import Batch, BatchTerm
 from app.models.review import ReviewState
+from app.models.saved_instruction import SavedInstruction
 from app.models.delivery_link import DeliveryLink

@@ -25,10 +25,11 @@ _KEY = ("team_id", "source_language", "target_language", "source_hash")
 
 
 def enabled_for(db: Session, project) -> bool:
-    """The project's team plan includes the memory; resolved once per project object."""
+    """The project's team plan includes the memory and it's a translation; resolved once per project object."""
     from app.dependencies.feature_guard import project_has_feature
+    from app.models.project import is_dtp
 
-    return project_has_feature(db, project, "terminology_memory")
+    return not is_dtp(project) and project_has_feature(db, project, "terminology_memory")
 
 
 def project_pair(project) -> tuple[str, str]:

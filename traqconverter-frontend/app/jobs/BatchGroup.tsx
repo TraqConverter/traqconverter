@@ -24,6 +24,7 @@ export type BatchDoc = {
   page_count: number
   source_lang: string
   target_lang: string
+  mode?: "translate" | "dtp"
   failure_reason: string | null
   created_at: string | null
 }

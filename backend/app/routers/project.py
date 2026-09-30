@@ -26,7 +26,7 @@ from app.dependencies.tenant import can_manage_project, get_user_project_or_404
 from app.services import ai_actions, ai_usage, project_instructions
 from app.services.learning import capture_template_in_background
 from app.services.project_lifecycle import enqueue_job, job_charge_reference
-from app.models.project import TranslationProject, ProjectStatus
+from app.models.project import MODE_DTP, MODE_TRANSLATE, PROJECT_MODES, TranslationProject, ProjectStatus, is_dtp
 from app.models.user import User
 from app.models.team import Team
 
@@ -180,6 +180,7 @@ async def upload_project(
     certification_template_id: Optional[str] = Form(None),
     batch_id: Optional[UUID] = Form(None),
     ai_instructions: Optional[str] = Form(None),
+    mode: str = Form(MODE_TRANSLATE),
 
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: Session = Depends(get_db),
@@ -187,8 +188,17 @@ async def upload_project(
 ):
     validate_file_extension(file.filename)
     validate_file_size(file)
+    mode = (mode or MODE_TRANSLATE).strip().lower()
+    if mode not in PROJECT_MODES:
+        raise HTTPException(status_code=400, detail="Unknown project mode")
     _validate_model_key(model)
     ai_instructions = _clean_instructions(ai_instructions)
+    if mode == MODE_DTP:
+        # Same language out as in; nothing to translate, learn from or certify.
+        target_language = source_language
+        model, ai_instructions = AUTHORED_ENGINE, None
+        use_tm = apply_glossary = request_certification = False
+        certification_template_id = None
 
     file_path = None
     project = None
@@ -285,6 +295,7 @@ async def upload_project(
             target_language=target_language,
             model=model,
             ai_instructions=ai_instructions,
+            mode=mode,
 
 
             use_tm=use_tm,
@@ -468,6 +479,7 @@ def list_projects(
             "progress": progress,
             "source_lang": p.source_language,
             "target_lang": p.target_language,
+            "mode": p.mode or MODE_TRANSLATE,
             "page_count": p.page_count,
             "words": word_counts.get(str(p.id), 0),
             "credits_used": p.credits_used,
@@ -657,6 +669,7 @@ def get_project_status(
         "file_name": project.file_name,
         "source_language": project.source_language,
         "target_language": project.target_language,
+        "mode": project.mode or MODE_TRANSLATE,
         "ai_instructions": project.ai_instructions,
         "stats": {
             "total_segments": total,
@@ -749,6 +762,12 @@ def approve_segment(
 
 
 REVIEW_STATUSES = {"DRAFT", "IN_REVIEW", "CERTIFIED"}
+NOT_CERTIFIABLE = "An editable copy isn't a translation, so it can't be certified"
+
+
+def refuse_dtp_certification(project) -> None:
+    if is_dtp(project):
+        raise HTTPException(status_code=409, detail=NOT_CERTIFIABLE)
 
 
 class _ReviewStatusPayload(BaseModel):
@@ -770,6 +789,8 @@ def update_review_status(
 
 
     project = get_user_project_or_404(db, project_id, current_user)
+    if new_status == "CERTIFIED":
+        refuse_dtp_certification(project)
 
     project.review_status = new_status
     db.commit()
@@ -796,6 +817,7 @@ def certify_project(
 
 
     project = get_user_project_or_404(db, project_id, current_user)
+    refuse_dtp_certification(project)
 
     if project.status != ProjectStatus.COMPLETED:
         raise HTTPException(
@@ -957,7 +979,7 @@ def update_project(
         project.file_name = new_name[:255]
 
     if data.certification_template_id is not None:
-
+        refuse_dtp_certification(project)
         project.certification_standard = data.certification_template_id == "standard"
         if data.certification_template_id in ("", "standard"):
             project.certification_template_id = None
@@ -1394,6 +1416,8 @@ def suggest_glossary(
     )
 
     project = get_user_project_or_404(db, project_id, current_user)
+    if is_dtp(project):
+        raise HTTPException(status_code=409, detail="An editable copy has no translated terms to suggest")
     segments = (
         db.query(TranslationSegment)
         .filter(TranslationSegment.project_id == project.id)
@@ -1622,7 +1646,8 @@ def _revise_background(project_id: str, model_key: str | None, instructions: str
             .order_by(TranslationSegment.segment_index)
             .all()
         )
-        for seg in segments:
+        # An editable copy's segments are the source text; only its layout is redone.
+        for seg in [] if is_dtp(project) else segments:
             if not (seg.translated_text and seg.translated_text.strip()):
                 continue
             try:

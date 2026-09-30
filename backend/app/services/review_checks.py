@@ -13,7 +13,7 @@ from typing import Optional
 import anthropic
 from sqlalchemy.orm import Session
 
-from app.models.project import TranslationProject
+from app.models.project import TranslationProject, is_dtp
 from app.services import claude_params, source_map, source_pages
 from app.services.claude_multiturn_rebuild import extract_number_tokens, missing_source_numbers
 from app.services.glossary_service import fold_text, lang_key, language_name, project_source_language, term_in_text
@@ -586,6 +586,7 @@ def compute(db: Session, project: TranslationProject, user, data: bytes, state, 
     segments = source_map.segment_boxes(db, project, info)
     ctx = _Ctx(db, project, user, paras, smap, segments)
     names = source_names(db, project, state, ctx.source_text)
+    dtp = is_dtp(project)
     items: list[dict] = []
     for name, fn in (
         ("numbers", lambda: check_numbers(ctx)),
@@ -593,8 +594,9 @@ def compute(db: Session, project: TranslationProject, user, data: bytes, state, 
         ("names", lambda: check_names(ctx, names)),
         ("untranslated", lambda: check_untranslated(ctx, state)),
         ("notations", lambda: check_notations(ctx)),
-        ("glossary", lambda: check_glossary(ctx)),
-        ("certification", lambda: check_certification(ctx, data, certifications_enabled(db, user))),
+        # An editable copy has no glossary to follow and is never certified.
+        ("glossary", lambda: [] if dtp else check_glossary(ctx)),
+        ("certification", lambda: check_certification(ctx, data, not dtp and certifications_enabled(db, user))),
         ("uncertain", lambda: check_uncertain(ctx)),
     ):
         try:

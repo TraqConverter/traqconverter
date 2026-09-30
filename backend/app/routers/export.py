@@ -9,8 +9,9 @@ from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
 from app.dependencies.tenant import get_user_project_or_404
 from app.models.translation_segment import TranslationSegment
-from app.models.project import TranslationProject
+from app.models.project import TranslationProject, is_dtp
 from app.models.user import User
+from app.services import dtp_export
 
 from app.services.export_service import generate_docx, generate_pdf
 from app.services.learning import capture_template_in_background
@@ -22,6 +23,8 @@ router = APIRouter(prefix="/projects", tags=["Export"])
 
 def render_export(db: Session, project: TranslationProject, user: User, fmt: str):
     """The exact file the single-document export downloads (certification page included)."""
+    if is_dtp(project):
+        return dtp_export.render(db, project, user, fmt)
     segments = (
         db.query(TranslationSegment)
         .filter(TranslationSegment.project_id == project.id)

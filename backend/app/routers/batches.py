@@ -16,7 +16,7 @@ from app.dependencies import get_current_user
 from app.dependencies.feature_guard import _resolve_team_id, require_feature
 from app.dependencies.tenant import team_ids_for
 from app.models.batch import Batch, BatchTerm
-from app.models.project import ProjectStatus, TranslationProject
+from app.models.project import ProjectStatus, TranslationProject, is_dtp
 from app.models.user import User
 from app.services.learning import capture_template_in_background
 
@@ -132,6 +132,7 @@ def get_batch(batch_id: UUID, db: Session = Depends(get_db), current_user: User 
             "page_count": p.page_count,
             "source_lang": p.source_language,
             "target_lang": p.target_language,
+            "mode": p.mode or "translate",
             "failure_reason": p.failure_reason,
             "created_at": p.created_at.isoformat() if p.created_at else None,
         }
@@ -224,8 +225,8 @@ def bulk_review_status(
     batch = _batch_or_404(db, batch_id, current_user)
     updated, skipped = [], 0
     for p in _projects(db, batch):
-        # Unfinished documents keep their status; they can't be reviewed or certified yet.
-        if p.status != ProjectStatus.COMPLETED:
+        # Unfinished documents keep their status; they can't be reviewed or certified yet. Editable copies are never certified.
+        if p.status != ProjectStatus.COMPLETED or (new_status == "CERTIFIED" and is_dtp(p)):
             skipped += 1
             continue
         if (p.review_status or "DRAFT") != new_status:

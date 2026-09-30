@@ -176,6 +176,7 @@ function isMac() {
 export default function DocumentEditor({
   projectId,
   reloadKey,
+  editableCopy = false,
   onChatOpenChange,
   onVersionChange,
   checks = null,
@@ -190,6 +191,8 @@ export default function DocumentEditor({
 }: {
   projectId: string
   reloadKey?: number
+  // A same-language copy, not a translation; it is never certified.
+  editableCopy?: boolean
   onChatOpenChange?: (open: boolean) => void
   onVersionChange?: (version: number) => void
   checks?: Checks | null
@@ -1458,7 +1461,7 @@ export default function DocumentEditor({
           className="relative px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-[11px] font-semibold tracking-[0.14em]"
           style={{ color: "#9a9178", background: "#faf5ee", borderBottom: "1px solid #f1e8d1" }}
         >
-          <span>TRANSLATION</span>
+          <span>{editableCopy ? "EDITABLE COPY" : "TRANSLATION"}</span>
           {/* Buttons keep their labels on one line; the row wraps instead when the assistant narrows the pane. */}
           <div className="flex flex-wrap items-center justify-end gap-1.5 [&_button]:whitespace-nowrap">
             {saveLabel && (
@@ -1506,25 +1509,27 @@ export default function DocumentEditor({
             >
               Image
             </button>
-            <button
-              type="button"
-              onClick={() => void toggleCertification()}
-              disabled={busy !== null || !hasDocument}
-              aria-expanded={certOpen}
-              title={certLocked ? "The certification page is part of Pro" : "Add or edit the certification page"}
-              className={BTN}
-              style={certOpen ? { ...BTN_STYLE, background: "#e3f1ee", color: "#0a5e58", border: "1px solid #cfe6e2" } : BTN_STYLE}
-            >
-              Certification
-              {certLocked && (
-                <span
-                  className="ml-1 text-[9px] font-semibold tracking-[0.06em] px-1 rounded-sm uppercase"
-                  style={{ background: "#ede3cc", color: "#8a8270" }}
-                >
-                  Pro
-                </span>
-              )}
-            </button>
+            {!editableCopy && (
+              <button
+                type="button"
+                onClick={() => void toggleCertification()}
+                disabled={busy !== null || !hasDocument}
+                aria-expanded={certOpen}
+                title={certLocked ? "The certification page is part of Pro" : "Add or edit the certification page"}
+                className={BTN}
+                style={certOpen ? { ...BTN_STYLE, background: "#e3f1ee", color: "#0a5e58", border: "1px solid #cfe6e2" } : BTN_STYLE}
+              >
+                Certification
+                {certLocked && (
+                  <span
+                    className="ml-1 text-[9px] font-semibold tracking-[0.06em] px-1 rounded-sm uppercase"
+                    style={{ background: "#ede3cc", color: "#8a8270" }}
+                  >
+                    Pro
+                  </span>
+                )}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => void undo()}

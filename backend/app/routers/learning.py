@@ -14,7 +14,7 @@ from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import get_user_project_or_404, team_ids_for
 from app.models.glossary import Glossary
 from app.models.learning import DocumentTemplate
-from app.models.project import ProjectStatus
+from app.models.project import ProjectStatus, is_dtp
 from app.models.team import Team
 from app.models.team_member import TeamMember
 from app.models.user import User
@@ -102,6 +102,8 @@ def save_as_template(project_id: UUID, db: Session = Depends(get_db), user: User
     project = get_user_project_or_404(db, project_id, user)
     if project.status != ProjectStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="The translation isn't finished yet")
+    if is_dtp(project):
+        raise HTTPException(status_code=409, detail="An editable copy can't become a translation template")
     if not learning.ensure_profile(db, project):
         raise HTTPException(status_code=422, detail="Couldn't identify the document type")
     template = learning.capture_template(db, project, user)

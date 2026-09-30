@@ -260,6 +260,7 @@ from app.routers import learning as learning_router
 from app.routers import usage as usage_router
 from app.routers import batches as batches_router
 from app.routers import review as review_router
+from app.routers import saved_instructions as saved_instructions_router
 from app.routers import delivery_links as delivery_links_router
 
 app.include_router(settings_router.router)
@@ -282,6 +283,7 @@ app.include_router(learning_router.router)
 app.include_router(usage_router.router)
 app.include_router(batches_router.router)
 app.include_router(review_router.router)
+app.include_router(saved_instructions_router.router)
 app.include_router(delivery_links_router.router)
 app.include_router(delivery_links_router.public_router)
 
