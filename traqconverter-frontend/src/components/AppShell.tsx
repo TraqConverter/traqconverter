@@ -5,7 +5,7 @@ import { useRouter, usePathname } from "next/navigation"
 import Link from "next/link"
 import { api } from "@/lib/api"
 import { clearToken } from "@/lib/auth"
-import { isPublicRoute } from "@/lib/routes"
+import { isOpenRoute, isPublicRoute } from "@/lib/routes"
 import { isStaffRole } from "@/lib/staff"
 import { loadWallet, planFor, resetWallet, useWallet, type PlanFeature } from "@/lib/plan"
 import { findPlan, usePlans } from "@/lib/plans"
@@ -110,7 +110,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     role: string
   } | null>(null)
 
-  const showChrome = !isPublicRoute(pathname)
+  const showChrome = !isPublicRoute(pathname) && !isOpenRoute(pathname)
   const [navOpen, setNavOpen] = useState(false)
   const [navPath, setNavPath] = useState(pathname)
   if (navPath !== pathname) {

@@ -3,7 +3,7 @@
 import { ReactNode, useEffect, useSyncExternalStore } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { getToken } from "@/lib/auth"
-import { isPublicRoute, loginUrl, safeNextPath } from "@/lib/routes"
+import { isOpenRoute, isPublicRoute, loginUrl, safeNextPath } from "@/lib/routes"
 
 function subscribeToStorage(onChange: () => void) {
   window.addEventListener("storage", onChange)
@@ -21,7 +21,7 @@ export default function AuthGuard({ children }: { children: ReactNode }) {
   const token = useSyncExternalStore(subscribeToStorage, getToken, () => null)
   const hydrated = useSyncExternalStore(noopSubscribe, () => true, () => false)
   const isPublic = isPublicRoute(pathname)
-  const allowed = isPublic ? !token : Boolean(token)
+  const allowed = isOpenRoute(pathname) || (isPublic ? !token : Boolean(token))
 
   useEffect(() => {
     // The hydration pass sees the server snapshot (no token); wait for the client one.

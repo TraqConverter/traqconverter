@@ -130,6 +130,16 @@ TEXT = {
     },
 }
 
+# Heading of the page that separates a delivery PDF's translation from the copy of the original.
+ORIGINAL_COPY = {
+    "en": "Copy of the original document",
+    "it": "Copia del documento originale",
+    "es": "Copia del documento original",
+    "fr": "Copie du document original",
+    "de": "Kopie des Originaldokuments",
+    "pt": "Cópia do documento original",
+}
+
 _BY_ENGLISH_NAME = {names[0].lower(): code for code, names in _NAMES.items()}
 
 

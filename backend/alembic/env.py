@@ -34,6 +34,7 @@ import app.models.stripe_event  # noqa: F401
 import app.models.certification  # noqa: F401
 import app.models.document_version  # noqa: F401
 import app.models.learning  # noqa: F401
+import app.models.delivery_link  # noqa: F401
 
 target_metadata = Base.metadata
 
