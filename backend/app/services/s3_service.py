@@ -83,9 +83,9 @@ BUCKET_NAME = settings.S3_BUCKET_NAME
 
 
 
-def upload_file_to_s3(file_path: Path) -> str:
+def upload_file_to_s3(file_path: Path, prefix: str = "uploads") -> str:
     """Upload a file and return the object key."""
-    key = f"uploads/{uuid.uuid4()}_{file_path.name}"
+    key = f"{prefix}/{uuid.uuid4()}_{file_path.name}"
 
     try:
 

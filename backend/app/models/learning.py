@@ -31,6 +31,24 @@ class DocumentTemplate(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class TemplateUpload(Base):
+    """An analysed past job (original + finished translation) waiting for the translator to confirm it as a template."""
+
+    __tablename__ = "template_uploads"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    team_id = Column(UUID(as_uuid=True), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    original_name = Column(String, nullable=False)
+    original_key = Column(String, nullable=False)
+    translation_key = Column(String, nullable=False)
+    target_language = Column(String, nullable=False)
+    profile = Column(JSON, nullable=True)
+    source_lines = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False, index=True)
+
+
 class PendingLearning(Base):
     """A paragraph the translator changed, waiting to be mined for terminology decisions."""
 

@@ -1,18 +1,25 @@
 """Templates and learned terminology: what the tool has learned for a team, and what it used on a project."""
+from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.core.plan_features import PLAN_FEATURES
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.dependencies.feature_guard import effective_plan, require_feature
+from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import get_user_project_or_404, team_ids_for
 from app.models.glossary import Glossary
 from app.models.learning import DocumentTemplate
 from app.models.project import ProjectStatus
+from app.models.team import Team
+from app.models.team_member import TeamMember
 from app.models.user import User
-from app.services import learning
-from app.services.glossary_service import language_name
+from app.services import learning, template_upload, tm_keys
+from app.services.glossary_service import lang_key, language_name
 
 router = APIRouter(tags=["Learning"])
 
@@ -97,6 +104,145 @@ def save_as_template(project_id: UUID, db: Session = Depends(get_db), user: User
     if not template:
         raise HTTPException(status_code=422, detail="Couldn't save this document as a template")
     return _template(template)
+
+
+class _FromUpload(BaseModel):
+    upload_id: UUID
+    target_language: str = Field(min_length=1, max_length=40)
+    document_type: str = Field(min_length=1, max_length=120)
+    country: str = Field(default="", max_length=120)
+    issuing_authority: str = Field(default="", max_length=120)
+    format_variant: str = Field(default="", max_length=120)
+    source_language: str = Field(default="", max_length=60)
+
+
+def _upload_team_id(db: Session, user: User):
+    team = db.query(Team).filter(Team.owner_id == user.id).first()
+    if team:
+        return team.id
+    membership = db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
+    if membership:
+        return membership.team_id
+    raise HTTPException(status_code=404, detail="No team found")
+
+
+def _read_upload(file: UploadFile) -> bytes:
+    # One byte over the limit is enough to reject it.
+    return file.file.read(template_upload.MAX_BYTES + 1)
+
+
+def _existing(t: Optional[DocumentTemplate]) -> Optional[dict]:
+    if not t:
+        return None
+    return {"id": str(t.id), "title": t.title, "target_language_name": language_name(t.target_language)}
+
+
+@router.post(
+    "/templates/analyze",
+    dependencies=[
+        Depends(require_feature("template_upload")),
+        Depends(user_rate_limit("template_upload", max_requests=30, per_seconds=3600)),
+    ],
+)
+def analyze_upload(
+    original: UploadFile = File(...),
+    translation: UploadFile = File(...),
+    target_language: str = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    team_id = _upload_team_id(db, user)
+    try:
+        row = template_upload.analyze(
+            db, team_id, user.id,
+            original.filename or "", _read_upload(original),
+            translation.filename or "", _read_upload(translation),
+            target_language.strip(),
+        )
+    except template_upload.UploadError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    profile = row.profile or {}
+    return {
+        "upload_id": str(row.id),
+        "expires_at": row.expires_at.isoformat(),
+        "target_language": row.target_language,
+        "target_language_name": language_name(lang_key(row.target_language)),
+        "profile": {k: profile.get(k) or "" for k in template_upload.PROFILE_FIELDS},
+        "title": learning.profile_title(profile),
+        "doc_key": profile.get("doc_key") or "",
+        "source_lines": len(row.source_lines or []),
+        "existing_template": _existing(
+            template_upload.existing_template(db, team_id, profile.get("doc_key") or "", row.target_language)
+        ),
+    }
+
+
+@router.get("/templates/key-check", dependencies=[Depends(require_feature("template_upload"))])
+def check_template_key(
+    upload_id: UUID,
+    target_language: str = Query(..., max_length=40),
+    document_type: str = Query("", max_length=120),
+    country: str = Query("", max_length=120),
+    issuing_authority: str = Query("", max_length=120),
+    format_variant: str = Query("", max_length=120),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """The key and title the edited profile gives, and the template it would replace."""
+    row = template_upload.pending_for(db, upload_id, team_ids_for(db, user))
+    if not row:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    profile = template_upload.clean_profile({
+        "document_type": document_type, "country": country,
+        "issuing_authority": issuing_authority, "format_variant": format_variant,
+    })
+    return {
+        "doc_key": profile["doc_key"],
+        "title": learning.profile_title(profile),
+        "existing_template": _existing(
+            template_upload.existing_template(db, row.team_id, profile["doc_key"], target_language)
+        ),
+    }
+
+
+@router.post("/templates/from-upload", dependencies=[Depends(require_feature("template_upload"))])
+def template_from_upload(
+    payload: _FromUpload,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    row = template_upload.pending_for(db, payload.upload_id, team_ids_for(db, user), lock=True)
+    if not row:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    if template_upload.is_expired(row):
+        keys = [row.original_key, row.translation_key]
+        db.delete(row)
+        db.commit()
+        template_upload._delete_files(keys)
+        raise HTTPException(status_code=410, detail="This upload expired. Upload the two files again.")
+    team_id, lines = row.team_id, list(row.source_lines or [])
+    fields = payload.model_dump(exclude={"upload_id", "target_language"})
+    try:
+        template, replaced, profile, data = template_upload.save_template(db, row, fields, payload.target_language.strip())
+    except template_upload.UploadError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
+
+    added, note = 0, None
+    if not PLAN_FEATURES.get(effective_plan(db, user), {}).get("terminology_memory"):
+        note = "The translation memory is part of the Pro plan, so no lines were added."
+    elif not tm_keys.source_lang(profile.get("source_language")):
+        note = "The source language wasn't recognised, so no lines were added to the memory."
+    else:
+        added = template_upload.align_memory(
+            db, team_id, user.id, lines, data, profile["source_language"], payload.target_language,
+        )
+    return {
+        "template": _template(template),
+        "replaced": replaced,
+        "memory_lines_added": added,
+        "memory_note": note,
+    }
 
 
 @router.get("/projects/{project_id}/learning")

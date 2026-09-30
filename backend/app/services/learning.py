@@ -222,12 +222,16 @@ def find_template(db: Session, team_id, doc_key: Optional[str], target_language:
     return None
 
 
-def template_title(project: TranslationProject) -> str:
-    p = project.doc_profile or {}
+def profile_title(profile: Optional[dict]) -> str:
+    p = profile or {}
     kind = (p.get("document_type") or "Document").strip()
     kind = kind[:1].upper() + kind[1:]
     extra = p.get("issuing_authority") or p.get("country") or ""
     return f"{kind} · {extra}" if extra else kind
+
+
+def template_title(project: TranslationProject) -> str:
+    return profile_title(project.doc_profile)
 
 
 def _upload(data: bytes, name: str) -> str:
@@ -236,38 +240,44 @@ def _upload(data: bytes, name: str) -> str:
     return upload(data, name)
 
 
-def capture_template(db: Session, project: TranslationProject, user) -> Optional[DocumentTemplate]:
-    """Store the project's current document as the team's template for its kind of document and target language."""
-    if not project.doc_key or project.status != ProjectStatus.COMPLETED:
-        return None
-    from app.routers.document import _initial_builder
-    from app.services import document_editor
+def store_template(
+    db: Session,
+    team_id,
+    doc_key: str,
+    target_language: str,
+    profile: Optional[dict],
+    data: bytes,
+    source_text: str,
+    project_id=None,
+    version: Optional[int] = None,
+) -> tuple[DocumentTemplate, bool]:
+    """Save `data` as the team's template for this kind of document, replacing an older one. Returns (template, replaced)."""
     from app.services.s3_service import delete_objects_from_s3
 
-    data, version = document_editor.current_document(db, project, user, _initial_builder(db, project, user))
-    tgt = lang_key(project.target_language)
+    tgt = lang_key(target_language)
     template = (
         db.query(DocumentTemplate)
         .filter(
-            DocumentTemplate.team_id == project.team_id,
-            DocumentTemplate.doc_key == project.doc_key,
+            DocumentTemplate.team_id == team_id,
+            DocumentTemplate.doc_key == doc_key,
             DocumentTemplate.target_language == tgt,
         )
         .with_for_update()
         .first()
     )
-    if template and template.source_project_id == project.id and template.source_version == version:
-        return template
-    key = _upload(data, f"template_{project.doc_key[:60]}.docx")
+    if template and project_id and template.source_project_id == project_id and template.source_version == version:
+        return template, False
+    key = _upload(data, f"template_{doc_key[:60]}.docx")
     now = datetime.utcnow()
+    replaced = template is not None
     if template:
         old_key = template.s3_key
         template.s3_key = key
-        template.source_project_id = project.id
+        template.source_project_id = project_id
         template.source_version = version
-        template.source_text = source_text_of(db, project)
-        template.doc_profile = project.doc_profile
-        template.title = template_title(project)
+        template.source_text = source_text
+        template.doc_profile = profile
+        template.title = profile_title(profile)
         template.updated_at = now
         if old_key and old_key != key:
             try:
@@ -276,22 +286,37 @@ def capture_template(db: Session, project: TranslationProject, user) -> Optional
                 logger.warning("Couldn't delete replaced template file %s", old_key)
     else:
         template = DocumentTemplate(
-            team_id=project.team_id,
-            doc_key=project.doc_key,
+            team_id=team_id,
+            doc_key=doc_key,
             target_language=tgt,
-            title=template_title(project),
-            doc_profile=project.doc_profile,
-            source_project_id=project.id,
+            title=profile_title(profile),
+            doc_profile=profile,
+            source_project_id=project_id,
             source_version=version,
             s3_key=key,
-            source_text=source_text_of(db, project),
+            source_text=source_text,
             use_count=0,
             created_at=now,
             updated_at=now,
         )
         db.add(template)
     db.commit()
-    logger.info("Template captured (team=%s key=%s project=%s)", project.team_id, project.doc_key, project.id)
+    logger.info("Template saved (team=%s key=%s project=%s)", team_id, doc_key, project_id)
+    return template, replaced
+
+
+def capture_template(db: Session, project: TranslationProject, user) -> Optional[DocumentTemplate]:
+    """Store the project's current document as the team's template for its kind of document and target language."""
+    if not project.doc_key or project.status != ProjectStatus.COMPLETED:
+        return None
+    from app.routers.document import _initial_builder
+    from app.services import document_editor
+
+    data, version = document_editor.current_document(db, project, user, _initial_builder(db, project, user))
+    template, _ = store_template(
+        db, project.team_id, project.doc_key, project.target_language, project.doc_profile, data,
+        source_text_of(db, project), project_id=project.id, version=version,
+    )
     return template
 
 

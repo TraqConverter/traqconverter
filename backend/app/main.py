@@ -295,6 +295,7 @@ import os
 import threading
 from app.services.watchdog import recover_stalled_jobs
 from app.services.learning import process_pending as process_pending_learning
+from app.services.template_upload import purge_expired as purge_template_uploads
 
 WATCHDOG_INTERVAL_SECONDS = 60
 
@@ -310,6 +311,10 @@ async def _watchdog_loop():
             await asyncio.to_thread(process_pending_learning)
         except Exception:
             logger.exception("Learning cycle errored")
+        try:
+            await asyncio.to_thread(purge_template_uploads)
+        except Exception:
+            logger.exception("Template upload cleanup errored")
         await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)
 
 
