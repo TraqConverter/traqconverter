@@ -4,6 +4,7 @@ import { Suspense, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { api, apiErrorDetail } from "@/lib/api"
 import { setToken } from "@/lib/auth"
+import { pagesLabel, usePlans } from "@/lib/plans"
 import { loginUrl, safeNextPath } from "@/lib/routes"
 
 function IconUser() {
@@ -68,6 +69,7 @@ function RegisterForm() {
   const [showPwd, setShowPwd] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const catalog = usePlans()
 
   const handleRegister = async () => {
     setError(null)
@@ -119,7 +121,9 @@ function RegisterForm() {
             Spin up your translation workspace in under a minute.
           </h2>
           <p className="text-[15px]" style={{ color: "#4a4638" }}>
-            7-day free trial with 1 page. No card required.
+            {catalog
+              ? `${catalog.trial.days}-day free trial with ${pagesLabel(catalog.trial.credits)}. No card required.`
+              : "Free trial. No card required."}
           </p>
         </div>
         <div className="space-y-3">

@@ -5,7 +5,8 @@ from typing import Optional
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.dependencies.feature_guard import require_feature
+from app.core.plan_features import PLANS, SALES_EMAIL, SEAT_LIMITS, next_plan_with_more_seats
+from app.dependencies.feature_guard import _is_admin, effective_plan, require_feature
 from app.models.user import User
 from app.models.team import Team
 from app.models.team_member import TeamMember, TeamInvite
@@ -64,6 +65,43 @@ def _serialize_invite(invite: TeamInvite) -> dict:
 
 
 
+def _seats_taken(db: Session, team: Team) -> int:
+    """Owner, members and pending invites: an invite holds its seat until it's accepted or cancelled."""
+    members = (
+        db.query(TeamMember)
+        .filter(TeamMember.team_id == team.id, TeamMember.user_id != team.owner_id)
+        .count()
+    )
+    pending = (
+        db.query(TeamInvite)
+        .filter(TeamInvite.team_id == team.id, TeamInvite.status == "PENDING")
+        .count()
+    )
+    return 1 + members + pending
+
+
+def seat_limit_message(plan: str) -> str:
+    limit = SEAT_LIMITS.get(plan, 1)
+    name = next((p["name"] for p in PLANS if p["code"] == plan), plan.title())
+    upgrade = next_plan_with_more_seats(plan)
+    if upgrade:
+        then = f"Upgrade to {upgrade['name']} for up to {upgrade['seats']}."
+    else:
+        then = f"Contact us at {SALES_EMAIL} for a larger team."
+    return (
+        f"Your {name} plan includes up to {limit} team members, you included, "
+        f"and pending invites count too. {then}"
+    )
+
+
+def _check_seat_available(db: Session, team: Team, user: User) -> None:
+    if _is_admin(user):
+        return
+    plan = effective_plan(db, user)
+    if _seats_taken(db, team) >= SEAT_LIMITS.get(plan, 1):
+        raise HTTPException(status_code=403, detail=seat_limit_message(plan))
+
+
 class InvitePayload(BaseModel):
     email: EmailStr
     role: str = "MEMBER"
@@ -115,6 +153,10 @@ def list_members(
         "team_name": team.name,
         "members": members,
         "pending_invites": [_serialize_invite(i) for i in invites],
+        "seats": {
+            "used": _seats_taken(db, team),
+            "limit": None if _is_admin(current_user) else SEAT_LIMITS.get(effective_plan(db, current_user), 1),
+        },
     }
 
 
@@ -160,6 +202,7 @@ def invite_member(
         if already:
             raise HTTPException(status_code=400, detail="That user is already on this team")
 
+        _check_seat_available(db, team, current_user)
         membership = TeamMember(
             team_id=team.id,
             user_id=existing_user.id,
@@ -190,6 +233,7 @@ def invite_member(
         db.refresh(pending)
         return {"invited": True, "invite": _serialize_invite(pending)}
 
+    _check_seat_available(db, team, current_user)
     invite = TeamInvite(
         team_id=team.id,
         email=email,

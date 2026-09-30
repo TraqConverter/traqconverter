@@ -2,6 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { api } from "@/lib/api"
+import {
+  contactHref,
+  euro,
+  findPlan,
+  pagesLabel,
+  planBullets,
+  usePlans,
+  type Plan,
+  type PlanCatalog,
+} from "@/lib/plans"
 
 function formatDate(iso?: string | null) {
   if (!iso) return "—"
@@ -30,49 +40,13 @@ type Transaction = {
   created_at: string
 }
 
-const PLANS = [
-  {
-    code: "BASIC",
-    name: "Basic",
-    price: "€19",
-    cadence: "/month",
-    blurb: "For freelancers translating a few documents a month.",
-    bullets: [
-      "19 credits each month",
-      "Download finished translations (DOCX & PDF)",
-      "Templates from your delivered documents",
-      "Team collaboration",
-    ],
-  },
-  {
-    code: "PRO",
-    name: "Pro",
-    price: "€29",
-    cadence: "/month",
-    blurb: "For teams that need TM, glossary, and certification pages.",
-    bullets: [
-      "29 credits each month",
-      "Everything in Basic",
-      "Translation Memory across projects",
-      "Custom Glossary enforcement",
-      "Certification statement page & certifications library",
-    ],
-    featured: true,
-  },
-]
-
-const CREDIT_PACKS = [
-  { credits: 10, label: "Starter pack", note: "Top up a small project" },
-  { credits: 25, label: "Studio pack", note: "For a few documents", featured: true },
-  { credits: 50, label: "Scale pack", note: "Best €/credit value" },
-]
-
 export default function BillingPage() {
   const [wallet, setWallet] = useState<Wallet | null>(null)
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const catalog = usePlans()
 
   useEffect(() => {
     fetchBilling()
@@ -98,7 +72,7 @@ export default function BillingPage() {
     }
   }
 
-  const handleSubscribe = async (plan: "BASIC" | "PRO") => {
+  const handleSubscribe = async (plan: string) => {
     setError(null)
     try {
       setBusy(`plan:${plan}`)
@@ -156,9 +130,8 @@ export default function BillingPage() {
   const planActive = useMemo(
     () =>
       (wallet?.subscription_status || "").toUpperCase() === "ACTIVE" ||
-      tier === "PRO" ||
-      tier === "BASIC",
-    [wallet, tier]
+      !!findPlan(catalog, tier),
+    [wallet, tier, catalog]
   )
   const onTrial = tier === "TRIAL"
   const trialExpired = tier === "EXPIRED"
@@ -234,8 +207,10 @@ export default function BillingPage() {
                 : "Your trial is ending today"}
             </div>
             <p className="text-sm" style={{ color: "#6b5818" }}>
-              You can run one test translation, but downloading the result is
-              locked until you subscribe to Basic or Pro.
+              {catalog
+                ? `Your trial includes ${pagesLabel(catalog.trial.credits)} to test with. `
+                : ""}
+              Downloading the result is locked until you subscribe to a plan.
             </p>
           </div>
           <button
@@ -266,8 +241,8 @@ export default function BillingPage() {
               Your trial has ended
             </div>
             <p className="text-sm" style={{ color: "#7a2f24" }}>
-              Subscribe to Basic or Pro to continue translating and download
-              your work.
+              Subscribe to a plan to continue translating and download your
+              work.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -335,24 +310,29 @@ export default function BillingPage() {
         <SectionHeader
           eyebrow="SUBSCRIPTION"
           title="Choose a plan"
-          subtitle="Cancel anytime. Webhooks update your wallet within seconds of payment."
+          subtitle="One credit is one page. Cancel anytime. Your wallet updates within seconds of payment."
         />
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {PLANS.map((p) => {
-
-            const isCurrent = tier === p.code
-            return (
+        {catalog === undefined ? (
+          <div className="text-sm" style={{ color: "#8a8270" }}>Loading plans…</div>
+        ) : catalog === null ? (
+          <div className="text-sm" style={{ color: "#7a2f24" }}>
+            Couldn&apos;t load the plans. Refresh the page to try again.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+            {catalog.plans.map((p) => (
               <PlanCard
                 key={p.code}
                 plan={p}
-                isCurrent={isCurrent}
+                catalog={catalog}
+                isCurrent={tier === p.code}
                 busy={busy === `plan:${p.code}`}
                 disabled={busy !== null}
-                onSubscribe={() => handleSubscribe(p.code as "BASIC" | "PRO")}
+                onSubscribe={() => handleSubscribe(p.code)}
               />
-            )
-          })}
-        </div>
+            ))}
+          </div>
+        )}
       </section>
 
       {}
@@ -363,13 +343,13 @@ export default function BillingPage() {
           subtitle="Top up at any time — purchased credits stack on top of your subscription and never expire."
         />
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          {CREDIT_PACKS.map((pack) => (
+          {(catalog?.credit_packs || []).map((pack, i) => (
             <CreditPackCard
               key={pack.credits}
               credits={pack.credits}
-              label={pack.label}
-              note={pack.note}
-              featured={!!pack.featured}
+              label={pack.name}
+              note={`${pack.note} · ${euro(pack.price_eur)}`}
+              featured={i === 1}
               busy={busy === `credits:${pack.credits}`}
               disabled={busy !== null}
               onBuy={() => handleBuyCredits(pack.credits)}
@@ -419,7 +399,7 @@ export default function BillingPage() {
                 }}
               >
                 <div className="capitalize" style={{ color: "#4a4638" }}>
-                  {t.type.toLowerCase()}
+                  {t.type.toLowerCase().replace(/_/g, " ")}
                 </div>
                 <div
                   className="font-semibold tabular-nums"
@@ -531,26 +511,21 @@ function SectionHeader({
 
 function PlanCard({
   plan,
+  catalog,
   isCurrent,
   busy,
   disabled,
   onSubscribe,
 }: {
-  plan: {
-    code: string
-    name: string
-    price: string
-    cadence: string
-    blurb: string
-    bullets: string[]
-    featured?: boolean
-  }
+  plan: Plan
+  catalog: PlanCatalog
   isCurrent: boolean
   busy: boolean
   disabled: boolean
   onSubscribe: () => void
 }) {
-  const featured = !!plan.featured
+  const featured = plan.code === "PRO"
+  const bullets = planBullets(catalog, plan)
   return (
     <div
       className="rounded-2xl p-6 flex flex-col"
@@ -586,17 +561,17 @@ function PlanCard({
       </div>
       <div className="flex items-baseline gap-1 mb-3">
         <div className="text-[32px] font-semibold tracking-tight" style={{ color: "#1f2a2e" }}>
-          {plan.price}
+          {euro(plan.price_eur)}
         </div>
         <div className="text-sm" style={{ color: "#8a8270" }}>
-          {plan.cadence}
+          /month
         </div>
       </div>
       <p className="text-sm mb-4" style={{ color: "#4a4638" }}>
         {plan.blurb}
       </p>
       <ul className="space-y-2 mb-6 flex-1">
-        {plan.bullets.map((b) => (
+        {bullets.map((b) => (
           <li key={b} className="flex items-start gap-2 text-sm">
             <span
               className="mt-0.5 w-4 h-4 rounded-full flex items-center justify-center shrink-0"
@@ -619,6 +594,16 @@ function PlanCard({
           </li>
         ))}
       </ul>
+      {!plan.available && !isCurrent ? (
+        <a
+          href={contactHref(catalog, plan)}
+          className="w-full py-3 rounded-full text-[14px] font-semibold text-center"
+          style={{ background: "#1f2a2e", color: "#fff" }}
+          title={catalog.contact_email}
+        >
+          Contact us
+        </a>
+      ) : (
       <button
         type="button"
         onClick={onSubscribe}
@@ -639,6 +624,7 @@ function PlanCard({
       >
         {isCurrent ? "Current plan" : busy ? "Redirecting to Stripe…" : `Subscribe to ${plan.name}`}
       </button>
+      )}
     </div>
   )
 }

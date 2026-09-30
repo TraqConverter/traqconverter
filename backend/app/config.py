@@ -47,6 +47,8 @@ class Settings(BaseSettings):
 
     STRIPE_PRICE_PRO: str
     STRIPE_PRICE_BASIC: Optional[str] = None
+    STRIPE_PRICE_STUDIO: Optional[str] = None
+    STRIPE_PRICE_AGENCY: Optional[str] = None
 
 
     STRIPE_SUCCESS_URL: str = "http://localhost:3000/success"

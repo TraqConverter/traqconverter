@@ -10,7 +10,14 @@ from app.models.credit import CreditWallet, CreditTransaction
 from app.models.user import User
 from app.models.team import Team
 from app.models.team_member import TeamMember
-from app.core.plan_features import PLAN_FEATURES
+from app.config import settings
+from app.core.plan_features import (
+    CREDIT_PACKS,
+    PLAN_FEATURES,
+    PLANS,
+    SALES_EMAIL,
+    TRIAL_PLAN,
+)
 
 
 def _resolve_user_team(db: Session, user: User) -> Team:
@@ -38,6 +45,32 @@ router = APIRouter(
 
 
 
+
+
+@router.get("/plans")
+def list_plans():
+    """Public: prices, pages and seats for the landing and billing pages. `available` is False until Stripe has a price."""
+    return {
+        "currency": "EUR",
+        "contact_email": SALES_EMAIL,
+        "trial": {**TRIAL_PLAN, "features": PLAN_FEATURES["TRIAL"]},
+        "plans": [
+            {
+                **p,
+                "price_per_page_eur": round(p["price_eur"] / p["credits"], 2),
+                "features": PLAN_FEATURES[p["code"]],
+                "available": bool(getattr(settings, f"STRIPE_PRICE_{p['code']}", None)),
+            }
+            for p in PLANS
+        ],
+        "credit_packs": [
+            {
+                **pack,
+                "available": bool(getattr(settings, f"STRIPE_PRICE_CREDITS_{pack['credits']}", None)),
+            }
+            for pack in CREDIT_PACKS
+        ],
+    }
 
 
 @router.get("/wallet")

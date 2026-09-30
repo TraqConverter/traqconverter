@@ -1760,6 +1760,12 @@ def delete_project(
 
     stored_keys = [project.file_path, project.output_file, project.authored_docx_s3_key]
     stored_keys += [k for (k,) in db.query(DeliveryLink.file_key).filter(DeliveryLink.project_id == project.id)]
+    # Every saved edit is its own file; they go with the project too.
+    from app.models.document_version import DocumentVersion
+
+    stored_keys += [
+        k for (k,) in db.query(DocumentVersion.s3_key).filter(DocumentVersion.project_id == project.id).all() if k
+    ]
 
     try:
 

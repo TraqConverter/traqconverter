@@ -1,7 +1,7 @@
 """delivery links: client download links to a snapshot of an export
 
 Revision ID: a8d2f4c6e1b3
-Revises: c5e7a9b1d3f2
+Revises: b9d1f3a5c7e8
 Create Date: 2026-09-30 23:00:00.000000
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision: str = 'a8d2f4c6e1b3'
-down_revision: Union[str, Sequence[str], None] = 'c5e7a9b1d3f2'
+down_revision: Union[str, Sequence[str], None] = 'b9d1f3a5c7e8'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

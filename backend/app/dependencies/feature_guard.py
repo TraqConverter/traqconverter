@@ -9,7 +9,7 @@ from app.models.team import Team
 from app.models.team_member import TeamMember
 from app.models.credit import CreditWallet
 from app.dependencies import get_current_user
-from app.core.plan_features import PLAN_FEATURES
+from app.core.plan_features import PAID_PLANS, PLAN_FEATURES
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def _resolve_team_id(db: Session, user: User):
 
 
 def _wallet_plan(db: Session, team_id) -> str:
-    """The plan the team's wallet grants: TRIAL / BASIC / PRO, or EXPIRED."""
+    """The plan the team's wallet grants: TRIAL, a paid plan, or EXPIRED."""
     if team_id is None:
         return "EXPIRED"
 
@@ -54,12 +54,8 @@ def _wallet_plan(db: Session, team_id) -> str:
             return "EXPIRED"
         return "TRIAL"
 
-    if plan in ("BASIC", "PRO"):
-        if status == "ACTIVE":
-            return plan
-
-        return "EXPIRED"
-
+    if plan in PAID_PLANS and status == "ACTIVE":
+        return plan
 
     return "EXPIRED"
 
@@ -71,7 +67,7 @@ def effective_plan(db: Session, user: User) -> str:
     and downgrades a TRIAL whose `subscription_expires_at` has passed to
     "EXPIRED" so feature checks fail closed.
 
-    Returns one of: TRIAL / BASIC / PRO / EXPIRED.
+    Returns one of: TRIAL / BASIC / PRO / STUDIO / AGENCY / EXPIRED.
 
     Special-case: users with role SUPERUSER / SUPER_ADMIN / ADMIN are
     always treated as PRO regardless of their wallet state, so the
