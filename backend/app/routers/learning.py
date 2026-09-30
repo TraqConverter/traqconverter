@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.plan_features import PLAN_FEATURES
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.dependencies.feature_guard import effective_plan, require_feature
+from app.dependencies.feature_guard import effective_plan, require_any_feature, require_feature, user_has_feature
 from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import get_user_project_or_404, team_ids_for
 from app.models.glossary import Glossary
@@ -58,7 +58,11 @@ def _term(g: Glossary) -> dict:
     }
 
 
-@router.get("/templates")
+_templates = [Depends(require_feature("templates"))]
+_learning = [Depends(require_any_feature("templates", "glossaries"))]
+
+
+@router.get("/templates", dependencies=_templates)
 def list_templates(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     teams = team_ids_for(db, user)
     if not teams:
@@ -72,7 +76,7 @@ def list_templates(db: Session = Depends(get_db), user: User = Depends(get_curre
     return [_template(t) for t in rows]
 
 
-@router.delete("/templates/{template_id}")
+@router.delete("/templates/{template_id}", dependencies=_templates)
 def delete_template(template_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     from app.services.s3_service import delete_objects_from_s3
 
@@ -93,7 +97,7 @@ def delete_template(template_id: UUID, db: Session = Depends(get_db), user: User
     return {"status": "deleted"}
 
 
-@router.post("/projects/{project_id}/template")
+@router.post("/projects/{project_id}/template", dependencies=_templates)
 def save_as_template(project_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     project = get_user_project_or_404(db, project_id, user)
     if project.status != ProjectStatus.COMPLETED:
@@ -245,26 +249,29 @@ def template_from_upload(
     }
 
 
-@router.get("/projects/{project_id}/learning")
+@router.get("/projects/{project_id}/learning", dependencies=_learning)
 def project_learning(project_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     project = get_user_project_or_404(db, project_id, user)
-    used = None
-    if project.template_id:
-        t = db.query(DocumentTemplate).filter(DocumentTemplate.id == project.template_id).first()
-        if t:
-            used = {"id": str(t.id), "title": t.title, "created_at": t.created_at.isoformat() if t.created_at else None}
-    saved = (
-        db.query(DocumentTemplate)
-        .filter(DocumentTemplate.source_project_id == project.id, DocumentTemplate.team_id == project.team_id)
-        .first()
-    )
-    learned = (
-        db.query(Glossary)
-        .filter(Glossary.learned_from_project_id == project.id, Glossary.origin == "learned")
-        .order_by(Glossary.created_at.desc())
-        .all()
-    )
-    applied = learning.team_terms(db, project, learning.source_text_of(db, project))
+    used, saved, learned, applied = None, None, [], []
+    # Basic has templates but no glossary: each half is filled only when the plan has it.
+    if user_has_feature(db, user, "templates"):
+        if project.template_id:
+            t = db.query(DocumentTemplate).filter(DocumentTemplate.id == project.template_id).first()
+            if t:
+                used = {"id": str(t.id), "title": t.title, "created_at": t.created_at.isoformat() if t.created_at else None}
+        saved = (
+            db.query(DocumentTemplate)
+            .filter(DocumentTemplate.source_project_id == project.id, DocumentTemplate.team_id == project.team_id)
+            .first()
+        )
+    if user_has_feature(db, user, "glossaries"):
+        learned = (
+            db.query(Glossary)
+            .filter(Glossary.learned_from_project_id == project.id, Glossary.origin == "learned")
+            .order_by(Glossary.created_at.desc())
+            .all()
+        )
+        applied = learning.team_terms(db, project, learning.source_text_of(db, project))
     return {
         "template_used": used,
         "saved_as_template": {"id": str(saved.id), "title": saved.title} if saved else None,
@@ -274,20 +281,22 @@ def project_learning(project_id: UUID, db: Session = Depends(get_db), user: User
     }
 
 
-@router.get("/learning/summary")
+@router.get("/learning/summary", dependencies=_learning)
 def learning_summary(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     teams = team_ids_for(db, user)
+    out = {"templates": 0, "learned_terms": 0, "recent_terms": []}
     if not teams:
-        return {"templates": 0, "learned_terms": 0, "recent_terms": []}
-    learned = db.query(Glossary).filter(Glossary.team_id.in_(teams), Glossary.origin == "learned")
-    return {
-        "templates": db.query(DocumentTemplate).filter(DocumentTemplate.team_id.in_(teams)).count(),
-        "learned_terms": learned.count(),
-        "recent_terms": [_term(g) for g in learned.order_by(Glossary.created_at.desc()).limit(10).all()],
-    }
+        return out
+    if user_has_feature(db, user, "templates"):
+        out["templates"] = db.query(DocumentTemplate).filter(DocumentTemplate.team_id.in_(teams)).count()
+    if user_has_feature(db, user, "glossaries"):
+        learned = db.query(Glossary).filter(Glossary.team_id.in_(teams), Glossary.origin == "learned")
+        out["learned_terms"] = learned.count()
+        out["recent_terms"] = [_term(g) for g in learned.order_by(Glossary.created_at.desc()).limit(10).all()]
+    return out
 
 
-@router.post("/learning/terms/{term_id}/reject")
+@router.post("/learning/terms/{term_id}/reject", dependencies=[Depends(require_feature("glossaries"))])
 def reject_term(term_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     term = (
         db.query(Glossary)

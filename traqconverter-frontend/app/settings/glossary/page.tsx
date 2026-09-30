@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { api } from "@/lib/api"
 import ProPaywall from "@/components/ProPaywall"
+import { useFeature } from "@/lib/plan"
 
 type Term = {
   id: string
@@ -66,10 +67,11 @@ export default function GlossaryPage() {
   const [targetLang, setTargetLang] = useState("Spanish")
   const [notes, setNotes] = useState("")
   const [gated, setGated] = useState(false)
+  const access = useFeature("glossaries")
 
   useEffect(() => {
-    fetchTerms()
-  }, [])
+    if (access === "allowed") fetchTerms()
+  }, [access])
 
   const resetForm = () => {
     setEditingId(null)
@@ -201,7 +203,7 @@ export default function GlossaryPage() {
     return { source: s, target: t }
   }, [activePair])
 
-  if (gated) {
+  if (gated || access === "locked") {
     return (
       <ProPaywall
         feature="Glossary"

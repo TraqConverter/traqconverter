@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { api, apiErrorDetail } from "@/lib/api"
 import ProPaywall from "@/components/ProPaywall"
+import { useFeature } from "@/lib/plan"
 
 type Origin = "machine" | "approved" | "manual" | "import"
 
@@ -93,6 +94,7 @@ export default function TranslationMemoryPage() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [gated, setGated] = useState(false)
+  const access = useFeature("terminology_memory")
   const [busy, setBusy] = useState<string | null>(null)
 
   const [activePair, setActivePair] = useState<string>("all")
@@ -150,12 +152,12 @@ export default function TranslationMemoryPage() {
   }, [offset, debouncedQuery, activePair, origin, projectId])
 
   useEffect(() => {
-    void loadSummary()
-  }, [loadSummary])
+    if (access === "allowed") void loadSummary()
+  }, [loadSummary, access])
 
   useEffect(() => {
-    void loadEntries()
-  }, [loadEntries])
+    if (access === "allowed") void loadEntries()
+  }, [loadEntries, access])
 
   const refresh = async () => {
     await Promise.all([loadSummary(), loadEntries()])
@@ -284,7 +286,7 @@ export default function TranslationMemoryPage() {
   const filtered = !!(debouncedQuery.trim() || activePair !== "all" || origin || projectId)
   const top = pairs[0]
 
-  if (gated) {
+  if (gated || access === "locked") {
     return (
       <ProPaywall
         feature="Translation Memory"

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { api, apiErrorDetail } from "@/lib/api"
 import ProPaywall from "@/components/ProPaywall"
+import { useFeature } from "@/lib/plan"
 import TemplateCheck from "@/components/certifications/TemplateCheck"
 
 type Cert = {
@@ -93,11 +94,12 @@ export default function CertificationsPage() {
   const [uploadNotes, setUploadNotes] = useState("")
   const [dragOver, setDragOver] = useState(false)
   const [gated, setGated] = useState(false)
+  const access = useFeature("certifications")
   const [checkId, setCheckId] = useState<string | null>(null)
 
   useEffect(() => {
-    fetchItems()
-  }, [])
+    if (access === "allowed") fetchItems()
+  }, [access])
 
   const fetchItems = async () => {
     try {
@@ -265,7 +267,7 @@ export default function CertificationsPage() {
 
   const checkCert = items.find((x) => x.id === checkId) || null
 
-  if (gated) {
+  if (gated || access === "locked") {
     return (
       <ProPaywall
         feature="Certifications"

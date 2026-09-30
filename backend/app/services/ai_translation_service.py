@@ -305,6 +305,12 @@ def get_project_scope(project):
 
 
 
+def _plan_has(db, project, feature: str) -> bool:
+    from app.dependencies.feature_guard import project_has_feature
+
+    return project_has_feature(db, project, feature)
+
+
 def _batch_terms_prompt(db, project, text: str) -> str:
     if not db or not getattr(project, "batch_id", None):
         return ""
@@ -336,7 +342,7 @@ def translate_text(
         bool(getattr(project, "apply_glossary", True)) if project else True
     )
 
-    if db and project and project_apply_glossary:
+    if db and project and project_apply_glossary and _plan_has(db, project, "glossaries"):
         try:
             scope_id = get_project_scope(project)
 
@@ -412,7 +418,7 @@ def translate_batch(
 
 
 
-    if db and project and scope_id and project_use_tm:
+    if db and project and scope_id and project_use_tm and _plan_has(db, project, "terminology_memory"):
         try:
             src, tgt = project_pair(project)
             found = lookup(db, scope_id, src, tgt, texts)
@@ -424,7 +430,7 @@ def translate_batch(
 
 
 
-    if db and project and scope_id and project_apply_glossary:
+    if db and project and scope_id and project_apply_glossary and _plan_has(db, project, "glossaries"):
         try:
             glossary_entries = relevant_terms(
                 get_glossary(db, scope_id, project_source_language(project) or source_lang, target_lang),

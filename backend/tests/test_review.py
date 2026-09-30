@@ -359,7 +359,7 @@ def test_missing_date_and_illegible_downgrade(client, review_project, fake):
 
 def test_glossary_violation(client, db, review_project, fake):
     fake()
-    owner, project = review_project(plan="BASIC")
+    owner, project = review_project(plan="PRO")
     db.add(Glossary(team_id=owner["team"].id, source_language="Italian", target_language="English",
                     source_term="Ufficiale d'Anagrafe", target_term="Civil Registrar", origin="manual"))
     db.commit()

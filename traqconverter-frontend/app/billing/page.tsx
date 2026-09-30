@@ -40,6 +40,7 @@ const PLANS = [
     bullets: [
       "19 credits each month",
       "Download finished translations (DOCX & PDF)",
+      "Templates from your delivered documents",
       "Team collaboration",
     ],
   },

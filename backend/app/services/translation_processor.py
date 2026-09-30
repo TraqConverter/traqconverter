@@ -62,7 +62,8 @@ from app.services.layout_translator import (
 )
 from app.routers.ws import broadcast_progress
 from app.services import ai_usage, learning
-from app.services.glossary_service import project_source_language
+from app.services.glossary_service import lang_key, project_source_language
+from app.dependencies.feature_guard import project_has_feature
 from concurrent.futures import ThreadPoolExecutor
 
 from docx import Document
@@ -190,7 +191,7 @@ def extract_file_text(file_path: str):
 
 def _start_template_fill(db, project, source_kind, source_bytes, source_text, terminology):
     """Submit the template fill for this project's kind of document, or return None when there's no template."""
-    if source_kind not in ("PDF", "IMAGE"):
+    if source_kind not in ("PDF", "IMAGE") or not project_has_feature(db, project, "templates"):
         return None
     template = learning.find_template(db, project.team_id, project.doc_key, project.target_language)
     if not template:
@@ -304,7 +305,11 @@ def process_translation_job(project_id: str):
 
         source_bytes = input_file.read_bytes()
         source_text = "\n".join(item.text or "" for item in extracted)
-        learning.profile_project(db, project, source_bytes, source_text)
+        # Resolved once here and cached on the project for the rest of the job.
+        has_templates = project_has_feature(db, project, "templates")
+        # The profile picks the template and detects an "auto" source language; otherwise it's skipped.
+        if has_templates or not lang_key(project.source_language):
+            learning.profile_project(db, project, source_bytes, source_text)
         terminology = tm_service.with_memory(db, project, learning.team_terminology(db, project, source_text), source_text)
         # The template fill runs next to segment translation so neither waits for the other.
         template_job = _start_template_fill(db, project, source_kind, source_bytes, source_text, terminology)

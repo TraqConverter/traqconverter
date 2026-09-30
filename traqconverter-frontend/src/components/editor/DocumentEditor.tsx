@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react"
 import AiAllowance from "./AiAllowance"
 import { api, apiErrorDetail } from "@/lib/api"
+import { useFeature } from "@/lib/plan"
 import {
   BLOCK_ATTR,
   CERT_START_ID,
@@ -50,6 +51,7 @@ export type DocumentEditorHandle = {
   focusBlock: (id: string) => void
 }
 
+const CERT_UPGRADE = "The certification page is part of Pro. Upgrade in Billing to add it."
 const SAVE_DELAY_MS = 1200
 const HISTORY_TURNS = 10
 const HIGHLIGHT_MS = 3200
@@ -193,6 +195,7 @@ export default function DocumentEditor({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
+  const certLocked = useFeature("certifications") === "locked"
   const [saveState, setSaveState] = useState<SaveState>("idle")
   const [saveError, setSaveError] = useState("")
   const [renderTick, setRenderTick] = useState(0)
@@ -1182,6 +1185,10 @@ export default function DocumentEditor({
   const toggleCertification = async () => {
     setImageMenuOpen(false)
     setChecksOpen(false)
+    if (certLocked) {
+      setNotice(CERT_UPGRADE)
+      return
+    }
     if (certOpen) {
       setCertOpen(false)
       return
@@ -1242,6 +1249,10 @@ export default function DocumentEditor({
   }
 
   const ensureCertification = async (): Promise<boolean> => {
+    if (certLocked) {
+      setNotice(CERT_UPGRADE)
+      return false
+    }
     const state = await loadCertification()
     if (!state) return false
     if (state.present) {
@@ -1439,11 +1450,19 @@ export default function DocumentEditor({
               onClick={() => void toggleCertification()}
               disabled={busy !== null || !hasDocument}
               aria-expanded={certOpen}
-              title="Add or edit the certification page"
+              title={certLocked ? "The certification page is part of Pro" : "Add or edit the certification page"}
               className={BTN}
               style={certOpen ? { ...BTN_STYLE, background: "#e3f1ee", color: "#0a5e58", border: "1px solid #cfe6e2" } : BTN_STYLE}
             >
               Certification
+              {certLocked && (
+                <span
+                  className="ml-1 text-[9px] font-semibold tracking-[0.06em] px-1 rounded-sm uppercase"
+                  style={{ background: "#ede3cc", color: "#8a8270" }}
+                >
+                  Pro
+                </span>
+              )}
             </button>
             <button
               type="button"

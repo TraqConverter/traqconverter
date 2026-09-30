@@ -400,7 +400,7 @@ def test_chat_edits_are_recorded(client, db, doc_project, fake_claude):
     assert row.origin == "chat" and "REGISTRAR" in row.after_text
 
 
-def test_reject_learned_term_works_without_glossary_plan(client, db, doc_project, make_user):
+def test_reject_learned_term_needs_glossary_plan(client, db, doc_project, make_user):
     owner, project = doc_project()
     member = make_user(team=owner["team"])
     wallet_plan(db, owner["team"].id, "BASIC")
@@ -410,6 +410,8 @@ def test_reject_learned_term_works_without_glossary_plan(client, db, doc_project
     db.commit()
 
     assert client.delete(f"/glossary/{term.id}", headers=member["headers"]).status_code == 403
+    assert client.post(f"/learning/terms/{term.id}/reject", headers=member["headers"]).status_code == 403
+    wallet_plan(db, owner["team"].id, "PRO")
     assert client.post(f"/learning/terms/{term.id}/reject", headers=make_user()["headers"]).status_code == 404
     assert client.post(f"/learning/terms/{term.id}/reject", headers=member["headers"]).status_code == 200
     db.refresh(term)

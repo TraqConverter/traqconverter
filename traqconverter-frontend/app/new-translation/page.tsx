@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { api } from "@/lib/api"
+import { useFeature } from "@/lib/plan"
 import { LangSelect, SOURCE_LANGUAGES, TARGET_LANGUAGES } from "@/components/LangSelect"
 
 const MAX_INSTRUCTIONS = 1000
@@ -112,14 +113,18 @@ export default function NewProjectPage() {
   const [target, setTarget] = useState("it-IT")
   const [instructions, setInstructions] = useState("")
 
-  // null until known; /certifications answers 403 on plans without the feature.
+  // null until known; stays null on plans without certifications.
   const [certsEnabled, setCertsEnabled] = useState<boolean | null>(null)
   const [certTemplateId, setCertTemplateId] = useState<string>("")
   const [certTemplates, setCertTemplates] = useState<
     { id: string; file_name: string }[]
   >([])
 
+  const certAccess = useFeature("certifications")
+  const memoryAccess = useFeature("terminology_memory")
+
   useEffect(() => {
+    if (certAccess !== "allowed") return
     api
       .get("/certifications")
       .then((res) => {
@@ -135,7 +140,7 @@ export default function NewProjectPage() {
         setCertsEnabled(false)
         setCertTemplates([])
       })
-  }, [])
+  }, [certAccess])
 
   const handlePickFile = () => fileInputRef.current?.click()
 
@@ -505,7 +510,10 @@ export default function NewProjectPage() {
               className="mt-5 pt-4 text-xs leading-relaxed"
               style={{ borderTop: "1px solid #f1e8d1", color: "#8a8270" }}
             >
-              Translation memory and glossary are applied automatically. Layout and page orientation follow the source.
+              {memoryAccess === "locked"
+                ? "Translation memory and glossary come with Pro."
+                : "Translation memory and glossary are applied automatically."}{" "}
+              Layout and page orientation follow the source.
             </div>
           </div>
 

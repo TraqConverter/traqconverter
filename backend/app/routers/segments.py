@@ -16,7 +16,7 @@ from app.models.project import TranslationProject
 from app.models.user import User
 
 from app.services import ai_usage
-from app.services.translation_memory_service import project_pair, store_tm_entry
+from app.services.translation_memory_service import enabled_for as tm_enabled_for, project_pair, store_tm_entry
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ def update_segment(
 
 
 
-    if project.use_tm:
+    if project.use_tm and tm_enabled_for(db, project):
         src, tgt = project_pair(project)
         store_tm_entry(
             db=db,
