@@ -37,6 +37,9 @@ def stub_export(monkeypatch):
     state = {"version": 1, "captured": []}
 
     def fake_docx(segs, email, project=None, user=None):
+        from app.services.export_wrapper import SKIP_SOURCE_PAGES
+
+        state["skip_source_pages"] = SKIP_SOURCE_PAGES.get()
         return io.BytesIO(f"docx v{state['version']}".encode())
 
     def fake_convert(data: bytes):
@@ -81,6 +84,19 @@ def test_delivery_pdf_is_translation_then_separator_then_original(client, db, st
     with fitz.open(stream=r.content, filetype="pdf") as doc:
         assert doc.metadata["title"] == "diploma - translation.pdf"
     assert stub_export["captured"] == [project.id]
+
+
+def test_delivery_pdf_asks_the_export_without_the_embedded_original(client, db, storage, make_user, make_project, stub_export):
+    from app.services.export_wrapper import SKIP_SOURCE_PAGES
+
+    owner = make_user()
+    project = make_project(owner)
+    _original(storage, project, _pdf(1, "Original"), "source.pdf")
+    db.commit()
+    assert client.get(f"/projects/{project.id}/export/delivery.pdf", headers=owner["headers"]).status_code == 200
+    # The original goes after the separator, so the export must not also open with it.
+    assert stub_export["skip_source_pages"] is True
+    assert SKIP_SOURCE_PAGES.get() is False
 
 
 def test_original_first_and_without_original(client, db, storage, make_user, make_project, stub_export):

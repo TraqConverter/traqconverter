@@ -42,13 +42,19 @@ def translation_pdf(db: Session, project, user) -> tuple[bytes, str]:
     """(PDF of the translation export, separator language). Built from the same DOCX as Export DOCX."""
     from app.routers.export import render_export
     from app.services.export_service import _convert_docx_to_pdf
+    from app.services.export_wrapper import SKIP_SOURCE_PAGES
 
-    docx_bytes = render_export(db, project, user, "docx").getvalue()
-    lang = separator_language(docx_bytes, project.target_language)
-    pdf = _convert_docx_to_pdf(docx_bytes)
-    if not pdf:
-        # Same fallback as Export PDF when LibreOffice isn't there.
-        pdf = render_export(db, project, user, "pdf").getvalue()
+    # The export normally opens with the original's pages; here the original goes at the end instead.
+    token = SKIP_SOURCE_PAGES.set(True)
+    try:
+        docx_bytes = render_export(db, project, user, "docx").getvalue()
+        lang = separator_language(docx_bytes, project.target_language)
+        pdf = _convert_docx_to_pdf(docx_bytes)
+        if not pdf:
+            # Same fallback as Export PDF when LibreOffice isn't there.
+            pdf = render_export(db, project, user, "pdf").getvalue()
+    finally:
+        SKIP_SOURCE_PAGES.reset(token)
     return pdf, lang
 
 
