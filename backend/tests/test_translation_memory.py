@@ -343,8 +343,8 @@ def test_rebuild_receives_the_memory_block(db, make_user, make_project, monkeypa
     db.expire_all()
     seg = db.query(TranslationSegment).filter(TranslationSegment.project_id == project.id, TranslationSegment.segment_index == 0).one()
     assert seg.translated_text == "THE REGISTRAR, having examined the records," and seg.tm_pct == 100
-    machine = _entries(db, origin="machine")
-    assert {r.source_text for r in machine} == set(SOURCE[1:]) and {r.project_id for r in machine} == {project.id}
+    # First-pass drafts stay out of the memory; only the translator's text goes in.
+    assert _entries(db, origin="machine") == []
 
 
 def test_rebuild_without_memory_when_use_tm_is_off(db, make_user, make_project, monkeypatch):

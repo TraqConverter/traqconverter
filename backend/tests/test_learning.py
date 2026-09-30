@@ -197,6 +197,9 @@ def test_template_lookup_is_team_scoped_and_language_aware(client, db, doc_proje
     assert learning.find_template(db, owner["team"].id, KEY + ".multilingual-extract", "en-US") is not None
     assert learning.find_template(db, owner["team"].id, KEY, "French") is None
     assert learning.find_template(db, owner["team"].id, "driving-licence.it.motorizzazione-civile", "en") is None
+    # Another town's residence certificate reuses it; another country's doesn't.
+    assert learning.find_template(db, owner["team"].id, "residence-certificate.it.comune-altrove", "en") is not None
+    assert learning.find_template(db, owner["team"].id, "residence-certificate.es.ayuntamiento-madrid", "en") is None
     assert learning.find_template(db, other["team"].id, KEY, "en") is None
 
     assert client.get("/templates", headers=other["headers"]).json() == []

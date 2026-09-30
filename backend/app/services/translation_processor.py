@@ -366,7 +366,6 @@ def process_translation_job(project_id: str):
             apply_glossary,
             bool(getattr(project, "add_certification", False)),
         )
-        tm_src, tm_tgt = tm_service.project_pair(project)
         if use_tm:
             try:
                 tm_map = tm_service.exact_map(db, project, [seg.source_text for seg in segments])
@@ -499,7 +498,6 @@ def process_translation_job(project_id: str):
 
 
 
-            tm_candidates: list[tuple[str, str]] = []
             for j, translated in enumerate(translations):
                 seg_idx = miss_indices[i + j]
                 seg = segments[seg_idx]
@@ -509,7 +507,6 @@ def process_translation_job(project_id: str):
                 seg.translated_text = clean
                 seg.tm_pct = 0
                 project.translated_segments += 1
-                tm_candidates.append((seg.source_text, clean))
 
             db.commit()
 
@@ -519,16 +516,7 @@ def process_translation_job(project_id: str):
 
 
 
-            if use_tm and tm_src:
-                tm_service.upsert_entries(
-                    db,
-                    project.team_id,
-                    [
-                        {"source_language": tm_src, "target_language": tm_tgt, "source_text": src_text,
-                         "translated_text": tgt_text, "origin": "machine", "project_id": project.id}
-                        for src_text, tgt_text in tm_candidates
-                    ],
-                )
+            # The memory only takes the translator's text (editor saves and delivery), never these drafts.
 
             progress = int(
                 (
