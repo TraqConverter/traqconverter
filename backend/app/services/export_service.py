@@ -238,24 +238,20 @@ def _resolve_cert_template(project, tmp_dir):
     (callers fall back to the hardcoded cert block in that case)."""
     try:
         from app.database import SessionLocal
-        from app.models.certification import Certification
         from app.services.cert_template_service import (
             substitute_in_docx,
             build_substitution_values,
         )
 
-        from app.services.cert_page import team_default
+        from app.services.cert_page import TemplateNotFound, template_for
 
         db = SessionLocal()
         try:
             template_id = getattr(project, "certification_template_id", None)
-            cert = (
-                db.query(Certification)
-                .filter(Certification.id == template_id)
-                .first()
-                if template_id
-                else team_default(db, project.team_id)
-            )
+            try:
+                cert = template_for(db, project)
+            except TemplateNotFound:
+                cert = None
             if not cert:
                 return None
             if not (cert.file_name or "").lower().endswith(".docx"):

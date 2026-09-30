@@ -116,6 +116,8 @@ class TranslationProject(Base):
         ForeignKey("certifications.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # The translator picked the built-in page, so the team default doesn't apply.
+    certification_standard = Column(Boolean, default=False, server_default="false", nullable=False)
 
 
 

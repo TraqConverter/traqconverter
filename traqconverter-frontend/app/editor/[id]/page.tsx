@@ -5,7 +5,12 @@ import { useParams, useRouter } from "next/navigation"
 import { api, apiErrorDetail, fetchObjectUrl } from "@/lib/api"
 import LearningPanel from "@/components/learning/LearningPanel"
 import { useFeature } from "@/lib/plan"
-import DocumentEditor, { type DocumentEditorHandle } from "@/components/editor/DocumentEditor"
+import DocumentEditor, {
+  STANDARD_PAGE,
+  templateLabel,
+  type CertChoice,
+  type DocumentEditorHandle,
+} from "@/components/editor/DocumentEditor"
 import SourceViewer from "@/components/editor/SourceViewer"
 import { blocking, useReview, type CheckItem, type SourceRef } from "@/components/editor/useReview"
 
@@ -164,6 +169,7 @@ export default function EditorPage() {
   const [hoverBlockId, setHoverBlockId] = useState<string | null>(null)
   const [sourceFocus, setSourceFocus] = useState<(SourceRef & { key: number }) | null>(null)
   const [certifyGate, setCertifyGate] = useState<CheckItem[] | null>(null)
+  const [templatePick, setTemplatePick] = useState<CertChoice | null>(null)
   const review = useReview(id, docVersion)
 
   const replaceSourcePreview = (next: typeof sourcePreview) => {
@@ -612,10 +618,24 @@ export default function EditorPage() {
         return
       }
     }
+    await deliver()
+  }
+
+  // templateId comes from the chooser; without it, a team with 2+ templates is asked first.
+  const deliver = async (templateId?: string) => {
+    if (!project) return
     try {
       setBusy("certify")
       setError(null)
-      const ready = await editorRef.current?.ensureCertification()
+      if (templateId === undefined) {
+        const state = await editorRef.current?.certificationState()
+        if (!state) return
+        if (!state.present && state.templates.length >= 2) {
+          setTemplatePick(state)
+          return
+        }
+      }
+      const ready = await editorRef.current?.ensureCertification(templateId)
       if (!ready) return
       if (project.review_status !== "CERTIFIED") {
         await api.post(`/projects/${id}/certify`)
@@ -1837,6 +1857,17 @@ export default function EditorPage() {
         />
       )}
 
+      {templatePick && (
+        <TemplatePicker
+          choice={templatePick}
+          onPick={(templateId) => {
+            setTemplatePick(null)
+            void deliver(templateId)
+          }}
+          onClose={() => setTemplatePick(null)}
+        />
+      )}
+
       {regenerateOpen && (
         <RegenerateDialog
           initial={project.ai_instructions || ""}
@@ -1949,6 +1980,132 @@ function CertifyGate({
         </div>
       </div>
       <style>{`.tq-gate { animation: tq-gate-in 160ms ease-out; } @keyframes tq-gate-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }`}</style>
+    </div>
+  )
+}
+
+function TemplatePicker({
+  choice,
+  onPick,
+  onClose,
+}: {
+  choice: CertChoice
+  onPick: (templateId: string) => void
+  onClose: () => void
+}) {
+  const options = [
+    ...choice.templates.map((t) => ({ id: t.id, label: templateLabel(t), note: t.is_default ? "Team default" : "" })),
+    { id: STANDARD_PAGE, label: "Standard page", note: "Built-in wording" },
+  ]
+  const [picked, setPicked] = useState(
+    options.some((o) => o.id === choice.templateId) ? choice.templateId : STANDARD_PAGE,
+  )
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(31,42,46,0.45)",
+        backdropFilter: "blur(2px)",
+        zIndex: 100,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-label="Choose the certification page"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={(e) => {
+          e.preventDefault()
+          onPick(picked)
+        }}
+        className="tq-gate"
+        style={{
+          width: 440,
+          maxWidth: "92vw",
+          background: "#fbf6ea",
+          borderRadius: 18,
+          boxShadow: "0 18px 40px rgba(0,0,0,0.25)",
+          padding: 24,
+          border: "1px solid #e7ddc5",
+        }}
+      >
+        <div className="text-[11px] font-semibold tracking-[0.16em] mb-1" style={{ color: "#0a7870" }}>
+          CERTIFICATION PAGE
+        </div>
+        <div className="text-[16px] font-semibold mb-1" style={{ color: "#1f2a2e" }}>
+          Which page goes at the end?
+        </div>
+        <p className="text-[12px] mb-3" style={{ color: "#6b6558" }}>
+          You can switch it later from Certification in the toolbar.
+        </p>
+        <div role="radiogroup" aria-label="Template" className="space-y-1.5 mb-5 max-h-64 overflow-auto">
+          {options.map((o) => {
+            const on = o.id === picked
+            return (
+              <button
+                key={o.id}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                onClick={() => setPicked(o.id)}
+                onDoubleClick={() => onPick(o.id)}
+                className="w-full flex items-center gap-3 text-left px-3 py-2.5 rounded-xl transition"
+                style={{
+                  background: on ? "#e3f1ee" : "#ffffff",
+                  border: `1px solid ${on ? "#0a7870" : "#e7ddc5"}`,
+                  color: "#1f2a2e",
+                }}
+              >
+                <span
+                  className="w-4 h-4 rounded-full shrink-0 flex items-center justify-center"
+                  style={{ border: `1.5px solid ${on ? "#0a7870" : "#b5ab93"}` }}
+                >
+                  {on && <span className="w-2 h-2 rounded-full" style={{ background: "#0a7870" }} />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-semibold truncate">{o.label}</span>
+                  {o.note && (
+                    <span className="block text-[11px]" style={{ color: "#8a8270" }}>
+                      {o.note}
+                    </span>
+                  )}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-[13px] font-semibold px-4 py-2 rounded-full transition"
+            style={{ background: "#ffffff", color: "#1f2a2e", border: "1px solid #e7ddc5" }}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            autoFocus
+            className="text-[13px] font-semibold px-4 py-2 rounded-full transition"
+            style={{ background: "#0a7870", color: "#ffffff", border: "1px solid #0a7870" }}
+          >
+            Add page &amp; certify
+          </button>
+        </div>
+      </form>
     </div>
   )
 }

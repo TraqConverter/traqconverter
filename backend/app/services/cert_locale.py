@@ -159,6 +159,15 @@ def language_name(value: str | None, lang: str) -> str:
     return name[:1].upper() + name[1:]
 
 
+_BY_ANY_NAME = {name.lower(): code for code, names in _NAMES.items() for name in names}
+
+
+def relocalize(value: str, lang: str) -> str:
+    """A language name written in any certification language ('inglese') re-written in `lang`; other text as is."""
+    code = language_code(value) or _BY_ANY_NAME.get((value or "").strip().lower(), "")
+    return language_name(code, lang) if code else value
+
+
 def format_date(d: date, lang: str) -> str:
     month = _MONTHS[lang][d.month - 1]
     if lang in ("es", "pt"):

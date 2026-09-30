@@ -503,3 +503,182 @@ def test_certification_title_prefers_document_heading_over_issuer_lines():
     data = docx_blocks.tag_blocks(buf.getvalue())
     assert docx_certification.guess_document_title(data, "x") == "CERTIFICATE OF RESIDENCE"
     assert docx_certification.guess_document_title(data, "x", "residence certificate") == "CERTIFICATE OF RESIDENCE"
+
+
+# --- picking the certification template ---------------------------------------
+
+
+def _cert_template(db, storage, owner, title, statement, name="template.docx", default=False):
+    from app.models.certification import Certification
+
+    key = f"uploads/{uuid.uuid4()}_{name}"
+    storage["objects"][key] = _docx(title, statement, "Firma / Signature ________")
+    cert = Certification(
+        team_id=owner["team"].id, file_name=name, file_path=key, file_hash="0" * 64, size_bytes=1, is_default=default,
+    )
+    db.add(cert)
+    db.commit()
+    return cert
+
+
+ENGLISH = (
+    "STATEMENT OF ACCURACY",
+    "I, {{translator}}, certify that this is a true translation of the {{document}} from {{source_language}} "
+    "to {{target_language}} and that it is complete. Date: {{date}}",
+)
+ITALIAN = (
+    "DICHIARAZIONE DI TRADUZIONE",
+    "Io sottoscritto {{translator}} dichiaro che la traduzione del documento {{document}} dal {{source_language}} "
+    "al {{target_language}} è conforme al testo originale e che la presente è completa. Data: {{date}}",
+)
+
+
+def test_certification_page_can_be_added_from_a_chosen_template_or_the_standard_one(client, db, storage, project_with_doc):
+    from app.services import cert_page
+
+    owner, project = project_with_doc()
+    english = _cert_template(db, storage, owner, *ENGLISH, name="english.docx")
+    italian = _cert_template(db, storage, owner, *ITALIAN, name="italiano.docx", default=True)
+    _cert_template(db, storage, owner, "Invoice", "x", name="invoice.pdf")
+    url = f"/projects/{project.id}/document/certification"
+    _, v = _get(client, owner, project)
+
+    got = client.get(url, headers=owner["headers"]).json()
+    assert got["present"] is False and got["template_id"] == str(italian.id)
+    assert [t["id"] for t in got["templates"]] == [str(italian.id), str(english.id)]
+    assert got["templates"][0]["is_default"] and got["templates"][1]["name"] == "english.docx"
+
+    r = client.post(url, headers=owner["headers"], json={"version": v, "template_id": str(english.id)})
+    assert r.status_code == 200, r.text
+    assert r.json()["template_id"] == str(english.id)
+    data, v = _get(client, owner, project)
+    texts = _texts(data)
+    assert "STATEMENT OF ACCURACY" in texts and "DICHIARAZIONE DI TRADUZIONE" not in texts
+    db.refresh(project)
+    assert project.certification_template_id == english.id and not project.certification_standard
+    assert client.get(url, headers=owner["headers"]).json()["template_id"] == str(english.id)
+
+    r = client.post(url, headers=owner["headers"], json={"version": v, "template_id": "standard"})
+    assert r.status_code == 200, r.text
+    assert r.json()["template_id"] == "standard"
+    data, v = _get(client, owner, project)
+    texts = _texts(data)
+    assert texts.count("CERTIFIED TRANSLATION") == 1 and "STATEMENT OF ACCURACY" not in texts
+    db.refresh(project)
+    assert project.certification_template_id is None and project.certification_standard
+    assert cert_page.template_for(db, project) is None
+    assert client.get(url, headers=owner["headers"]).json()["template_id"] == "standard"
+
+    # Standard sticks for the export even though the team has a default template.
+    v = client.delete(f"{url}?version={v}", headers=owner["headers"]).json()["version"]
+    texts = _texts(_export(client, owner, project))
+    assert texts.count("CERTIFIED TRANSLATION") == 1 and "DICHIARAZIONE DI TRADUZIONE" not in texts
+
+    assert client.post(url, headers=owner["headers"], json={"version": v, "template_id": "nope"}).status_code == 422
+
+
+def test_switching_template_keeps_the_values_and_replaces_the_page(client, db, storage, project_with_doc):
+    owner, project = project_with_doc()
+    italian = _cert_template(db, storage, owner, *ITALIAN, name="italiano.docx")
+    url = f"/projects/{project.id}/document/certification"
+    _, v = _get(client, owner, project)
+    v = client.post(url, headers=owner["headers"], json={"version": v}).json()["version"]
+    r = client.put(url, headers=owner["headers"], json={"version": v, "fields": {"date": "2026-01-05", "translator": "Anna Verdi"}})
+    v = r.json()["version"]
+
+    # The panel sends its current draft with the switch, including a document title not saved yet.
+    r = client.put(
+        url,
+        headers=owner["headers"],
+        json={
+            "version": v,
+            "template_id": str(italian.id),
+            "fields": {"date": "2026-01-05", "translator": "Anna Verdi", "document": "Residence certificate",
+                       "source_language": "Italian", "target_language": "English"},
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["template_id"] == str(italian.id)
+    fields = body["fields"]
+    assert fields["translator"] == "Anna Verdi" and fields["document"] == "Residence certificate"
+    assert fields["date_iso"] == "2026-01-05" and fields["date"] == cert_locale.format_date(date(2026, 1, 5), "it")
+    assert fields["source_language"] == "Italiano" and fields["target_language"] == "Inglese"
+
+    data, v = _get(client, owner, project)
+    texts = _texts(data)
+    assert texts.count("DICHIARAZIONE DI TRADUZIONE") == 1 and "CERTIFIED TRANSLATION" not in texts
+    assert texts.index("Mr. BIANCHI LUCA, born in Bari") < texts.index("DICHIARAZIONE DI TRADUZIONE")
+    starts = [b for b in _body_xml(data).iter(f"{{{W}}}bookmarkStart") if b.get(f"{{{W}}}name") == "_cert_start"]
+    assert len(starts) == 1
+    db.refresh(project)
+    assert project.certification_template_id == italian.id and not project.certification_standard
+
+    # Same template again: fields update in place, nothing is rebuilt.
+    r = client.put(url, headers=owner["headers"], json={"version": v, "template_id": str(italian.id), "fields": {"translator": "Anna B."}})
+    assert r.status_code == 200 and r.json()["fields"]["translator"] == "Anna B."
+
+    # A normal version: undo brings back the standard page and the panel reads it.
+    assert client.post(f"/projects/{project.id}/document/undo", headers=owner["headers"], json={}).status_code == 200
+    assert client.post(f"/projects/{project.id}/document/undo", headers=owner["headers"], json={}).status_code == 200
+    data, v = _get(client, owner, project)
+    assert "CERTIFIED TRANSLATION" in _texts(data) and "DICHIARAZIONE DI TRADUZIONE" not in _texts(data)
+    got = client.get(url, headers=owner["headers"]).json()
+    assert got["template_id"] == "standard" and got["fields"]["translator"] == "Anna Verdi"
+
+    # The export and later re-adds use the remembered pick.
+    client.delete(f"{url}?version={v}", headers=owner["headers"])
+    texts = _texts(_export(client, owner, project))
+    assert texts.count("DICHIARAZIONE DI TRADUZIONE") == 1 and "CERTIFIED TRANSLATION" not in texts
+
+
+def test_switch_needs_a_page_and_a_word_template_of_the_team(client, db, storage, project_with_doc, make_user):
+    owner, project = project_with_doc()
+    stranger = make_user()
+    theirs = _cert_template(db, storage, stranger, *ENGLISH, name="theirs.docx")
+    pdf = _cert_template(db, storage, owner, "Certificate", "x", name="iso17100.pdf")
+    mine = _cert_template(db, storage, owner, *ENGLISH, name="mine.docx")
+    url = f"/projects/{project.id}/document/certification"
+    _, v = _get(client, owner, project)
+
+    assert client.post(url, headers=owner["headers"], json={"version": v, "template_id": str(theirs.id)}).status_code == 404
+    assert client.post(url, headers=owner["headers"], json={"version": v, "template_id": str(pdf.id)}).status_code == 422
+    assert client.put(url, headers=owner["headers"], json={"version": v, "template_id": str(mine.id)}).status_code == 409
+
+    v = client.post(url, headers=owner["headers"], json={"version": v}).json()["version"]
+    assert client.put(url, headers=owner["headers"], json={"version": v, "template_id": str(theirs.id)}).status_code == 404
+    assert client.put(url, headers=owner["headers"], json={"version": v, "template_id": str(pdf.id)}).status_code == 422
+    db.refresh(project)
+    assert project.certification_template_id is None and not project.certification_standard
+
+
+def test_a_saved_pdf_pick_falls_back_to_a_word_page(client, db, storage, project_with_doc):
+    owner, project = project_with_doc()
+    pdf = _cert_template(db, storage, owner, "Certificate", "x", name="iso17100.pdf")
+    project.certification_template_id = pdf.id
+    db.commit()
+    url = f"/projects/{project.id}/document/certification"
+    _, v = _get(client, owner, project)
+    assert client.get(url, headers=owner["headers"]).json()["template_id"] == "standard"
+    r = client.post(url, headers=owner["headers"], json={"version": v})
+    assert r.status_code == 200, r.text
+
+
+def test_rebuilt_page_stays_where_it_was():
+    data, _ = _tagged("Heading", "Body text")
+    data = docx_certification.add_certification(data, _content(template_ref="standard"))
+    doc = docx_blocks._Doc.load(data)
+    body = doc.trees["word/document.xml"].find(f"{{{W}}}body")
+    tail = etree.SubElement(body, f"{{{W}}}p")
+    etree.SubElement(etree.SubElement(tail, f"{{{W}}}r"), f"{{{W}}}t").text = "Annex"
+    body.append(body.find(f"{{{W}}}sectPr"))
+    data = doc.dump()
+    assert docx_certification.page_template(data) == "standard"
+
+    ref = str(uuid.uuid4())
+    out = docx_certification.add_certification(data, _content(template_ref=ref, statement_override="Other wording"))
+    texts = _texts(out)
+    assert texts[-1] == "Annex" and texts.count("CERTIFIED TRANSLATION") == 1 and "Other wording" in texts
+    assert docx_certification.page_template(out) == ref
+    names = {b.get(f"{{{W}}}name") for b in _body_xml(docx_blocks.strip_blocks(out)).iter(f"{{{W}}}bookmarkStart")}
+    assert not any(n.startswith("_cert_") for n in names)
