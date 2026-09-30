@@ -78,6 +78,7 @@ def storage(monkeypatch):
     monkeypatch.setattr(s3, "upload_file_to_s3", upload)
     monkeypatch.setattr(s3, "download_file_from_s3", download)
     monkeypatch.setattr(s3, "delete_objects_from_s3", delete)
+    monkeypatch.setattr(s3, "stream_object", lambda key, chunk_size=65536: iter([objects[key]]))
     monkeypatch.setattr(s3, "generate_presigned_download_url", lambda key, **kw: f"https://storage.test/{key}")
     monkeypatch.setattr(project_router, "upload_file_to_s3", upload)
     monkeypatch.setattr(project_router, "generate_presigned_download_url", lambda key, **kw: f"https://storage.test/{key}")

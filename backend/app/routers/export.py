@@ -1,8 +1,8 @@
 import logging
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from uuid import UUID
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -96,6 +96,39 @@ def export_pdf_route(
         headers={
             "Content-Disposition": f"attachment; filename=translation_{project_id}.pdf"
         },
+    )
+
+
+@router.get(
+    "/{project_id}/export/delivery.pdf",
+    dependencies=[Depends(require_feature("download_translation"))],
+)
+def export_delivery_pdf_route(
+    project_id: UUID,
+    background_tasks: BackgroundTasks,
+    include_original: bool = Query(True),
+    order: str = Query("translation_first", pattern="^(translation_first|original_first)$"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.delivery_pdf import DeliveryError, build_delivery_pdf, delivery_filename
+    from app.services.s3_service import _attachment
+
+    project = get_user_project_or_404(db, project_id, current_user)
+
+    try:
+        data = build_delivery_pdf(db, project, current_user, include_original=include_original, order=order)
+    except DeliveryError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception:
+        logger.exception("Request failed")
+        raise HTTPException(status_code=500, detail="Delivery PDF export failed")
+
+    background_tasks.add_task(capture_template_in_background, project.id, current_user.id)
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": _attachment(delivery_filename(project))},
     )
 
 

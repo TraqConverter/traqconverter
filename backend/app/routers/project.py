@@ -1756,7 +1756,10 @@ def delete_project(
     if not can_manage_project(db, project, current_user):
         raise HTTPException(status_code=403, detail="Only the uploader or a team admin can delete this project")
     pid = str(project.id)
+    from app.models.delivery_link import DeliveryLink
+
     stored_keys = [project.file_path, project.output_file, project.authored_docx_s3_key]
+    stored_keys += [k for (k,) in db.query(DeliveryLink.file_key).filter(DeliveryLink.project_id == project.id)]
 
     try:
 

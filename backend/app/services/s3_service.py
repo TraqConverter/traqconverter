@@ -125,6 +125,19 @@ def download_file_from_s3(key: str, destination: Path):
 
 
 
+def stream_object(key: str, chunk_size: int = 64 * 1024):
+    """Chunks of an object, read from storage as they are sent on. Opens it now, so a missing key raises here."""
+    body = s3_client.get_object(Bucket=BUCKET_NAME, Key=key)["Body"]
+
+    def _chunks():
+        try:
+            yield from body.iter_chunks(chunk_size)
+        finally:
+            body.close()
+
+    return _chunks()
+
+
 def _attachment(filename: str) -> str:
     from urllib.parse import quote
 
