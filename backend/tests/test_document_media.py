@@ -103,6 +103,18 @@ def test_insert_move_float_resize_delete_round_trip():
     Document(io.BytesIO(data))
 
 
+def test_nudging_a_picture_within_its_own_paragraph_keeps_it():
+    data, ids = _tagged("Title", "Body text")
+    data, image_id = docx_images.insert_image(data, docx_images.prepare_image(_png()), ids[0], "after", 3)
+    own = docx_images.list_images(data)[0]["block_id"]
+    data = docx_images.float_image(data, image_id, own, 100000, 20000)
+    data = docx_images.float_image(data, image_id, own, 200000, 40000)
+    info = docx_images.list_images(data)
+    assert [i["id"] for i in info] == [image_id] and info[0]["block_id"] == own and info[0]["x_emu"] == 200000
+    data = docx_images.move_image(data, image_id, own, "inline")
+    assert [i["id"] for i in docx_images.list_images(data)] == [image_id]
+
+
 def test_every_picture_has_an_editor_marker_right_before_it():
     data, ids = _tagged("One", "Two")
     data, image_id = docx_images.insert_image(data, docx_images.prepare_image(_png()), ids[1], "inline")

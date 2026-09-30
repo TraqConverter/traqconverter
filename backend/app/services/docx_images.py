@@ -321,8 +321,8 @@ def _place_inline(doc: _Doc, run, target_block_id: str, position: str, align: st
         target.addnext(p)
 
 
-def _detach(doc: _Doc, run) -> None:
-    """Remove the picture run; drop its paragraph when nothing else is left in it."""
+def _detach(doc: _Doc, run, keep=None) -> None:
+    """Remove the picture run; drop its paragraph when nothing else is left in it, unless it is `keep`."""
     p = run.getparent()
     prev = run.getprevious()
     if prev is not None and prev.tag == w("bookmarkEnd"):
@@ -333,7 +333,7 @@ def _detach(doc: _Doc, run) -> None:
     p.remove(run)
     while p is not None and p.tag != w("p"):
         p = p.getparent()
-    if p is None or blocks.paragraph_text(p).strip() or next(p.iter(w("drawing")), None) is not None:
+    if p is None or p is keep or blocks.paragraph_text(p).strip() or next(p.iter(w("drawing")), None) is not None:
         return
     if p.find(f"{w('pPr')}/{w('sectPr')}") is not None:
         return
@@ -410,11 +410,11 @@ def move_image(data: bytes, image_id: str, target_block_id: str, position: str =
     if align is not None and align not in ALIGNS:
         raise DocxEditError("align must be left, center or right")
     doc = _Doc.load(data)
-    _block_paragraph(doc, target_block_id)
+    target = _block_paragraph(doc, target_block_id)
     drawing, frame, run = _find_image(doc, image_id)
     if frame.tag == wp("anchor"):
         _rebuild_frame(doc, drawing, frame, floating=False)
-    _detach(doc, run)
+    _detach(doc, run, keep=target)
     _place_inline(doc, run, target_block_id, position, align)
     return _finish(doc)
 
@@ -442,7 +442,8 @@ def float_image(data: bytes, image_id: str, target_block_id: str, x_emu: int, y_
     target = _block_paragraph(doc, target_block_id)
     drawing, frame, run = _find_image(doc, image_id)
     _rebuild_frame(doc, drawing, frame, floating=True, x=x, y=y)
-    _detach(doc, run)
+    # Dropping a picture onto its own empty paragraph must not delete the paragraph it goes back into.
+    _detach(doc, run, keep=target)
     target.insert(_insertion_index(target), run)
     return _finish(doc)
 
