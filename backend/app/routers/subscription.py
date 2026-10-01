@@ -7,6 +7,7 @@ import stripe
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.dependencies.feature_guard import effective_plan
 from app.models.user import User
 from app.models.team import Team
 from app.models.team_member import TeamMember
@@ -358,6 +359,8 @@ CREDIT_PACKS = {
     for pack in PLAN_CREDIT_PACKS
 }
 
+PACKS_NEED_A_PLAN = "Extra page packs are for subscribers. Choose a plan first."
+
 
 
 
@@ -385,6 +388,10 @@ def purchase_credits(
                 f"{sorted(CREDIT_PACKS.keys())}"
             ),
         )
+
+    # A trial can't download yet, so a pack would buy pages it can't use.
+    if effective_plan(db, current_user) not in PAID_PLANS:
+        raise HTTPException(status_code=403, detail=PACKS_NEED_A_PLAN)
 
     price_id = CREDIT_PACKS[amount]
     if not price_id:

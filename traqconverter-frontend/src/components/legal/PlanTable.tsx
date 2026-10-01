@@ -3,7 +3,7 @@
 import Link from "next/link"
 
 import { TableScroll } from "@/components/legal/LegalPage"
-import { euro, usePlans } from "@/lib/plans"
+import { euro, euroCents, usePlans } from "@/lib/plans"
 
 // Live from GET /billing/plans so the Terms never drift from what checkout charges.
 export default function PlanTable() {
@@ -43,15 +43,17 @@ export default function PlanTable() {
         <table>
           <thead>
             <tr>
-              <th>Credit pack</th>
+              <th>Credit pack (subscribers only)</th>
               <th>Price (excl. VAT)</th>
+              <th>Price per credit</th>
             </tr>
           </thead>
           <tbody>
             {catalog.credit_packs.map((c) => (
               <tr key={c.credits}>
                 <td>{c.credits} credits</td>
-                <td>{euro(c.price_eur)}</td>
+                <td>{euroCents(c.price_cents)}</td>
+                <td>{euroCents(Math.round(c.price_per_page_eur * 100))}</td>
               </tr>
             ))}
           </tbody>

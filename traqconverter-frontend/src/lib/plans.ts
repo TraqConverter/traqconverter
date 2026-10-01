@@ -29,7 +29,17 @@ export type TrialPlan = {
   features: PlanFeatures
 }
 
-export type CreditPack = { credits: number; price_eur: number; name: string; note: string; available: boolean }
+// Sold to active subscribers only; save_percent is the per-page saving against the smallest pack.
+export type CreditPack = {
+  credits: number
+  price_cents: number
+  price_eur: number
+  price_per_page_eur: number
+  save_percent: number
+  name: string
+  note: string
+  available: boolean
+}
 
 export type PlanCatalog = {
   currency: string
@@ -88,6 +98,15 @@ export function planDisplayName(tier: string | null | undefined): string {
 
 export function euro(n: number): string {
   return `€${Number.isInteger(n) ? n : n.toFixed(2)}`
+}
+
+// Packs always show cents, so €10.00 sits next to €22.50.
+export function euroCents(cents: number): string {
+  return `€${(cents / 100).toFixed(2)}`
+}
+
+export function packPerPage(pack: CreditPack): string {
+  return `${euroCents(Math.round(pack.price_per_page_eur * 100))} a page`
 }
 
 export function pagesLabel(n: number): string {

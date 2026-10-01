@@ -63,13 +63,16 @@ def _find_portal_configuration(stripe):
     return None
 
 
-def _check_amount(label, price, price_eur, say):
+def _plan_cents(plan):
+    return round(plan["price_eur"] * 100)
+
+
+def _check_amount(label, price, expected_cents, say):
     amount = _get(price, "unit_amount")
     currency = (_get(price, "currency") or "").lower()
-    expected = int(round(price_eur * 100))
     flag = ""
-    if amount != expected or currency != CURRENCY:
-        flag = f"  <-- MISMATCH: PLANS says {expected} {CURRENCY}"
+    if amount != expected_cents or currency != CURRENCY:
+        flag = f"  <-- MISMATCH: expected {expected_cents} {CURRENCY}"
     say(f"  {label}: {_get(price, 'id')} = {amount} {currency}{flag}")
     tax_behavior = _get(price, "tax_behavior")
     if tax_behavior and tax_behavior != "exclusive":
@@ -83,13 +86,13 @@ def _plan_price(stripe, plan, env, dry_run, say):
     configured = env.get(f"STRIPE_PRICE_{code}")
     if configured:
         price = stripe.Price.retrieve(configured)
-        _check_amount(f"{code} (STRIPE_PRICE_{code})", price, plan["price_eur"], say)
+        _check_amount(f"{code} (STRIPE_PRICE_{code})", price, _plan_cents(plan), say)
         return _id(_get(price, "product")), configured, "env"
 
     lookup_key = price_lookup_key(code)
     existing = _find_price_by_lookup_key(stripe, lookup_key)
     if existing:
-        _check_amount(f"{code} (lookup_key {lookup_key})", existing, plan["price_eur"], say)
+        _check_amount(f"{code} (lookup_key {lookup_key})", existing, _plan_cents(plan), say)
         return _id(_get(existing, "product")), _get(existing, "id"), "lookup_key"
 
     product = _find_product(stripe, code)
@@ -105,7 +108,7 @@ def _plan_price(stripe, plan, env, dry_run, say):
         ), "id")
         say(f"  {code}: created product {product_id}")
 
-    unit_amount = int(round(plan["price_eur"] * 100))
+    unit_amount = _plan_cents(plan)
     if dry_run:
         say(f"  {code}: would create price {unit_amount} {CURRENCY}/month, lookup_key {lookup_key}")
         return product_id, PLANNED, "planned"
@@ -194,7 +197,7 @@ def run(stripe, env, dry_run=False, say=print):
         if not price_id:
             say(f"  {name}: not set")
             continue
-        _check_amount(name, stripe.Price.retrieve(price_id), pack["price_eur"], say)
+        _check_amount(name, stripe.Price.retrieve(price_id), pack["price_cents"], say)
 
     say("\nSummary")
     for code, (product_id, price_id) in plan_prices.items():
