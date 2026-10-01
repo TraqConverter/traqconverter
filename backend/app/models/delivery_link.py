@@ -35,7 +35,6 @@ class DeliveryLink(Base):
     protected = Column(Boolean, nullable=False, default=False, server_default=false())
     amount_cents = Column(Integer, nullable=True)
     currency = Column(String(3), nullable=False, default="EUR", server_default="EUR")
-    client_name = Column(String(120), nullable=True)
     paid_claimed_at = Column(DateTime, nullable=True)
     unlocked_at = Column(DateTime, nullable=True)
     unlocked_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

@@ -63,14 +63,16 @@ export default function PrivacyPage() {
         <li>Certification files and templates you upload, stored with a SHA-256 fingerprint.</li>
         <li>Delivery links you create for clients, with their expiry date and download count.</li>
         <li>
-          For protected delivery links (paid before download): the client name you enter, the amount, when the client
-          said they had paid and when you unlocked the link, and the download count. We also store your
-          team&apos;s PayPal.me name. The client pays you directly on PayPal, so we never receive or store their payment
-          details.
+          For protected delivery links (paid before download): the amount, when the client said they had paid, when
+          the link was paid or unlocked, and the download count. We also store your team&apos;s PayPal.me name. We
+          don&apos;t collect or store the names or email addresses of your clients. A client who pays on PayPal pays
+          you directly, so we never receive or store their payment details.
         </li>
         <li>
-          Payments for protected links are processed by Stripe on the translator&apos;s own Stripe account; we store
-          only the Stripe account ID and payment status, never card or bank details.
+          When a client pays a protected link through Stripe, Stripe collects the payment details on the
+          translator&apos;s own Stripe account, as the translator&apos;s payment provider. We only receive the payment
+          status, the amount and the payment reference, and we store your team&apos;s Stripe account ID. We never
+          receive card or bank details.
         </li>
       </ul>
       <p>

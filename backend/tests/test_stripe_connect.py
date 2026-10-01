@@ -92,7 +92,7 @@ def team_with_stripe(client, db, storage, make_user, make_project, stub_export):
 
 
 def _protected(client, user, project, **extra):
-    body = {"protected": True, "amount": "45.50", "client_name": "Mario Rossi", **extra}
+    body = {"protected": True, "amount": "45.50", **extra}
     r = client.post(f"/projects/{project.id}/delivery-links", json=body, headers=user["headers"])
     assert r.status_code == 200, r.text
     return r.json(), r.json()["url"].rsplit("/d/", 1)[1]
@@ -296,8 +296,8 @@ def test_webhook_unlocks_and_emails_the_creator(client, db, storage, monkeypatch
 
     [mail] = emails
     assert mail["to"] == "translator@traqtest.io"
-    assert mail["subject"] == "Mario Rossi paid €45.50"
-    assert ("Mario Rossi paid €45.50 for diploma - translation.pdf. "
+    assert mail["subject"] == "Your client paid €45.50"
+    assert ("Your client paid €45.50 for diploma - translation.pdf. "
             "The document is now unlocked for them.") in mail["text_fallback"]
     listed = client.get(f"/projects/{project.id}/delivery-links", headers=owner["headers"]).json()[0]
     assert listed["payment_status"] == "paid" and listed["paid_at"] is not None
@@ -307,6 +307,40 @@ def test_webhook_unlocks_and_emails_the_creator(client, db, storage, monkeypatch
     again = _event(body["id"], type="checkout.session.async_payment_succeeded")
     assert _post(client, monkeypatch, again).status_code == 200
     assert len(emails) == 1
+
+
+def test_webhook_stores_nothing_from_customer_details(client, db, monkeypatch, caplog, team_with_stripe, calls,
+                                                      emails, connect_secret):
+    owner, translator, project = team_with_stripe
+    body, _ = _protected(client, translator, project)
+    before = {c.name: getattr(db.query(DeliveryLink).one(), c.name) for c in DeliveryLink.__table__.columns}
+    event = _event(body["id"])
+    event["data"]["object"].update(
+        customer_details={
+            "email": "mario.rossi@example.com",
+            "name": "Mario Rossi",
+            "phone": "+39 333 1234567",
+            "address": {"line1": "Via Roma 1", "city": "Milano", "postal_code": "20100", "country": "IT"},
+        },
+        customer_email="mario.rossi@example.com",
+        customer="cus_123",
+    )
+    with caplog.at_level("DEBUG"):
+        assert _post(client, monkeypatch, event).json() == {"status": "unlocked"}
+
+    row = db.query(DeliveryLink).one()
+    db.refresh(row)
+    after = {c.name: getattr(row, c.name) for c in DeliveryLink.__table__.columns}
+    changed = {k for k in after if after[k] != before[k]}
+    assert changed <= {"stripe_payment_intent", "paid_at", "unlocked_at", "preview_keys"}
+    assert row.stripe_payment_intent == "pi_123" and row.paid_at is not None and row.amount_cents == 4550
+    for needle in ("Mario", "mario.rossi", "Via Roma", "Milano", "333 1234567", "cus_123"):
+        assert not any(needle in str(v) for v in after.values())
+        assert needle not in caplog.text
+        assert all(needle not in m["subject"] and needle not in m["text_fallback"] for m in emails)
+    stored = db.query(StripeEvent).filter(StripeEvent.id == event["id"]).one()
+    assert {c.name for c in StripeEvent.__table__.columns} == {"id", "event_type", "created_at"}
+    assert stored.event_type == "checkout.session.completed"
 
 
 def test_webhook_ignores_another_account(client, db, monkeypatch, team_with_stripe, calls, emails, connect_secret):

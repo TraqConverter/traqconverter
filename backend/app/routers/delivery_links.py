@@ -8,7 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -54,7 +54,6 @@ def _serialize(link: DeliveryLink) -> dict:
         "protected": bool(link.protected),
         "amount": _amount(link),
         "currency": link.currency or "EUR",
-        "client_name": link.client_name,
         "payment_status": delivery_links.payment_status(link),
         "paid_claimed_at": _iso(link.paid_claimed_at),
         "unlocked_at": _iso(link.unlocked_at),
@@ -73,11 +72,10 @@ class _CreatePayload(BaseModel):
     protected: bool = False
     amount: Optional[Decimal] = None
     currency: Literal["EUR", "GBP", "USD"] = "EUR"
-    client_name: Optional[str] = Field(default=None, max_length=120)
 
 
-def _protected_options(db: Session, project: TranslationProject, data: _CreatePayload) -> tuple[int, Optional[str]]:
-    """(amount in cents, client name) for a protected link, or 422."""
+def _protected_amount(db: Session, project: TranslationProject, data: _CreatePayload) -> int:
+    """The amount in cents for a protected link, or 422."""
     if data.amount is None:
         raise HTTPException(status_code=422, detail="Enter the amount the client should pay")
     try:
@@ -89,8 +87,7 @@ def _protected_options(db: Session, project: TranslationProject, data: _CreatePa
         raise HTTPException(
             status_code=422, detail="Connect Stripe or add your PayPal.me name in Settings → Payments first"
         )
-    name = " ".join((data.client_name or "").split()) or None
-    return cents, name
+    return cents
 
 
 @router.post(
@@ -112,7 +109,7 @@ def create_delivery_link(
     project = get_user_project_or_404(db, project_id, current_user)
     if project.status != ProjectStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="The translation must finish before it can be shared.")
-    cents, client_name = _protected_options(db, project, data) if data.protected else (None, None)
+    cents = _protected_amount(db, project, data) if data.protected else None
     # The preview is rendered from the delivery PDF, so that's what a protected link always holds.
     kind = "delivery_pdf" if data.protected else data.kind
     days = data.expires_in_days or (delivery_links.PROTECTED_EXPIRY_DAYS if data.protected else 7)
@@ -126,7 +123,6 @@ def create_delivery_link(
             protected=data.protected,
             amount_cents=cents,
             currency=data.currency,
-            client_name=client_name,
         )
     except DeliveryError as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -245,7 +241,6 @@ def public_delivery_info(token: str, db: Session = Depends(get_db)):
         body.update(
             amount=_amount(link),
             currency=link.currency or "EUR",
-            client_name=link.client_name,
             paid_claimed=link.paid_claimed_at is not None,
         )
         if body["locked"]:
@@ -353,16 +348,15 @@ def _notify_paid(link_id) -> None:
         recipient = delivery_links.notification_recipient(db, link)
         if recipient is None or not recipient.email:
             return
-        client = link.client_name or "Your client"
         amount = paypal.display_amount(link.amount_cents or 0, link.currency or "EUR")
         message = (
-            f"{client} says they've paid {amount} for {link.file_name}. "
+            f"Your client says they've paid {amount} for {link.file_name}. "
             "Check PayPal, then unlock it in the editor (Share with client)."
         )
         editor = f"{settings.FRONTEND_URL.rstrip('/')}/editor/{link.project_id}"
         email_service.send_email(
             to=recipient.email,
-            subject=f"{client} says they've paid {amount}",
+            subject=f"Your client says they've paid {amount}",
             html=f'<p>{html.escape(message)}</p><p><a href="{html.escape(editor)}">Open the project</a></p>',
             text_fallback=f"{message}\n\n{editor}",
         )
@@ -386,13 +380,12 @@ def notify_stripe_paid(link_id) -> None:
         recipient = delivery_links.notification_recipient(db, link)
         if recipient is None or not recipient.email:
             return
-        client = link.client_name or "Your client"
         amount = paypal.display_amount(link.amount_cents or 0, link.currency or "EUR")
-        message = f"{client} paid {amount} for {link.file_name}. The document is now unlocked for them."
+        message = f"Your client paid {amount} for {link.file_name}. The document is now unlocked for them."
         editor = f"{settings.FRONTEND_URL.rstrip('/')}/editor/{link.project_id}"
         email_service.send_email(
             to=recipient.email,
-            subject=f"{client} paid {amount}",
+            subject=f"Your client paid {amount}",
             html=f'<p>{html.escape(message)}</p><p><a href="{html.escape(editor)}">Open the project</a></p>',
             text_fallback=f"{message}\n\n{editor}",
         )
