@@ -123,7 +123,7 @@ def _plan_price(stripe, plan, env, dry_run, say):
 
 
 def portal_features(plan_prices):
-    """Portal features allowing a switch between every paid plan's price."""
+    """Portal features allowing a switch between every paid plan's price, never a quantity change."""
     products = {}
     for product_id, price_id in plan_prices.values():
         products.setdefault(product_id, []).append(price_id)
@@ -132,7 +132,11 @@ def portal_features(plan_prices):
             "enabled": True,
             "default_allowed_updates": ["price"],
             "proration_behavior": "create_prorations",
-            "products": [{"product": p, "prices": prices} for p, prices in products.items()],
+            # A subscription grants one plan's credits whatever its quantity.
+            "products": [
+                {"product": p, "prices": prices, "adjustable_quantity": {"enabled": False}}
+                for p, prices in products.items()
+            ],
         },
         "subscription_cancel": {"enabled": True, "mode": "at_period_end"},
         "payment_method_update": {"enabled": True},

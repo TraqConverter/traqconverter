@@ -115,7 +115,6 @@ def create(
     protected: bool = False,
     amount_cents: Optional[int] = None,
     currency: str = "EUR",
-    client_name: Optional[str] = None,
 ) -> tuple[DeliveryLink, str]:
     """Renders the file now, so later edits don't change what the client gets. Returns (link, token)."""
     data = render(db, project, user, kind)
@@ -140,7 +139,6 @@ def create(
         protected=protected,
         amount_cents=amount_cents if protected else None,
         currency=currency,
-        client_name=client_name if protected else None,
         preview_pages=preview_pages,
         original_pages=original_pages,
     )

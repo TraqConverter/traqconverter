@@ -21,7 +21,6 @@ type DeliveryLink = {
   protected: boolean
   amount: number | null
   currency: string
-  client_name: string | null
   payment_status: PaymentStatus | null
   paid_claimed_at: string | null
   unlocked_at: string | null
@@ -97,7 +96,6 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
   const [revoking, setRevoking] = useState<string | null>(null)
   const [isProtected, setIsProtected] = useState(false)
   const [amount, setAmount] = useState("")
-  const [clientName, setClientName] = useState("")
   const [payments, setPayments] = useState<Payments | null>(null)
   const [confirmUnlock, setConfirmUnlock] = useState<string | null>(null)
   const [unlocking, setUnlocking] = useState<string | null>(null)
@@ -157,7 +155,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
       const res = await api.post<{ url: string }>(`/projects/${projectId}/delivery-links`, {
         kind,
         expires_in_days: days,
-        ...(isProtected ? { protected: true, amount: parsedAmount, client_name: clientName.trim() || null } : {}),
+        ...(isProtected ? { protected: true, amount: parsedAmount } : {}),
       })
       setUrl(res.data.url)
       setCopied(await copyText(res.data.url))
@@ -313,38 +311,23 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.4fr] gap-2">
-                    <label className="block">
-                      <span className="block text-[12px] font-semibold mb-1" style={{ color: "#4a4638" }}>
-                        Amount (€)
-                      </span>
-                      <input
-                        value={amount}
-                        onChange={(e) => setAmount(e.target.value)}
-                        inputMode="decimal"
-                        placeholder="45"
-                        className="w-full rounded-lg px-3 py-2 text-sm outline-none"
-                        style={{
-                          background: "#faf5ee",
-                          border: `1px solid ${amountInvalid ? "#ecc9c1" : "#e7ddc5"}`,
-                          color: "#1f2a2e",
-                        }}
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="block text-[12px] font-semibold mb-1" style={{ color: "#4a4638" }}>
-                        Client name
-                      </span>
-                      <input
-                        value={clientName}
-                        onChange={(e) => setClientName(e.target.value)}
-                        maxLength={120}
-                        placeholder="Shown on the watermark"
-                        className="w-full rounded-lg px-3 py-2 text-sm outline-none"
-                        style={{ background: "#faf5ee", border: "1px solid #e7ddc5", color: "#1f2a2e" }}
-                      />
-                    </label>
-                  </div>
+                  <label className="block sm:w-1/2">
+                    <span className="block text-[12px] font-semibold mb-1" style={{ color: "#4a4638" }}>
+                      Amount (€)
+                    </span>
+                    <input
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      inputMode="decimal"
+                      placeholder="45"
+                      className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+                      style={{
+                        background: "#faf5ee",
+                        border: `1px solid ${amountInvalid ? "#ecc9c1" : "#e7ddc5"}`,
+                        color: "#1f2a2e",
+                      }}
+                    />
+                  </label>
                   <div className="text-[12px] mt-2 break-all" style={{ color: amountInvalid ? "#b14a3a" : "#8a8270" }}>
                     {amountInvalid
                       ? `Enter an amount above 0 and up to ${MAX_AMOUNT}.`
@@ -451,7 +434,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                               {PAYMENT_LABEL[l.payment_status]}
                             </span>
                             <span className="text-[12px]" style={{ color: "#8a8270" }}>
-                              {[money(l.amount, l.currency), l.client_name].filter(Boolean).join(" · ")}
+                              {[money(l.amount, l.currency), `Created ${shortDate(l.created_at)}`].filter(Boolean).join(" · ")}
                             </span>
                           </div>
                         )}
@@ -481,7 +464,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                     {confirmUnlock === l.id && (
                       <div className="mt-2 rounded-lg p-2.5" style={{ background: "#e1efec", border: "1px solid #cfe6e2" }}>
                         <div className="text-[13px] mb-2" style={{ color: "#1f2a2e" }}>
-                          Check PayPal first. Once unlocked, {l.client_name || "the client"} can download the clean file from the same link.
+                          Check PayPal first. Once unlocked, the client can download the clean file from the same link.
                         </div>
                         <div className="flex gap-2 justify-end">
                           <button

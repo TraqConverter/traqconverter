@@ -170,8 +170,8 @@ def _font(size: int, text: str):
         return ImageFont.load_default(size=size)
 
 
-def watermark_text(client_name: str | None, day: date) -> str:
-    return f"PREVIEW – NOT VALID – UNPAID · {(client_name or '').strip() or 'Client'} · {day.strftime('%d %b %Y')}"
+def watermark_text(day: date) -> str:
+    return f"PREVIEW – NOT VALID – UNPAID · {day.strftime('%d %b %Y')}"
 
 
 def _watermark(img, text: str):
@@ -245,12 +245,12 @@ def render_page(page, watermark: str) -> bytes:
     return buf.getvalue()
 
 
-def render_preview(pdf: bytes, client_name: str | None, day: date) -> list[bytes]:
+def render_preview(pdf: bytes, day: date) -> list[bytes]:
     """PNGs of the translation pages; the separator and the original's pages are left out."""
     import fitz
 
     shown, _ = split_pages(pdf)
-    text = watermark_text(client_name, day)
+    text = watermark_text(day)
     with fitz.open(stream=pdf, filetype="pdf") as doc:
         return [render_page(doc[i], text) for i in range(shown)]
 
@@ -296,7 +296,7 @@ def ensure(db: Session, link: DeliveryLink) -> list[str]:
         return list(row.preview_keys)
     try:
         day = row.created_at.date() if row.created_at else date.today()
-        pages = render_preview(_download(row.file_key), row.client_name, day)
+        pages = render_preview(_download(row.file_key), day)
         keys = [_upload(png, row.id, n) for n, png in enumerate(pages, start=1)]
     except Exception:
         db.rollback()

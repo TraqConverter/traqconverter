@@ -17,7 +17,6 @@ type Info = {
   locked?: boolean
   amount?: number | null
   currency?: string
-  client_name?: string | null
   paid_claimed?: boolean
   preview_pages?: number
   original_pages?: number
@@ -192,7 +191,7 @@ function LockedPreview({
 
   return (
     <>
-      <FileHeading info={info} subtitle={[amount && `Amount due: ${amount}`, info.client_name && `for ${info.client_name}`].filter(Boolean).join(" · ")} />
+      <FileHeading info={info} subtitle={amount ? `Amount due: ${amount}` : ""} />
 
       <p className="text-[13px] mb-4" style={{ color: "#6b6558" }}>
         This is a protected preview. The complete, unwatermarked document becomes available here once payment is confirmed.

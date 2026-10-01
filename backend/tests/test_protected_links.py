@@ -62,7 +62,7 @@ def _create(client, owner, project, **body):
 
 
 def _protected(client, owner, project, **extra):
-    body = {"protected": True, "amount": 45, "client_name": "Mario Rossi", **extra}
+    body = {"protected": True, "amount": 45, **extra}
     r = _create(client, owner, project, **body)
     assert r.status_code == 200, r.text
     return r.json(), r.json()["url"].rsplit("/d/", 1)[1]
@@ -146,7 +146,6 @@ def test_protected_link_needs_the_handle_and_an_amount(client, db, shared):
     assert _create(client, owner, project, protected=True).status_code == 422
     for amount in (0, -5, 100000.01):
         assert _create(client, owner, project, protected=True, amount=amount).status_code == 422
-    assert _create(client, owner, project, protected=True, amount=10, client_name="x" * 121).status_code == 422
 
     owner["team"].paypal_me = None
     db.commit()
@@ -156,12 +155,26 @@ def test_protected_link_needs_the_handle_and_an_amount(client, db, shared):
     assert db.query(DeliveryLink).count() == 0
 
 
+def test_client_name_in_the_body_is_ignored_and_not_stored(client, db, shared):
+    owner, project = shared
+    body, token = _protected(client, owner, project, client_name="Mario Rossi", client_email="mario@example.com")
+    assert "client_name" not in body
+    assert not hasattr(DeliveryLink, "client_name")
+    assert "client_name" not in {c.name for c in DeliveryLink.__table__.columns}
+    row = db.query(DeliveryLink).one()
+    values = {c.name: getattr(row, c.name) for c in DeliveryLink.__table__.columns}
+    assert not any("Mario" in str(v) or "mario@" in str(v) for v in values.values())
+    listed = client.get(f"/projects/{project.id}/delivery-links", headers=owner["headers"]).json()[0]
+    assert "client_name" not in listed
+    assert "client_name" not in client.get(f"/public/delivery/{token}").json()
+
+
 def test_protected_link_is_a_30_day_delivery_pdf(client, db, shared):
     owner, project = shared
     body, _ = _protected(client, owner, project, kind="docx", amount="45.50")
     assert body["kind"] == "delivery_pdf"
     assert body["protected"] is True and body["amount"] == 45.5 and body["currency"] == "EUR"
-    assert body["client_name"] == "Mario Rossi"
+    assert "client_name" not in body
     assert body["payment_status"] == "awaiting"
     row = db.query(DeliveryLink).one()
     assert row.amount_cents == 4550
@@ -181,7 +194,7 @@ def test_public_info_of_a_locked_link(client, shared):
     info = client.get(f"/public/delivery/{token}").json()
     assert info["protected"] is True and info["locked"] is True
     assert info["amount"] == 45.5 and info["currency"] == "EUR"
-    assert info["client_name"] == "Mario Rossi"
+    assert "client_name" not in info
     assert info["company"] == "Espresso Translations"
     assert info["preview_pages"] == 2 and info["original_pages"] == 3
     assert info["paypal_url"] == "https://paypal.me/EspressoTranslations/45.50EUR"
@@ -284,8 +297,9 @@ def test_paid_claim_is_recorded_once_and_emails_once(client, db, shared, emails)
     assert len(emails) == 1
     mail = emails[0]
     assert mail["to"] == "translator@traqtest.io"
+    assert mail["subject"] == "Your client says they've paid €45.50"
     assert (
-        "Mario Rossi says they've paid €45.50 for diploma - translation.pdf. "
+        "Your client says they've paid €45.50 for diploma - translation.pdf. "
         "Check PayPal, then unlock it in the editor (Share with client)."
     ) in mail["text_fallback"]
     assert client.get(f"/public/delivery/{token}").json()["paid_claimed"] is True
@@ -375,13 +389,20 @@ def test_watermark_covers_the_whole_page():
 
     doc = fitz.open()
     page = doc.new_page()
-    img = Image.open(io.BytesIO(protected_preview.render_page(page, protected_preview.watermark_text(None, date(2026, 10, 1)))))
+    img = Image.open(io.BytesIO(protected_preview.render_page(page, protected_preview.watermark_text(date(2026, 10, 1)))))
     w, h = img.size
     for x0, y0 in ((0, 0), (w // 2, 0), (0, h // 2), (w // 2, h // 2)):
         quadrant = img.crop((x0, y0, x0 + w // 2, y0 + h // 2)).convert("L")
         assert sum(1 for p in quadrant.getdata() if p < 235) > 500
     doc.close()
-    assert protected_preview.watermark_text(" ", date(2026, 10, 1)) == "PREVIEW – NOT VALID – UNPAID · Client · 01 Oct 2026"
+
+
+def test_watermark_names_no_one():
+    import inspect
+
+    assert protected_preview.watermark_text(date(2026, 10, 1)) == "PREVIEW – NOT VALID – UNPAID · 01 Oct 2026"
+    assert list(inspect.signature(protected_preview.watermark_text).parameters) == ["day"]
+    assert list(inspect.signature(protected_preview.render_preview).parameters) == ["pdf", "day"]
 
 
 def test_preview_leaves_out_the_original():
@@ -393,7 +414,7 @@ def test_preview_leaves_out_the_original():
     data = doc.tobytes()
     doc.close()
     assert protected_preview.split_pages(data) == (2, 2)
-    assert len(protected_preview.render_preview(data, "Anna", date(2026, 10, 1))) == 2
+    assert len(protected_preview.render_preview(data, date(2026, 10, 1))) == 2
     assert protected_preview.split_pages(_pdf(3, "x")) == (3, 0)
 
 

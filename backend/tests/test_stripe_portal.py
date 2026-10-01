@@ -407,6 +407,19 @@ def test_setup_dry_run_plans_missing_prices_without_creating():
     assert "STUDIO: would create product" not in text
 
 
+def test_portal_allows_plan_switches_but_never_quantity_changes():
+    from scripts import stripe_setup
+
+    update = stripe_setup.portal_features(
+        {"BASIC": ("prod_basic", "price_basic"), "PRO": ("prod_pro", "price_pro"), "PRO_Y": ("prod_pro", "price_pro_y")}
+    )["subscription_update"]
+    assert update["default_allowed_updates"] == ["price"]
+    assert update["products"] == [
+        {"product": "prod_basic", "prices": ["price_basic"], "adjustable_quantity": {"enabled": False}},
+        {"product": "prod_pro", "prices": ["price_pro", "price_pro_y"], "adjustable_quantity": {"enabled": False}},
+    ]
+
+
 def test_setup_creates_missing_prices_and_the_portal():
     from scripts import stripe_setup
 
@@ -422,6 +435,8 @@ def test_setup_creates_missing_prices_and_the_portal():
     update = portal["features"]["subscription_update"]
     assert update["enabled"] and update["proration_behavior"] == "create_prorations"
     assert {p["product"] for p in update["products"]} == {"prod_basic", "prod_pro", "prod_studio", "prod_new_2"}
+    assert update["default_allowed_updates"] == ["price"]
+    assert all(p["adjustable_quantity"] == {"enabled": False} for p in update["products"])
     assert portal["features"]["subscription_cancel"] == {"enabled": True, "mode": "at_period_end"}
     assert portal["features"]["payment_method_update"] == {"enabled": True}
     assert portal["features"]["invoice_history"] == {"enabled": True}
