@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useSyncExternalStore } from "react"
 import { useParams } from "next/navigation"
 import { apiBaseUrl } from "@/lib/api"
 
@@ -22,12 +22,22 @@ type Info = {
   preview_pages?: number
   original_pages?: number
   paypal_url?: string | null
+  card_payment?: boolean
 }
 
 type State = { phase: "loading" } | { phase: "ready"; info: Info } | { phase: "gone"; info: Info } | { phase: "missing" } | { phase: "error"; message: string }
 
 // While the client waits for the unlock, the page checks back this often.
 const UNLOCK_POLL_MS = 30_000
+// Back from Stripe Checkout, the webhook usually lands within seconds.
+const PAID_POLL_MS = 3_000
+const PAID_POLL_TRIES = 20
+
+const noSubscription = () => () => {}
+
+function returnedFromCheckout() {
+  return new URLSearchParams(window.location.search).get("paid") === "1"
+}
 
 function formatSize(bytes?: number | null) {
   if (!bytes) return ""
@@ -118,9 +128,23 @@ function Download({ token, info }: { token: string; info: Info }) {
   )
 }
 
-function LockedPreview({ token, info, onClaimed }: { token: string; info: Info; onClaimed: () => void }) {
+type Confirming = "no" | "checking" | "slow"
+
+function LockedPreview({
+  token,
+  info,
+  confirming,
+  onClaimed,
+}: {
+  token: string
+  info: Info
+  confirming: Confirming
+  onClaimed: () => void
+}) {
   const [claiming, setClaiming] = useState(false)
   const [claimError, setClaimError] = useState("")
+  const [paying, setPaying] = useState(false)
+  const [payError, setPayError] = useState("")
   const amount = formatAmount(info.amount, info.currency)
   const pages = Array.from({ length: info.preview_pages || 0 }, (_, i) => i + 1)
   const original = info.original_pages || 0
@@ -140,6 +164,32 @@ function LockedPreview({ token, info, onClaimed }: { token: string; info: Info; 
     }
   }
 
+  const pay = async () => {
+    setPaying(true)
+    setPayError("")
+    try {
+      const res = await fetch(publicUrl(token, "/checkout"), { method: "POST", credentials: "omit", cache: "no-store" })
+      if (res.ok) {
+        const { checkout_url } = (await res.json()) as { checkout_url: string }
+        window.location.href = checkout_url
+        return
+      }
+      setPayError(
+        res.status === 429
+          ? "Too many attempts. Try again in a few minutes."
+          : res.status === 409
+          ? "Online payment isn't available for this link any more. Reload the page."
+          : "Payment couldn't start. Try again in a moment.",
+      )
+    } catch {
+      setPayError("Payment couldn't start. Check your connection and try again.")
+    }
+    setPaying(false)
+  }
+
+  const card = !!info.card_payment
+  const showClaim = !!info.paypal_url || !card
+
   return (
     <>
       <FileHeading info={info} subtitle={[amount && `Amount due: ${amount}`, info.client_name && `for ${info.client_name}`].filter(Boolean).join(" · ")} />
@@ -148,36 +198,67 @@ function LockedPreview({ token, info, onClaimed }: { token: string; info: Info; 
         This is a protected preview. The complete, unwatermarked document becomes available here once payment is confirmed.
       </p>
 
-      {info.paid_claimed ? (
+      {confirming !== "no" ? (
+        <div className="rounded-xl px-4 py-3 text-sm text-center" style={{ background: "#e1efec", color: "#0a5e58" }}>
+          {confirming === "checking"
+            ? "Payment received, unlocking…"
+            : "Payment received. Stripe is still confirming it; this page updates by itself when it's done."}
+        </div>
+      ) : info.paid_claimed ? (
         <div className="rounded-xl px-4 py-3 text-sm text-center" style={{ background: "#e1efec", color: "#0a5e58" }}>
           Thanks — the translator will unlock your document shortly.
         </div>
       ) : (
         <div className="flex flex-col gap-2">
+          {card && (
+            <>
+              <button
+                type="button"
+                onClick={() => void pay()}
+                disabled={paying}
+                className="flex items-center justify-center w-full rounded-full px-5 py-3 text-[15px] font-semibold"
+                style={{ background: "#0a7870", color: "#ffffff", opacity: paying ? 0.7 : 1 }}
+              >
+                {paying ? "Opening secure payment…" : `Pay ${amount}`}
+              </button>
+              <div className="text-[12px] text-center" style={{ color: "#8a8270" }}>
+                Card, Apple Pay, Google Pay and more, on Stripe. The document unlocks as soon as the payment goes through.
+              </div>
+            </>
+          )}
+          {payError && (
+            <div className="text-[13px] text-center" style={{ color: "#7a2f24" }}>
+              {payError}
+            </div>
+          )}
           {info.paypal_url ? (
             <a
               href={info.paypal_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center w-full rounded-full px-5 py-3 text-[15px] font-semibold"
-              style={{ background: "#0a7870", color: "#ffffff" }}
+              className={`flex items-center justify-center w-full rounded-full px-5 font-semibold ${card ? "py-2.5 text-sm mt-1" : "py-3 text-[15px]"}`}
+              style={card ? { background: "#ffffff", color: "#0a5e58", border: "1px solid #0a7870" } : { background: "#0a7870", color: "#ffffff" }}
             >
-              Pay {amount} with PayPal
+              {card ? "Or pay with PayPal.me" : `Pay ${amount} with PayPal`}
             </a>
           ) : (
-            <div className="text-sm text-center" style={{ color: "#6b6558" }}>
-              {info.company ? `Ask ${info.company} how to pay.` : "Ask the sender how to pay."}
-            </div>
+            !card && (
+              <div className="text-sm text-center" style={{ color: "#6b6558" }}>
+                {info.company ? `Contact ${info.company} to pay.` : "Contact the translator to pay."}
+              </div>
+            )
           )}
-          <button
-            type="button"
-            onClick={() => void claim()}
-            disabled={claiming}
-            className="w-full rounded-full px-5 py-2.5 text-sm font-semibold"
-            style={{ background: "#ffffff", color: "#0a5e58", border: "1px solid #0a7870", opacity: claiming ? 0.7 : 1 }}
-          >
-            {claiming ? "Sending…" : "I've paid"}
-          </button>
+          {showClaim && (
+            <button
+              type="button"
+              onClick={() => void claim()}
+              disabled={claiming}
+              className="w-full rounded-full px-5 py-2.5 text-sm font-semibold"
+              style={{ background: "#ffffff", color: "#0a5e58", border: "1px solid #0a7870", opacity: claiming ? 0.7 : 1 }}
+            >
+              {claiming ? "Sending…" : card ? "I've paid on PayPal" : "I've paid"}
+            </button>
+          )}
           {claimError && (
             <div className="text-[13px] text-center" style={{ color: "#7a2f24" }}>
               {claimError}
@@ -230,7 +311,34 @@ export default function DeliveryPage() {
     }
   }, [token])
 
-  const waitingForUnlock = state.phase === "ready" && !!state.info.locked && !!state.info.paid_claimed
+  const paidReturn = useSyncExternalStore(noSubscription, returnedFromCheckout, () => false)
+  const [paidPollDone, setPaidPollDone] = useState(false)
+  const locked = state.phase === "ready" && !!state.info.locked
+
+  // Back from Stripe: check every few seconds until the webhook unlocks the link, then drop ?paid=1.
+  useEffect(() => {
+    if (!paidReturn) return
+    if (state.phase === "ready" && !locked) {
+      window.history.replaceState(null, "", window.location.pathname)
+      return
+    }
+    if (!locked || paidPollDone) return
+    let tries = 0
+    const timer = window.setInterval(() => {
+      tries += 1
+      if (tries >= PAID_POLL_TRIES) {
+        window.clearInterval(timer)
+        setPaidPollDone(true)
+      }
+      void loadInfo(token).then((s) => {
+        if (s.phase === "ready" || s.phase === "gone") setState(s)
+      })
+    }, PAID_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [paidReturn, paidPollDone, locked, state.phase, token])
+
+  const confirming: Confirming = paidReturn && locked ? (paidPollDone ? "slow" : "checking") : "no"
+  const waitingForUnlock = locked && ((state.phase === "ready" && !!state.info.paid_claimed) || confirming === "slow")
 
   useEffect(() => {
     if (!waitingForUnlock) return
@@ -243,7 +351,6 @@ export default function DeliveryPage() {
   }, [waitingForUnlock, token])
 
   const company = state.phase === "ready" || state.phase === "gone" ? state.info.company : ""
-  const locked = state.phase === "ready" && !!state.info.locked
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center px-4 py-10" style={{ background: "#faf5ee" }}>
@@ -268,6 +375,7 @@ export default function DeliveryPage() {
               <LockedPreview
                 token={token}
                 info={state.info}
+                confirming={confirming}
                 onClaimed={() => setState({ phase: "ready", info: { ...state.info, paid_claimed: true } })}
               />
             ) : (

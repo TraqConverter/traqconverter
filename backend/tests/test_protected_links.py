@@ -46,15 +46,6 @@ def stub_export(monkeypatch):
 
 
 @pytest.fixture()
-def emails(monkeypatch):
-    import app.services.email_service as email_service
-
-    sent: list[dict] = []
-    monkeypatch.setattr(email_service, "send_email", lambda **kw: sent.append(kw) or True)
-    return sent
-
-
-@pytest.fixture()
 def shared(client, db, storage, make_user, make_project, stub_export):
     owner = make_user(email="translator@traqtest.io")
     project = make_project(owner)
@@ -125,7 +116,15 @@ def test_payment_settings(client, db, make_user):
 
     r = client.put("/settings/payments", json={"paypal_me": "https://paypal.me/Espresso"}, headers=owner["headers"])
     assert r.status_code == 200
-    assert r.json() == {"paypal_me": "Espresso", "paypal_url": "https://paypal.me/Espresso", "can_edit": True}
+    assert r.json() == {
+        "paypal_me": "Espresso",
+        "paypal_url": "https://paypal.me/Espresso",
+        "can_edit": True,
+        "stripe_status": None,
+        "stripe_charges_enabled": False,
+        "stripe_details_submitted": False,
+        "stripe_requirements_due": 0,
+    }
     db.refresh(owner["team"])
     assert owner["team"].paypal_me == "Espresso"
 
@@ -153,7 +152,7 @@ def test_protected_link_needs_the_handle_and_an_amount(client, db, shared):
     db.commit()
     r = _create(client, owner, project, protected=True, amount=45)
     assert r.status_code == 422
-    assert r.json()["detail"] == "Add your PayPal.me name in Settings → Payments first"
+    assert r.json()["detail"] == "Connect Stripe or add your PayPal.me name in Settings → Payments first"
     assert db.query(DeliveryLink).count() == 0
 
 

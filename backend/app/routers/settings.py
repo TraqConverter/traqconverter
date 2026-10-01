@@ -254,12 +254,22 @@ def _can_edit_team(db: Session, team, user: User) -> bool:
     return bool(member and (member.role or "").upper() == "ADMIN")
 
 
-def _payments(db: Session, team, user: User) -> dict:
+def _payments(db: Session, team, user: User, account=None) -> dict:
+    from app.services import stripe_connect
+
     return {
         "paypal_me": team.paypal_me,
         "paypal_url": f"https://paypal.me/{team.paypal_me}" if team.paypal_me else None,
         "can_edit": _can_edit_team(db, team, user),
+        **stripe_connect.summary(team, account),
     }
+
+
+def _editable_team(db: Session, user: User):
+    team = _resolve_team(db, user)
+    if not _can_edit_team(db, team, user):
+        raise HTTPException(status_code=403, detail="Only the team owner or an admin can change payment settings")
+    return team
 
 
 class _Payments(BaseModel):
@@ -271,8 +281,15 @@ def get_payment_settings(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from app.services import stripe_connect
+
     # Readable by the whole team: the share dialog shows the handle a protected link will use.
-    return _payments(db, _resolve_team(db, current_user), current_user)
+    team = _resolve_team(db, current_user)
+    account = None
+    if team.stripe_account_id and team.stripe_account_status != "active":
+        # Onboarding may have just finished; the webhook can lag behind the redirect back here.
+        account = stripe_connect.refresh(db, team)
+    return _payments(db, team, current_user, account)
 
 
 @router.put("/payments")
@@ -290,5 +307,60 @@ def update_payment_settings(
         team.paypal_me = normalise_handle(payload.paypal_me)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    return _payments(db, team, current_user)
+
+
+class _StripeConnect(BaseModel):
+    country: str | None = None
+
+
+@router.post("/payments/stripe/connect")
+def connect_stripe(
+    payload: _StripeConnect | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create the team's Stripe account if it has none, and return a Stripe onboarding link for it."""
+    import re
+
+    from app.services import stripe_connect
+
+    team = _editable_team(db, current_user)
+    country = (payload.country or "").strip().upper() if payload else ""
+    if country and not re.fullmatch(r"[A-Z]{2}", country):
+        raise HTTPException(status_code=422, detail="country must be a two-letter code")
+    try:
+        account_id = stripe_connect.ensure_account(db, team, current_user, country or None)
+        url = stripe_connect.onboarding_url(account_id)
+    except Exception:
+        db.rollback()
+        logger.exception("Stripe Connect onboarding failed (team=%s)", team.id)
+        raise HTTPException(status_code=502, detail="Stripe isn't reachable right now. Try again in a minute.")
+    return {"url": url}
+
+
+@router.post("/payments/stripe/dashboard")
+def stripe_dashboard(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services import stripe_connect
+
+    team = _editable_team(db, current_user)
+    if not team.stripe_account_id:
+        raise HTTPException(status_code=409, detail="Connect Stripe first")
+    return {"url": stripe_connect.DASHBOARD_URL}
+
+
+@router.delete("/payments/stripe")
+def disconnect_stripe(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Stop taking card payments here. The Stripe account itself stays the translator's."""
+    team = _editable_team(db, current_user)
+    team.stripe_account_id = None
+    team.stripe_account_status = None
     db.commit()
     return _payments(db, team, current_user)

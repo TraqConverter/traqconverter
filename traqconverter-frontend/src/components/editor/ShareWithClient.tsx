@@ -6,7 +6,7 @@ import { api, apiErrorDetail } from "@/lib/api"
 
 type LinkKind = "delivery_pdf" | "pdf" | "docx"
 
-type PaymentStatus = "awaiting" | "claimed" | "unlocked"
+type PaymentStatus = "awaiting" | "claimed" | "unlocked" | "paid"
 
 type DeliveryLink = {
   id: string
@@ -25,9 +25,10 @@ type DeliveryLink = {
   payment_status: PaymentStatus | null
   paid_claimed_at: string | null
   unlocked_at: string | null
+  paid_at: string | null
 }
 
-type Payments = { paypal_me: string | null }
+type Payments = { paypal_me: string | null; stripe_status?: string | null }
 
 const KINDS: { value: LinkKind; label: string }[] = [
   { value: "delivery_pdf", label: "Delivery PDF (translation + certification + original)" },
@@ -45,12 +46,14 @@ const PAYMENT_LABEL: Record<PaymentStatus, string> = {
   awaiting: "Awaiting payment",
   claimed: "Client says paid",
   unlocked: "Unlocked",
+  paid: "Paid ✓ (unlocked automatically)",
 }
 
 const PAYMENT_STYLE: Record<PaymentStatus, { background: string; color: string }> = {
   awaiting: { background: "#f3ecdb", color: "#6b6558" },
   claimed: { background: "#f6e3b8", color: "#7a5a10" },
   unlocked: { background: "#d8ead6", color: "#2d5a24" },
+  paid: { background: "#d8ead6", color: "#2d5a24" },
 }
 
 function parseAmount(raw: string): number | null {
@@ -128,9 +131,11 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
   }, [onClose])
 
   const handle = payments?.paypal_me || null
+  const stripeActive = payments?.stripe_status === "active"
+  const canTakePayment = stripeActive || !!handle
   const parsedAmount = parseAmount(amount)
   const amountInvalid = !!amount.trim() && parsedAmount == null
-  const ready = !isProtected || (!!handle && parsedAmount != null)
+  const ready = !isProtected || (canTakePayment && parsedAmount != null)
 
   const toggleProtected = () => {
     const next = !isProtected
@@ -283,20 +288,22 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                 Protected until paid
               </span>
               <span className="block text-[12px]" style={{ color: "#8a8270" }}>
-                The client sees a watermarked preview and a PayPal button until you unlock the link.
+                {stripeActive
+                  ? "The client sees a watermarked preview until they pay. The link unlocks by itself once Stripe confirms."
+                  : "The client sees a watermarked preview and a PayPal button until you unlock the link."}
               </span>
             </span>
           </button>
 
           {isProtected && (
             <div className="mt-3 pt-3" style={{ borderTop: "1px solid #efe6d0" }}>
-              {!handle ? (
+              {!canTakePayment ? (
                 <div className="text-[13px]" style={{ color: "#7a5a10" }}>
                   {payments === null ? (
                     "Checking your payment settings…"
                   ) : (
                     <>
-                      Add your PayPal.me name first, in{" "}
+                      Connect Stripe or add your PayPal.me name first, in{" "}
                       <Link href="/settings/account#payments" className="font-semibold underline" style={{ color: "#0a5e58" }}>
                         Settings → Payments
                       </Link>
@@ -341,6 +348,8 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                   <div className="text-[12px] mt-2 break-all" style={{ color: amountInvalid ? "#b14a3a" : "#8a8270" }}>
                     {amountInvalid
                       ? `Enter an amount above 0 and up to ${MAX_AMOUNT}.`
+                      : stripeActive
+                      ? `Client pays ${parsedAmount != null ? money(parsedAmount, "EUR") : "the amount"} by card, wallet or PayPal on Stripe${handle ? ", or on PayPal.me" : ""}.`
                       : `Client pays at paypal.me/${handle}/${parsedAmount != null ? amountText(parsedAmount) : "…"}EUR`}
                   </div>
                 </>
@@ -412,7 +421,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
             <ul className="flex flex-col gap-2">
               {links.map((l) => {
                 const claimed = l.payment_status === "claimed" && l.status === "active"
-                const canUnlock = l.status === "active" && l.protected && l.payment_status !== "unlocked"
+                const canUnlock = l.status === "active" && l.protected && l.payment_status !== "unlocked" && l.payment_status !== "paid"
                 return (
                   <li
                     key={l.id}

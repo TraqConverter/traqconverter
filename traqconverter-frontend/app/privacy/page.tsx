@@ -68,6 +68,10 @@ export default function PrivacyPage() {
           team&apos;s PayPal.me name. The client pays you directly on PayPal, so we never receive or store their payment
           details.
         </li>
+        <li>
+          Payments for protected links are processed by Stripe on the translator&apos;s own Stripe account; we store
+          only the Stripe account ID and payment status, never card or bank details.
+        </li>
       </ul>
       <p>
         These documents often contain personal data about third parties, sometimes of a sensitive kind (for

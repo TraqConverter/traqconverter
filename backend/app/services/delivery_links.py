@@ -98,6 +98,8 @@ def is_locked(link: DeliveryLink) -> bool:
 def payment_status(link: DeliveryLink) -> Optional[str]:
     if not link.protected:
         return None
+    if link.paid_at is not None:
+        return "paid"
     if link.unlocked_at is not None:
         return "unlocked"
     return "claimed" if link.paid_claimed_at is not None else "awaiting"
@@ -170,6 +172,49 @@ def unlock(db: Session, link: DeliveryLink, user) -> None:
         link.unlocked_by = user.id
         db.commit()
     protected_preview.delete(db, link)
+
+
+def mark_paid(db: Session, link: DeliveryLink, payment_intent: Optional[str]) -> bool:
+    """Stripe confirmed the payment: unlock the link. True only for the call that recorded it."""
+    from sqlalchemy import func
+
+    from app.services import protected_preview
+
+    now = datetime.utcnow()
+    updated = (
+        db.query(DeliveryLink)
+        .filter(DeliveryLink.id == link.id, DeliveryLink.paid_at.is_(None))
+        .update(
+            {
+                DeliveryLink.paid_at: now,
+                DeliveryLink.stripe_payment_intent: payment_intent,
+                DeliveryLink.unlocked_at: func.coalesce(DeliveryLink.unlocked_at, now),
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    db.refresh(link)
+    protected_preview.delete(db, link)
+    return updated == 1
+
+
+def notification_recipient(db: Session, link: DeliveryLink):
+    """Who hears about a link's payment: the translator who made it, or the team owner if they've left."""
+    from app.models.project import TranslationProject
+    from app.models.team import Team
+    from app.models.user import User
+
+    recipient = db.query(User).filter(User.id == link.created_by).first() if link.created_by else None
+    if recipient is None:
+        recipient = (
+            db.query(User)
+            .join(Team, Team.owner_id == User.id)
+            .join(TranslationProject, TranslationProject.team_id == Team.id)
+            .filter(TranslationProject.id == link.project_id)
+            .first()
+        )
+    return recipient
 
 
 def claim_paid(db: Session, link: DeliveryLink) -> bool:
