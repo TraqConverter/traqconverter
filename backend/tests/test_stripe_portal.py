@@ -425,4 +425,25 @@ def test_setup_creates_missing_prices_and_the_portal():
     assert portal["features"]["subscription_cancel"] == {"enabled": True, "mode": "at_period_end"}
     assert portal["features"]["payment_method_update"] == {"enabled": True}
     assert portal["features"]["invoice_history"] == {"enabled": True}
-    assert portal["business_profile"] == {"headline": "TraqConverter subscription"}
+    assert portal["features"]["customer_update"] == {
+        "enabled": True,
+        "allowed_updates": ["address", "tax_id", "name", "email"],
+    }
+    assert portal["business_profile"] == {
+        "headline": "TraqConverter subscription",
+        "privacy_policy_url": "https://www.onlinedoctranslator.ai/privacy",
+        "terms_of_service_url": "https://www.onlinedoctranslator.ai/terms",
+    }
+    assert studio_price["tax_behavior"] == "exclusive"
+
+
+def test_setup_flags_a_price_that_includes_vat():
+    from scripts import stripe_setup
+
+    prices = {**EXISTING, "price_pro": {**EXISTING["price_pro"], "tax_behavior": "inclusive"}}
+    fake = FakeStripe(prices=prices)
+    out = []
+    stripe_setup.run(fake, ENV, dry_run=True, say=out.append)
+    text = "\n".join(out)
+    assert "tax_behavior is inclusive" in text
+    assert text.count("tax_behavior is") == 1

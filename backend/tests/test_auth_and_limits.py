@@ -7,7 +7,7 @@ from app.models.user import User
 
 
 def _register(client, email, token=None):
-    body = {"email": email, "password": "correct horse battery", "full_name": "New Person"}
+    body = {"email": email, "password": "correct horse battery", "full_name": "New Person", "accept_terms": True}
     if token:
         body["invite_token"] = token
     return client.post("/auth/register", json=body)

@@ -358,6 +358,7 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
         email=user_data.email,
         password_hash=hash_password(user_data.password),
         full_name=user_data.full_name,
+        terms_accepted_at=datetime.utcnow(),
     )
     db.add(user)
     db.flush()

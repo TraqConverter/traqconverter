@@ -36,6 +36,8 @@ class User(Base):
 
     token_version = Column(Integer, nullable=False, default=0)
 
+    terms_accepted_at = Column(DateTime, nullable=True)
+
 
 
 

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import CompanyLine from "@/components/legal/CompanyLine"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 import { setToken, getRemembered } from "@/lib/auth"
@@ -126,7 +127,7 @@ export default function LoginPage() {
       </div>
 
       {}
-      <div className="flex-1 flex items-center justify-center p-6">
+      <div className="flex-1 flex flex-col items-center justify-center p-6">
         <div
           className="w-full max-w-md rounded-2xl p-8"
           style={{ background: "#ffffff", border: "1px solid #e7ddc5", boxShadow: "0 1px 2px rgba(30,30,20,0.04)" }}
@@ -217,6 +218,9 @@ export default function LoginPage() {
             </button>
           </div>
 
+        </div>
+        <div className="w-full max-w-md mt-6 px-1">
+          <CompanyLine compact />
         </div>
       </div>
     </div>

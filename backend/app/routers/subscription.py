@@ -61,6 +61,23 @@ def plan_price_id(plan: str):
 PLAN_PRICE_MAP = {plan: plan_price_id(plan) for plan in PAID_PLANS}
 
 
+def checkout_customer_params(customer_id, mode: str) -> dict:
+    """Customer and Stripe Tax parameters shared by every Checkout Session."""
+    params = {"customer": customer_id} if customer_id else {}
+    if not settings.STRIPE_AUTOMATIC_TAX:
+        return params
+    if not customer_id and mode == "payment":
+        # Payment mode only creates a customer on request; tax ID collection needs one.
+        params["customer_creation"] = "always"
+    params["automatic_tax"] = {"enabled": True}
+    params["tax_id_collection"] = {"enabled": True}
+    params["billing_address_collection"] = "required"
+    if customer_id:
+        # Saves the address and name entered at checkout onto the existing customer, which Stripe Tax requires.
+        params["customer_update"] = {"address": "auto", "name": "auto"}
+    return params
+
+
 
 
 
@@ -106,15 +123,12 @@ def create_checkout_session(
     join = "&" if "?" in base_success else "?"
     success_url = f"{base_success}{join}session_id={{CHECKOUT_SESSION_ID}}"
 
-    customer_kwargs = {}
     customer_id = next(
         (u.stripe_customer_id for u in team_users(db, team) if u.stripe_customer_id), None
     )
-    if customer_id:
-        customer_kwargs["customer"] = customer_id
 
     session = stripe.checkout.Session.create(
-        **customer_kwargs,
+        **checkout_customer_params(customer_id, "subscription"),
         payment_method_types=["card"],
         mode="subscription",
         line_items=[
@@ -393,7 +407,12 @@ def purchase_credits(
     join = "&" if "?" in base_success else "?"
     success_url = f"{base_success}{join}session_id={{CHECKOUT_SESSION_ID}}"
 
+    customer_id = next(
+        (u.stripe_customer_id for u in team_users(db, team) if u.stripe_customer_id), None
+    )
+
     session = stripe.checkout.Session.create(
+        **checkout_customer_params(customer_id, "payment"),
         payment_method_types=["card"],
         mode="payment",
         line_items=[

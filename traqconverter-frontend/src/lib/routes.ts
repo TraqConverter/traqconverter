@@ -5,9 +5,11 @@ export function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTES.has(pathname)
 }
 
-// Reachable with or without a token, and shown without the app chrome (client download links).
+const LEGAL_ROUTES = new Set(["/terms", "/privacy", "/cookies"])
+
+// Reachable with or without a token, and shown without the app chrome (client download links, legal pages).
 export function isOpenRoute(pathname: string): boolean {
-  return pathname.startsWith("/d/")
+  return pathname.startsWith("/d/") || LEGAL_ROUTES.has(pathname)
 }
 
 export function safeNextPath(next: string | null | undefined): string {

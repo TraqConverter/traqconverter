@@ -7,6 +7,7 @@ class UserRegister(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     full_name: str = Field(min_length=1, max_length=200)
     invite_token: str | None = Field(default=None, max_length=200)
+    accept_terms: bool = Field(default=False, validate_default=True)
 
     @field_validator("password")
     @classmethod
@@ -14,6 +15,13 @@ class UserRegister(BaseModel):
 
         if not v or v.strip() == "":
             raise ValueError("Password cannot be empty or whitespace")
+        return v
+
+    @field_validator("accept_terms")
+    @classmethod
+    def _terms_accepted(cls, v: bool) -> bool:
+        if v is not True:
+            raise ValueError("You must accept the Terms of Service and the Privacy Policy")
         return v
 
 
