@@ -4,6 +4,8 @@ import Image from "next/image"
 
 import { useState } from "react"
 import Link from "next/link"
+import CompanyLine from "@/components/legal/CompanyLine"
+import { VAT_NOTE } from "@/lib/company"
 import {
   contactHref,
   euro,
@@ -990,10 +992,17 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
                 >
                   {euro(pack.price_eur)}
                 </div>
+                <div style={{ fontSize: 11, color: SUBTLE, marginTop: 2 }}>+ VAT where applicable</div>
               </div>
             )
           })}
         </div>
+        <p
+          className="max-w-[860px] mx-auto text-center"
+          style={{ fontSize: 12, color: SUBTLE, marginTop: 18, lineHeight: 1.5 }}
+        >
+          {VAT_NOTE}
+        </p>
       </div>
     </>
   )
@@ -1069,6 +1078,9 @@ function PlanCard({
         >
           /month
         </span>
+      </div>
+      <div style={{ fontSize: 11, color: highlight ? "rgba(255,255,255,0.7)" : SUBTLE }}>
+        + VAT where applicable
       </div>
       <div
         style={{
@@ -1357,8 +1369,9 @@ function Footer() {
           links={[
             ["About", "#"],
             ["Contact", "mailto:hello@onlinedoctranslator.ai"],
-            ["Privacy policy", "#"],
-            ["Terms of service", "#"],
+            ["Terms of service", "/terms"],
+            ["Privacy policy", "/privacy"],
+            ["Cookie policy", "/cookies"],
           ]}
         />
         <FooterCol
@@ -1383,7 +1396,7 @@ function Footer() {
           gap: 8,
         }}
       >
-        <div>© {new Date().getFullYear()} TraqConverter. All rights reserved.</div>
+        <CompanyLine />
       </div>
     </footer>
   )

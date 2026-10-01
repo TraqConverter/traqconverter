@@ -249,7 +249,7 @@ def test_pending_queue_index_leads_with_priority(db):
 
 def test_registration_grants_three_trial_credits(client, db):
     r = client.post("/auth/register", json={
-        "email": "fresh@traqtest.io", "password": "correct horse battery", "full_name": "Fresh",
+        "email": "fresh@traqtest.io", "password": "correct horse battery", "full_name": "Fresh", "accept_terms": True,
     })
     assert r.status_code == 200
     user = db.query(User).filter(User.email == "fresh@traqtest.io").one()

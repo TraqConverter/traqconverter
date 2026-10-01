@@ -6,6 +6,7 @@ import Link from "next/link"
 import { api } from "@/lib/api"
 import { clearToken } from "@/lib/auth"
 import { isOpenRoute, isPublicRoute } from "@/lib/routes"
+import CompanyLine from "@/components/legal/CompanyLine"
 import { isStaffRole } from "@/lib/staff"
 import { loadWallet, planFor, resetWallet, useWallet, type PlanFeature } from "@/lib/plan"
 import { findPlan, usePlans } from "@/lib/plans"
@@ -446,6 +447,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
             >
               Sign out
             </button>
+          </div>
+          <div className="mt-4 px-1">
+            <CompanyLine compact />
           </div>
         </div>
       </aside>

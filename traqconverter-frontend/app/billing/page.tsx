@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { api } from "@/lib/api"
+import { VAT_NOTE } from "@/lib/company"
 import {
   contactHref,
   euro,
@@ -403,7 +404,7 @@ export default function BillingPage() {
               key={pack.credits}
               credits={pack.credits}
               label={pack.name}
-              note={`${pack.note} · ${euro(pack.price_eur)}`}
+              note={`${pack.note} · ${euro(pack.price_eur)} + VAT where applicable`}
               featured={i === 1}
               busy={busy === `credits:${pack.credits}`}
               disabled={busy !== null}
@@ -411,6 +412,9 @@ export default function BillingPage() {
             />
           ))}
         </div>
+        <p className="text-xs" style={{ color: "#8a8270" }}>
+          {VAT_NOTE}
+        </p>
       </section>
 
       {}
@@ -635,6 +639,9 @@ function PlanCard({
         <div className="text-sm" style={{ color: "#8a8270" }}>
           /month
         </div>
+      </div>
+      <div className="text-[11px] -mt-2 mb-3" style={{ color: "#8a8270" }}>
+        + VAT where applicable
       </div>
       <p className="text-sm mb-4" style={{ color: "#4a4638" }}>
         {plan.blurb}

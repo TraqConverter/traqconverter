@@ -1,6 +1,8 @@
 "use client"
 
 import { Suspense, useState } from "react"
+import Link from "next/link"
+import CompanyLine from "@/components/legal/CompanyLine"
 import { useRouter, useSearchParams } from "next/navigation"
 import { api, apiErrorDetail } from "@/lib/api"
 import { setToken } from "@/lib/auth"
@@ -67,6 +69,7 @@ function RegisterForm() {
   const [email, setEmail] = useState(() => searchParams.get("email") || "")
   const [password, setPassword] = useState("")
   const [showPwd, setShowPwd] = useState(false)
+  const [acceptTerms, setAcceptTerms] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const catalog = usePlans()
@@ -77,8 +80,12 @@ function RegisterForm() {
       setError("Please fill in your name, email and password.")
       return
     }
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters.")
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.")
+      return
+    }
+    if (!acceptTerms) {
+      setError("Please accept the Terms of Service to create your account.")
       return
     }
     try {
@@ -88,6 +95,7 @@ function RegisterForm() {
         email,
         password,
         invite_token: inviteToken || undefined,
+        accept_terms: acceptTerms,
       })
       const { access_token } = res.data
       if (!access_token) throw new Error("No token returned")
@@ -134,7 +142,7 @@ function RegisterForm() {
       </div>
 
       {}
-      <div className="flex-1 flex items-center justify-center p-6">
+      <div className="flex-1 flex flex-col items-center justify-center p-6">
         <div
           className="w-full max-w-md rounded-2xl p-8"
           style={{ background: "#ffffff", border: "1px solid #e7ddc5", boxShadow: "0 1px 2px rgba(30,30,20,0.04)" }}
@@ -195,7 +203,7 @@ function RegisterForm() {
             <input
               type={showPwd ? "text" : "password"}
               autoComplete="new-password"
-              placeholder="At least 6 characters"
+              placeholder="At least 8 characters"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleRegister()}
@@ -204,9 +212,27 @@ function RegisterForm() {
             />
           </Field>
 
-          <p className="text-[11px] mb-5" style={{ color: "#8a8270" }}>
-            By creating an account you agree to the Terms of Service and Privacy Policy.
-          </p>
+          <label className="flex items-start gap-2.5 mb-5 cursor-pointer select-none text-[13px] leading-snug" style={{ color: "#4a4638" }}>
+            <input
+              type="checkbox"
+              required
+              checked={acceptTerms}
+              onChange={(e) => setAcceptTerms(e.target.checked)}
+              className="mt-0.5 w-4 h-4 shrink-0"
+              style={{ accentColor: "#0a7870" }}
+            />
+            <span>
+              I agree to the{" "}
+              <Link href="/terms" target="_blank" className="font-medium underline underline-offset-2" style={{ color: "#0a7870" }}>
+                Terms of Service
+              </Link>{" "}
+              and have read the{" "}
+              <Link href="/privacy" target="_blank" className="font-medium underline underline-offset-2" style={{ color: "#0a7870" }}>
+                Privacy Policy
+              </Link>
+              .
+            </span>
+          </label>
 
           <button
             onClick={handleRegister}
@@ -241,6 +267,9 @@ function RegisterForm() {
             </button>
           </div>
 
+        </div>
+        <div className="w-full max-w-md mt-6 px-1">
+          <CompanyLine compact />
         </div>
       </div>
     </div>

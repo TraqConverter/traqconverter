@@ -493,5 +493,9 @@ def delete_certification(
             os.remove(file_path)
     except Exception:
         pass
+    # Files live in object storage; the local path only exists on old installs.
+    from app.services.s3_service import delete_objects_from_s3
+
+    delete_objects_from_s3([file_path])
 
     return {"status": "deleted"}

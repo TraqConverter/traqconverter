@@ -130,7 +130,7 @@ export default function ProPaywall({ feature, description, plan = "Pro" }: Props
             onMouseLeave={(e) => (e.currentTarget.style.background = "#0a7870")}
           >
             Upgrade to {plan}
-            {info ? ` · ${euro(info.price_eur)}/mo` : ""}
+            {info ? ` · ${euro(info.price_eur)}/mo excl. VAT` : ""}
           </button>
           <button
             type="button"

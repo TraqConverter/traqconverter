@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     STRIPE_PRICE_AGENCY: Optional[str] = None
     # Billing portal configuration (bpc_...) printed by scripts/stripe_setup.py; unset uses Stripe's default.
     STRIPE_PORTAL_CONFIGURATION: Optional[str] = None
+    # Stripe Tax at checkout: VAT computed from the billing address, VAT IDs collected for reverse charge.
+    STRIPE_AUTOMATIC_TAX: bool = True
 
 
     STRIPE_SUCCESS_URL: str = "http://localhost:3000/success"

@@ -20,6 +20,7 @@ from app.core.plan_features import CREDIT_PACKS, PLANS, price_lookup_key  # noqa
 PORTAL_METADATA_KEY = "traq_portal"
 PORTAL_METADATA_VALUE = "subscription"
 PORTAL_HEADLINE = "TraqConverter subscription"
+SITE_URL = "https://www.onlinedoctranslator.ai"
 CURRENCY = "eur"
 PLANNED = "(to be created)"
 
@@ -70,6 +71,9 @@ def _check_amount(label, price, price_eur, say):
     if amount != expected or currency != CURRENCY:
         flag = f"  <-- MISMATCH: PLANS says {expected} {CURRENCY}"
     say(f"  {label}: {_get(price, 'id')} = {amount} {currency}{flag}")
+    tax_behavior = _get(price, "tax_behavior")
+    if tax_behavior and tax_behavior != "exclusive":
+        say(f"    <-- tax_behavior is {tax_behavior}: prices exclude VAT, set it to exclusive")
     return not flag
 
 
@@ -110,6 +114,7 @@ def _plan_price(stripe, plan, env, dry_run, say):
         currency=CURRENCY,
         unit_amount=unit_amount,
         recurring={"interval": "month"},
+        tax_behavior="exclusive",
         lookup_key=lookup_key,
         metadata={"plan_code": code},
     )
@@ -132,6 +137,8 @@ def portal_features(plan_prices):
         "subscription_cancel": {"enabled": True, "mode": "at_period_end"},
         "payment_method_update": {"enabled": True},
         "invoice_history": {"enabled": True},
+        # Billing address and VAT ID stay editable so Stripe Tax is right on renewals.
+        "customer_update": {"enabled": True, "allowed_updates": ["address", "tax_id", "name", "email"]},
     }
 
 
@@ -154,7 +161,11 @@ def run(stripe, env, dry_run=False, say=print):
     features = portal_features(plan_prices)
     params = {
         "features": features,
-        "business_profile": {"headline": PORTAL_HEADLINE},
+        "business_profile": {
+            "headline": PORTAL_HEADLINE,
+            "privacy_policy_url": f"{SITE_URL}/privacy",
+            "terms_of_service_url": f"{SITE_URL}/terms",
+        },
         "metadata": {PORTAL_METADATA_KEY: PORTAL_METADATA_VALUE},
     }
     existing = _find_portal_configuration(stripe)
