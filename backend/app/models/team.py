@@ -26,4 +26,9 @@ class Team(Base):
     # paypal.me handle only (no URL); clients of protected links pay here.
     paypal_me = Column(String(20), nullable=True)
 
+    # The team's own Stripe account (Connect); clients' card payments go straight to it.
+    stripe_account_id = Column(String(255), nullable=True, unique=True)
+    # pending | active (charges enabled) | restricted
+    stripe_account_status = Column(String(20), nullable=True)
+
     owner = relationship("User")

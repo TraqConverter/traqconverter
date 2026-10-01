@@ -86,6 +86,16 @@ def storage(monkeypatch):
 
 
 @pytest.fixture()
+def emails(monkeypatch):
+    """Emails the app would have sent, instead of sending them."""
+    import app.services.email_service as email_service
+
+    sent: list[dict] = []
+    monkeypatch.setattr(email_service, "send_email", lambda **kw: sent.append(kw) or True)
+    return sent
+
+
+@pytest.fixture()
 def client(db, storage):
     from fastapi.testclient import TestClient
 

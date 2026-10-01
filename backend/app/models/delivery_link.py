@@ -39,6 +39,9 @@ class DeliveryLink(Base):
     paid_claimed_at = Column(DateTime, nullable=True)
     unlocked_at = Column(DateTime, nullable=True)
     unlocked_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Set when Stripe confirms a payment on the team's account; the link unlocks itself.
+    stripe_payment_intent = Column(String(255), nullable=True)
+    paid_at = Column(DateTime, nullable=True)
     # Counted when the link is made; the original's pages are left out of the preview.
     preview_pages = Column(Integer, nullable=True)
     original_pages = Column(Integer, nullable=True)

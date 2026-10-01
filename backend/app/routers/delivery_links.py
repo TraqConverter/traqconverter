@@ -20,7 +20,7 @@ from app.models.delivery_link import DeliveryLink
 from app.models.project import ProjectStatus, TranslationProject
 from app.models.team import Team
 from app.models.user import User
-from app.services import delivery_links, paypal, protected_preview, s3_service
+from app.services import delivery_links, paypal, protected_preview, s3_service, stripe_connect
 from app.services.learning import capture_template_in_background
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,7 @@ def _serialize(link: DeliveryLink) -> dict:
         "payment_status": delivery_links.payment_status(link),
         "paid_claimed_at": _iso(link.paid_claimed_at),
         "unlocked_at": _iso(link.unlocked_at),
+        "paid_at": _iso(link.paid_at),
     }
 
 
@@ -84,8 +85,10 @@ def _protected_options(db: Session, project: TranslationProject, data: _CreatePa
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     team = db.query(Team).filter(Team.id == project.team_id).first()
-    if not team or not team.paypal_me:
-        raise HTTPException(status_code=422, detail="Add your PayPal.me name in Settings → Payments first")
+    if not team or not (team.paypal_me or stripe_connect.is_active(team)):
+        raise HTTPException(
+            status_code=422, detail="Connect Stripe or add your PayPal.me name in Settings → Payments first"
+        )
     name = " ".join((data.client_name or "").split()) or None
     return cents, name
 
@@ -195,14 +198,18 @@ def unlock_delivery_link(
     return _serialize(link)
 
 
-def _company(db: Session, link: DeliveryLink) -> str:
-    row = (
-        db.query(Team.name)
+def _link_team(db: Session, link: DeliveryLink) -> Optional[Team]:
+    return (
+        db.query(Team)
         .join(TranslationProject, TranslationProject.team_id == Team.id)
         .filter(TranslationProject.id == link.project_id)
         .first()
     )
-    return (row[0] if row else "") or ""
+
+
+def _company(db: Session, link: DeliveryLink) -> str:
+    team = _link_team(db, link)
+    return (team.name if team else "") or ""
 
 
 def _usable_link(db: Session, token: str) -> DeliveryLink:
@@ -242,10 +249,12 @@ def public_delivery_info(token: str, db: Session = Depends(get_db)):
             paid_claimed=link.paid_claimed_at is not None,
         )
         if body["locked"]:
-            handle = _paypal_handle(db, link)
+            team = _link_team(db, link)
+            handle = team.paypal_me if team else None
             body.update(
                 preview_pages=link.preview_pages or 0,
                 original_pages=link.original_pages or 0,
+                card_payment=bool(link.amount_cents) and stripe_connect.is_active(team),
                 paypal_url=paypal.payment_url(handle, link.amount_cents, link.currency or "EUR")
                 if handle and link.amount_cents
                 else None,
@@ -253,14 +262,26 @@ def public_delivery_info(token: str, db: Session = Depends(get_db)):
     return JSONResponse(content=body, headers=_PUBLIC_HEADERS)
 
 
-def _paypal_handle(db: Session, link: DeliveryLink) -> Optional[str]:
-    row = (
-        db.query(Team.paypal_me)
-        .join(TranslationProject, TranslationProject.team_id == Team.id)
-        .filter(TranslationProject.id == link.project_id)
-        .first()
-    )
-    return row[0] if row else None
+@public_router.post("/{token}/checkout", dependencies=[Depends(rate_limit("public_delivery_checkout", 10, 600))])
+def public_delivery_checkout(token: str, db: Session = Depends(get_db)):
+    """A Stripe Checkout page for the link's amount, charged on the translator's own Stripe account."""
+    link = delivery_links.find(db, token)
+    if link is None:
+        raise HTTPException(status_code=404, detail="Link not found", headers=_PUBLIC_HEADERS)
+    team = _link_team(db, link)
+    if (
+        delivery_links.status(link) != "active"
+        or not delivery_links.is_locked(link)
+        or not link.amount_cents
+        or not stripe_connect.is_active(team)
+    ):
+        raise HTTPException(status_code=409, detail="This link can't be paid online.", headers=_PUBLIC_HEADERS)
+    try:
+        url = stripe_connect.checkout_url(link, team, token)
+    except Exception:
+        logger.exception("Stripe checkout failed (link=%s)", link.id)
+        raise HTTPException(status_code=502, detail="Payment isn't available right now.", headers=_PUBLIC_HEADERS)
+    return JSONResponse(content={"checkout_url": url}, headers=_PUBLIC_HEADERS)
 
 
 @public_router.get("/{token}/file", dependencies=[Depends(rate_limit("public_delivery_file", 20, 60))])
@@ -329,15 +350,7 @@ def _notify_paid(link_id) -> None:
         link = db.query(DeliveryLink).filter(DeliveryLink.id == link_id).first()
         if link is None:
             return
-        recipient = db.query(User).filter(User.id == link.created_by).first() if link.created_by else None
-        if recipient is None:
-            recipient = (
-                db.query(User)
-                .join(Team, Team.owner_id == User.id)
-                .join(TranslationProject, TranslationProject.team_id == Team.id)
-                .filter(TranslationProject.id == link.project_id)
-                .first()
-            )
+        recipient = delivery_links.notification_recipient(db, link)
         if recipient is None or not recipient.email:
             return
         client = link.client_name or "Your client"
@@ -355,5 +368,35 @@ def _notify_paid(link_id) -> None:
         )
     except Exception:
         logger.exception("Couldn't send the payment-claim email (link=%s)", link_id)
+    finally:
+        db.close()
+
+
+def notify_stripe_paid(link_id) -> None:
+    """Email the translator who made the link (the team owner if they've left): Stripe confirmed the payment."""
+    from app.config import settings
+    from app.database import SessionLocal
+    from app.services import email_service
+
+    db = SessionLocal()
+    try:
+        link = db.query(DeliveryLink).filter(DeliveryLink.id == link_id).first()
+        if link is None:
+            return
+        recipient = delivery_links.notification_recipient(db, link)
+        if recipient is None or not recipient.email:
+            return
+        client = link.client_name or "Your client"
+        amount = paypal.display_amount(link.amount_cents or 0, link.currency or "EUR")
+        message = f"{client} paid {amount} for {link.file_name}. The document is now unlocked for them."
+        editor = f"{settings.FRONTEND_URL.rstrip('/')}/editor/{link.project_id}"
+        email_service.send_email(
+            to=recipient.email,
+            subject=f"{client} paid {amount}",
+            html=f'<p>{html.escape(message)}</p><p><a href="{html.escape(editor)}">Open the project</a></p>',
+            text_fallback=f"{message}\n\n{editor}",
+        )
+    except Exception:
+        logger.exception("Couldn't send the payment email (link=%s)", link_id)
     finally:
         db.close()

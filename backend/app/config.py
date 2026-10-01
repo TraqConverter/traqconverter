@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     # Stripe Tax at checkout: VAT computed from the billing address, VAT IDs collected for reverse charge.
     STRIPE_AUTOMATIC_TAX: bool = True
 
+    # Connect: signing secret of the webhook endpoint that listens to events on connected accounts.
+    STRIPE_CONNECT_WEBHOOK_SECRET: Optional[str] = None
+    STRIPE_CONNECT_DEFAULT_COUNTRY: str = "IT"
+    # Our cut of each protected-link payment, in percent; 0 means no application fee at all.
+    PLATFORM_FEE_PERCENT: float = 0
+
 
     STRIPE_SUCCESS_URL: str = "http://localhost:3000/success"
     STRIPE_CANCEL_URL: str = "http://localhost:3000/cancel"
