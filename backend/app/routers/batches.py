@@ -19,6 +19,7 @@ from app.models.batch import Batch, BatchTerm
 from app.models.project import ProjectStatus, TranslationProject, is_dtp
 from app.models.user import User
 from app.services.learning import capture_template_in_background
+from app.services.project_lifecycle import failure_code
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +135,7 @@ def get_batch(batch_id: UUID, db: Session = Depends(get_db), current_user: User 
             "target_lang": p.target_language,
             "mode": p.mode or "translate",
             "failure_reason": p.failure_reason,
+            "failure_code": failure_code(p),
             "created_at": p.created_at.isoformat() if p.created_at else None,
         }
         for p in projects

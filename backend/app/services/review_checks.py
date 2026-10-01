@@ -20,7 +20,7 @@ from app.services.glossary_service import fold_text, lang_key, language_name, pr
 
 logger = logging.getLogger(__name__)
 
-CHECKS_VERSION = 1
+CHECKS_VERSION = 2
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
 MAX_SOURCE_CHARS = 14_000
 
@@ -459,6 +459,124 @@ def _confirm_untranslated(ctx: _Ctx, paras: list[dict], key_of: dict, cache: dic
     return True
 
 
+# Short function words and common document terms per language, for lines too short to detect a language from.
+_LANG_WORDS = {
+    "en": "the of and to in for with on by at from is are was this that an or not "
+          "municipality certificate office registry birth born date name surname residence",
+    "it": "il lo la le gli di del della dello dei delle degli che e è per con nel nella nei sul sulla dal dalla alla "
+          "alle ai al un una uno ed sono questo questa "
+          "comune provincia regione repubblica italiana certificato certificazione residenza nascita matrimonio morte "
+          "ufficio anagrafe civile nato nata cittadinanza tribunale ministero prefettura questura sindaco cognome "
+          "rilasciato rilasciata scadenza luogo atto estratto stato famiglia",
+    "es": "el los las del que en para con por una uno es son este esta al "
+          "ayuntamiento municipio certificado nacimiento matrimonio defunción registro oficina nacido nacida apellido "
+          "fecha lugar domicilio",
+    "fr": "le les du des que et est pour avec dans une sur au aux ce cette sont "
+          "mairie commune certificat acte naissance mariage décès registre bureau né née nom prénom date lieu domicile",
+    "de": "der die das den dem des und ist für mit von im auf ein eine einer zu nicht "
+          "gemeinde stadt bescheinigung urkunde geburt geburtsurkunde ehe standesamt amt geboren name vorname datum ort",
+    "pt": "o os as do da dos das que para com por em uma um é são este esta ao no na "
+          "câmara município certidão certificado nascimento casamento óbito registo registro conservatória nascido "
+          "nascida apelido data local",
+}
+_LANG_SETS = {lang: set(words.split()) for lang, words in _LANG_WORDS.items()}
+_ADDRESS_RE = re.compile(
+    r"^(via|viale|piazza|piazzale|corso|largo|vicolo|strada|contrada|loc\.?|località|calle|avenida|avda\.?|plaza|paseo|"
+    r"rua|travessa|praça|rue|avenue|boulevard|place|chemin|straße|strasse|str\.|platz|weg|street|road|st\.)\s+\S.*\d",
+    re.I,
+)
+_WORD_RE = re.compile(r"[^\W\d_]+")
+
+
+def _norm(text: str) -> str:
+    return " ".join(fold_text(text).split())
+
+
+def _kept_on_purpose(ctx: _Ctx) -> tuple[list[str], set[str]]:
+    """Approved glossary targets and the team's memory translations for this pair; text matching them is intentional."""
+    from app.dependencies.feature_guard import project_has_feature
+    from app.models.translation_memory import TranslationMemory
+    from app.services import tm_keys
+    from app.services.glossary_service import get_glossary
+
+    terms: list[str] = []
+    if project_has_feature(ctx.db, ctx.project, "glossaries"):
+        rows = get_glossary(ctx.db, ctx.project.team_id, project_source_language(ctx.project), ctx.project.target_language)
+        terms = sorted({g.target_term for g in rows if (g.target_term or "").strip()}, key=len, reverse=True)
+    family = tm_keys.family(ctx.project.target_language)
+    memory: set[str] = set()
+    if family:
+        rows = (
+            ctx.db.query(TranslationMemory.translated_text, TranslationMemory.target_language)
+            .filter(TranslationMemory.team_id == ctx.project.team_id, TranslationMemory.origin != "machine")
+            .limit(5000)
+            .all()
+        )
+        memory = {_norm(t) for t, lang in rows if tm_keys.family(lang) == family}
+    return terms, memory
+
+
+def _looks_untranslated(text: str, src: str, tgt: str, source_lines: set[str], name_words: set[str]) -> bool:
+    from app.services import cert_locale
+
+    words = _WORD_RE.findall(text)
+    low = [w.lower() for w in words]
+    src_only = _LANG_SETS[src] - _LANG_SETS.get(tgt, set())
+    tgt_only = _LANG_SETS.get(tgt, set()) - _LANG_SETS[src]
+    src_hits = [w for w in low if w in src_only and w not in name_words]
+    tgt_hits = [w for w in low if w in tgt_only]
+    if len(words) >= 8:
+        detected = cert_locale.detect_language(text)
+        if detected:
+            return detected == src
+        return len(src_hits) >= 3 and len(src_hits) >= 2 * len(tgt_hits)
+    if tgt_hits:
+        return False
+    # A content word that isn't a name: lowercase in the text, or a known source-language term. ALL CAPS alone could be a name.
+    content = [
+        w for w, lw in zip(words, low)
+        if len(w) >= 4 and lw not in name_words and lw not in _LANG_SETS.get(tgt, set())
+        and (w.islower() or lw in _LANG_SETS[src])
+    ]
+    if not content:
+        return False
+    if any(w.lower() in _LANG_SETS[src] for w in content) and src_hits:
+        return True
+    return _norm(text) in source_lines
+
+
+def check_possibly_untranslated(ctx: _Ctx, names: Optional[list[dict]]) -> list[dict]:
+    """Lines the model check never sees (short headings, text not in the source) still in the source language."""
+    src, tgt = lang_key(project_source_language(ctx.project)), lang_key(ctx.project.target_language)
+    src, tgt = src.split("-")[0], tgt.split("-")[0]
+    if not src or src == tgt or src not in _LANG_SETS:
+        return []
+    handled = {p["id"] for p in _untranslated_candidates(ctx)}
+    terms, memory = _kept_on_purpose(ctx)
+    # People and places stay as printed; institutions ("Comune di ...") are meant to be translated.
+    name_words = {
+        w.lower() for n in names or [] if n.get("kind") in ("person", "place") for w in _WORD_RE.findall(n.get("source") or "")
+    }
+    source_lines = {_norm(s["src"]) for s in ctx.segments if (s.get("src") or "").strip()}
+    items = []
+    for p in ctx.paras:
+        if p["id"] in handled or _norm(p["text"]) in memory:
+            continue
+        text = _BRACKET_RE.sub(" ", p["text"]).strip()
+        if not text or _ADDRESS_RE.match(text):
+            continue
+        for term in terms:
+            text = re.sub(rf"(?<!\w){re.escape(term)}(?!\w)", " ", text, flags=re.I)
+        if not _looks_untranslated(text, src, tgt, source_lines, name_words):
+            continue
+        snippet = " ".join(p["text"].split())[:60]
+        items.append(_item(
+            "possibly_untranslated", hashlib.sha1(p["text"].encode()).hexdigest()[:16], "warning",
+            f"Possibly not translated: “{snippet}”", p["id"], ctx.source_for_block(p["id"]),
+        ))
+    return items
+
+
 def _notation_kind(note: str) -> Optional[str]:
     low = source_map.fold(note)
     for kind, words in _NOTATION_KINDS:
@@ -593,6 +711,7 @@ def compute(db: Session, project: TranslationProject, user, data: bytes, state, 
         ("codes", lambda: check_codes(ctx)),
         ("names", lambda: check_names(ctx, names)),
         ("untranslated", lambda: check_untranslated(ctx, state)),
+        ("possibly_untranslated", lambda: [] if dtp else check_possibly_untranslated(ctx, names)),
         ("notations", lambda: check_notations(ctx)),
         # An editable copy has no glossary to follow and is never certified.
         ("glossary", lambda: [] if dtp else check_glossary(ctx)),
