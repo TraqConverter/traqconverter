@@ -22,6 +22,7 @@ TOKEN_BYTES = 32
 PREFIX_LEN = 6
 KINDS = ("delivery_pdf", "docx", "pdf")
 EXPIRY_DAYS = (1, 7, 30)
+PROTECTED_EXPIRY_DAYS = 30
 # Snapshots stay in storage this long after the link expires, then are deleted.
 FILE_RETENTION = timedelta(days=7)
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{40,128}$")
@@ -90,10 +91,38 @@ def _store(data: bytes, name: str) -> str:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def create(db: Session, project, user, kind: str, days: int) -> tuple[DeliveryLink, str]:
+def is_locked(link: DeliveryLink) -> bool:
+    return bool(link.protected) and link.unlocked_at is None
+
+
+def payment_status(link: DeliveryLink) -> Optional[str]:
+    if not link.protected:
+        return None
+    if link.unlocked_at is not None:
+        return "unlocked"
+    return "claimed" if link.paid_claimed_at is not None else "awaiting"
+
+
+def create(
+    db: Session,
+    project,
+    user,
+    kind: str,
+    days: int,
+    *,
+    protected: bool = False,
+    amount_cents: Optional[int] = None,
+    currency: str = "EUR",
+    client_name: Optional[str] = None,
+) -> tuple[DeliveryLink, str]:
     """Renders the file now, so later edits don't change what the client gets. Returns (link, token)."""
     data = render(db, project, user, kind)
     name = _file_name(project, kind)
+    preview_pages = original_pages = None
+    if protected:
+        from app.services.protected_preview import split_pages
+
+        preview_pages, original_pages = split_pages(data)
     key = _store(data, name)
     token = secrets.token_urlsafe(TOKEN_BYTES)
     link = DeliveryLink(
@@ -106,6 +135,12 @@ def create(db: Session, project, user, kind: str, days: int) -> tuple[DeliveryLi
         file_size=len(data),
         expires_at=datetime.utcnow() + timedelta(days=days),
         created_by=user.id,
+        protected=protected,
+        amount_cents=amount_cents if protected else None,
+        currency=currency,
+        client_name=client_name if protected else None,
+        preview_pages=preview_pages,
+        original_pages=original_pages,
     )
     db.add(link)
     db.commit()
@@ -118,10 +153,35 @@ def revoke(db: Session, link: DeliveryLink) -> None:
 
     if link.revoked_at is None:
         link.revoked_at = datetime.utcnow()
-    key, link.file_key = link.file_key, None
+    keys = [link.file_key, *(link.preview_keys or [])]
+    link.file_key = None
+    link.preview_keys = None
     db.commit()
-    if key:
-        s3_service.delete_objects_from_s3([key])
+    if any(keys):
+        s3_service.delete_objects_from_s3(keys)
+
+
+def unlock(db: Session, link: DeliveryLink, user) -> None:
+    """The client paid: the link serves the clean file from now on, and the preview images go."""
+    from app.services import protected_preview
+
+    if link.unlocked_at is None:
+        link.unlocked_at = datetime.utcnow()
+        link.unlocked_by = user.id
+        db.commit()
+    protected_preview.delete(db, link)
+
+
+def claim_paid(db: Session, link: DeliveryLink) -> bool:
+    """Record the client's "I've paid" once. True only for the request that recorded it."""
+    updated = (
+        db.query(DeliveryLink)
+        .filter(DeliveryLink.id == link.id, DeliveryLink.paid_claimed_at.is_(None))
+        .update({DeliveryLink.paid_claimed_at: datetime.utcnow()}, synchronize_session=False)
+    )
+    db.commit()
+    db.refresh(link)
+    return updated == 1
 
 
 def record_download(db: Session, link: DeliveryLink) -> None:
@@ -144,9 +204,10 @@ def purge_expired_files(now: Optional[datetime] = None) -> int:
             .limit(200)
             .all()
         )
-        keys = [r.file_key for r in rows]
+        keys = [k for r in rows for k in (r.file_key, *(r.preview_keys or []))]
         for r in rows:
             r.file_key = None
+            r.preview_keys = None
         db.commit()
         if keys:
             s3_service.delete_objects_from_s3(keys)

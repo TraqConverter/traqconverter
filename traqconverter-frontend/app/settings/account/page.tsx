@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 import { clearToken, setToken, getRemembered } from "@/lib/auth"
 import SavedInstructionsSection from "@/components/settings/SavedInstructionsSection"
+import PaymentsSection from "@/components/settings/PaymentsSection"
 
 type Me = {
   id: string
@@ -440,6 +441,8 @@ export default function AccountSettingsPage() {
       </section>
 
       <SavedInstructionsSection />
+
+      <PaymentsSection />
 
       {}
       <section

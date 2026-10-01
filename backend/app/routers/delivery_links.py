@@ -1,12 +1,14 @@
 """Links the translator sends a client, and the public endpoints behind them."""
+import html
 import logging
 from datetime import datetime
-from typing import Literal
+from decimal import Decimal
+from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -18,7 +20,7 @@ from app.models.delivery_link import DeliveryLink
 from app.models.project import ProjectStatus, TranslationProject
 from app.models.team import Team
 from app.models.user import User
-from app.services import delivery_links, s3_service
+from app.services import delivery_links, paypal, protected_preview, s3_service
 from app.services.learning import capture_template_in_background
 
 logger = logging.getLogger(__name__)
@@ -49,12 +51,43 @@ def _serialize(link: DeliveryLink) -> dict:
         "revoked_at": _iso(link.revoked_at),
         "download_count": link.download_count or 0,
         "last_downloaded_at": _iso(link.last_downloaded_at),
+        "protected": bool(link.protected),
+        "amount": _amount(link),
+        "currency": link.currency or "EUR",
+        "client_name": link.client_name,
+        "payment_status": delivery_links.payment_status(link),
+        "paid_claimed_at": _iso(link.paid_claimed_at),
+        "unlocked_at": _iso(link.unlocked_at),
     }
+
+
+def _amount(link: DeliveryLink) -> Optional[float]:
+    return link.amount_cents / 100 if link.amount_cents is not None else None
 
 
 class _CreatePayload(BaseModel):
     kind: Literal["delivery_pdf", "docx", "pdf"] = "delivery_pdf"
-    expires_in_days: Literal[1, 7, 30] = 7
+    # Default: 7 days, or 30 for a protected link.
+    expires_in_days: Optional[Literal[1, 7, 30]] = None
+    protected: bool = False
+    amount: Optional[Decimal] = None
+    currency: Literal["EUR", "GBP", "USD"] = "EUR"
+    client_name: Optional[str] = Field(default=None, max_length=120)
+
+
+def _protected_options(db: Session, project: TranslationProject, data: _CreatePayload) -> tuple[int, Optional[str]]:
+    """(amount in cents, client name) for a protected link, or 422."""
+    if data.amount is None:
+        raise HTTPException(status_code=422, detail="Enter the amount the client should pay")
+    try:
+        cents = paypal.to_cents(data.amount)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    team = db.query(Team).filter(Team.id == project.team_id).first()
+    if not team or not team.paypal_me:
+        raise HTTPException(status_code=422, detail="Add your PayPal.me name in Settings → Payments first")
+    name = " ".join((data.client_name or "").split()) or None
+    return cents, name
 
 
 @router.post(
@@ -76,8 +109,22 @@ def create_delivery_link(
     project = get_user_project_or_404(db, project_id, current_user)
     if project.status != ProjectStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="The translation must finish before it can be shared.")
+    cents, client_name = _protected_options(db, project, data) if data.protected else (None, None)
+    # The preview is rendered from the delivery PDF, so that's what a protected link always holds.
+    kind = "delivery_pdf" if data.protected else data.kind
+    days = data.expires_in_days or (delivery_links.PROTECTED_EXPIRY_DAYS if data.protected else 7)
     try:
-        link, token = delivery_links.create(db, project, current_user, data.kind, data.expires_in_days)
+        link, token = delivery_links.create(
+            db,
+            project,
+            current_user,
+            kind,
+            days,
+            protected=data.protected,
+            amount_cents=cents,
+            currency=data.currency,
+            client_name=client_name,
+        )
     except DeliveryError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception:
@@ -125,6 +172,29 @@ def revoke_delivery_link(
     return _serialize(link)
 
 
+@router.post("/{project_id}/delivery-links/{link_id}/unlock")
+def unlock_delivery_link(
+    project_id: UUID,
+    link_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    project = get_user_project_or_404(db, project_id, current_user)
+    link = (
+        db.query(DeliveryLink)
+        .filter(DeliveryLink.id == link_id, DeliveryLink.project_id == project.id)
+        .first()
+    )
+    if not link:
+        raise HTTPException(status_code=404, detail="Link not found")
+    if not link.protected:
+        raise HTTPException(status_code=400, detail="This link isn't protected.")
+    if link.revoked_at is not None:
+        raise HTTPException(status_code=400, detail="This link was revoked.")
+    delivery_links.unlock(db, link, current_user)
+    return _serialize(link)
+
+
 def _company(db: Session, link: DeliveryLink) -> str:
     row = (
         db.query(Team.name)
@@ -161,13 +231,46 @@ def public_delivery_info(token: str, db: Session = Depends(get_db)):
         kind=link.kind,
         file_size=link.file_size,
         expires_at=_iso(link.expires_at),
+        protected=bool(link.protected),
+        locked=delivery_links.is_locked(link),
     )
+    if link.protected:
+        body.update(
+            amount=_amount(link),
+            currency=link.currency or "EUR",
+            client_name=link.client_name,
+            paid_claimed=link.paid_claimed_at is not None,
+        )
+        if body["locked"]:
+            handle = _paypal_handle(db, link)
+            body.update(
+                preview_pages=link.preview_pages or 0,
+                original_pages=link.original_pages or 0,
+                paypal_url=paypal.payment_url(handle, link.amount_cents, link.currency or "EUR")
+                if handle and link.amount_cents
+                else None,
+            )
     return JSONResponse(content=body, headers=_PUBLIC_HEADERS)
+
+
+def _paypal_handle(db: Session, link: DeliveryLink) -> Optional[str]:
+    row = (
+        db.query(Team.paypal_me)
+        .join(TranslationProject, TranslationProject.team_id == Team.id)
+        .filter(TranslationProject.id == link.project_id)
+        .first()
+    )
+    return row[0] if row else None
 
 
 @public_router.get("/{token}/file", dependencies=[Depends(rate_limit("public_delivery_file", 20, 60))])
 def public_delivery_file(token: str, db: Session = Depends(get_db)):
     link = _usable_link(db, token)
+    # The actual protection: until the translator unlocks the link, the file isn't served.
+    if delivery_links.is_locked(link):
+        raise HTTPException(
+            status_code=403, detail="This document is available once payment is confirmed.", headers=_PUBLIC_HEADERS
+        )
     try:
         chunks = s3_service.stream_object(link.file_key)
     except Exception:
@@ -182,3 +285,75 @@ def public_delivery_file(token: str, db: Session = Depends(get_db)):
         media_type=delivery_links.MEDIA_TYPES.get(link.kind, "application/octet-stream"),
         headers=headers,
     )
+
+
+@public_router.get(
+    "/{token}/preview/{page}", dependencies=[Depends(rate_limit("public_delivery_preview", 120, 60))]
+)
+def public_delivery_preview(token: str, page: int, db: Session = Depends(get_db)):
+    link = _usable_link(db, token)
+    if not delivery_links.is_locked(link) or page < 1 or page > (link.preview_pages or 0):
+        raise HTTPException(status_code=404, detail="Page not found", headers=_PUBLIC_HEADERS)
+    try:
+        keys = protected_preview.ensure(db, link)
+        data = b"".join(s3_service.stream_object(keys[page - 1]))
+    except IndexError:
+        raise HTTPException(status_code=404, detail="Page not found", headers=_PUBLIC_HEADERS)
+    except Exception:
+        logger.exception("Preview unavailable (link=%s)", link.id)
+        raise HTTPException(status_code=502, detail="The preview isn't available right now.", headers=_PUBLIC_HEADERS)
+    return Response(content=data, media_type="image/png", headers=_PUBLIC_HEADERS)
+
+
+@public_router.post("/{token}/paid", dependencies=[Depends(rate_limit("public_delivery_paid", 5, 3600))])
+def public_delivery_paid(token: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    link = _usable_link(db, token)
+    if not link.protected:
+        raise HTTPException(status_code=404, detail="Link not found", headers=_PUBLIC_HEADERS)
+    if delivery_links.is_locked(link) and delivery_links.claim_paid(db, link):
+        background_tasks.add_task(_notify_paid, link.id)
+    return JSONResponse(
+        content={"paid_claimed": link.paid_claimed_at is not None, "locked": delivery_links.is_locked(link)},
+        headers=_PUBLIC_HEADERS,
+    )
+
+
+def _notify_paid(link_id) -> None:
+    """Email the translator who made the link (the team owner if they've left): the client says they paid."""
+    from app.config import settings
+    from app.database import SessionLocal
+    from app.services import email_service
+
+    db = SessionLocal()
+    try:
+        link = db.query(DeliveryLink).filter(DeliveryLink.id == link_id).first()
+        if link is None:
+            return
+        recipient = db.query(User).filter(User.id == link.created_by).first() if link.created_by else None
+        if recipient is None:
+            recipient = (
+                db.query(User)
+                .join(Team, Team.owner_id == User.id)
+                .join(TranslationProject, TranslationProject.team_id == Team.id)
+                .filter(TranslationProject.id == link.project_id)
+                .first()
+            )
+        if recipient is None or not recipient.email:
+            return
+        client = link.client_name or "Your client"
+        amount = paypal.display_amount(link.amount_cents or 0, link.currency or "EUR")
+        message = (
+            f"{client} says they've paid {amount} for {link.file_name}. "
+            "Check PayPal, then unlock it in the editor (Share with client)."
+        )
+        editor = f"{settings.FRONTEND_URL.rstrip('/')}/editor/{link.project_id}"
+        email_service.send_email(
+            to=recipient.email,
+            subject=f"{client} says they've paid {amount}",
+            html=f'<p>{html.escape(message)}</p><p><a href="{html.escape(editor)}">Open the project</a></p>',
+            text_fallback=f"{message}\n\n{editor}",
+        )
+    except Exception:
+        logger.exception("Couldn't send the payment-claim email (link=%s)", link_id)
+    finally:
+        db.close()

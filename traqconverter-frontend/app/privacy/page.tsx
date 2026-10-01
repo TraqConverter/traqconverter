@@ -62,6 +62,12 @@ export default function PrivacyPage() {
         </li>
         <li>Certification files and templates you upload, stored with a SHA-256 fingerprint.</li>
         <li>Delivery links you create for clients, with their expiry date and download count.</li>
+        <li>
+          For protected delivery links (paid before download): the client name you enter, the amount, when the client
+          said they had paid and when you unlocked the link, and the download count. We also store your
+          team&apos;s PayPal.me name. The client pays you directly on PayPal, so we never receive or store their payment
+          details.
+        </li>
       </ul>
       <p>
         These documents often contain personal data about third parties, sometimes of a sensitive kind (for
@@ -229,7 +235,8 @@ export default function PrivacyPage() {
         </li>
         <li>
           <strong>Delivery links</strong>{" "}expire after 1, 7 or 30 days, as you choose, or when you revoke them. The
-          file behind a link is deleted when you revoke it, or 7 days after it expires.
+          file behind a link is deleted when you revoke it, or 7 days after it expires. A protected link&apos;s
+          watermarked preview images are deleted when you unlock or revoke it, or with the file.
         </li>
         <li>
           <strong>Uploaded files waiting to become templates</strong>{" "}are discarded after 24 hours if you don&apos;t
