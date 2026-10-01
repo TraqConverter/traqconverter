@@ -9,6 +9,7 @@ import { LangSelect, SOURCE_LANGUAGES, TARGET_LANGUAGES } from "@/components/Lan
 import { SaveForLater, SavedInstructionPicker, useSavedInstructions } from "@/components/SavedInstructions"
 
 const MAX_INSTRUCTIONS = 1000
+const LAST_TARGET_KEY = "tq.lastTargetLanguage"
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -113,7 +114,21 @@ export default function NewProjectPage() {
   const [mode, setMode] = useState<"translate" | "dtp">("translate")
   const dtp = mode === "dtp"
   const [source, setSource] = useState("auto")
-  const [target, setTarget] = useState("it-IT")
+  const [target, setTargetState] = useState("en-GB")
+  // Most translators work into the same language every day, so the last target is remembered.
+  useEffect(() => {
+    try {
+      const last = localStorage.getItem(LAST_TARGET_KEY)
+      if (last && TARGET_LANGUAGES.some((l) => l.code === last)) setTargetState(last)
+    } catch {}
+  }, [])
+  const setTarget = (code: string) => {
+    setTargetState(code)
+    try {
+      localStorage.setItem(LAST_TARGET_KEY, code)
+    } catch {}
+  }
+  const sameLanguage = !dtp && source !== "auto" && source.split("-")[0] === target.split("-")[0]
   const [instructions, setInstructions] = useState("")
   const saved = useSavedInstructions()
 
@@ -451,6 +466,11 @@ export default function NewProjectPage() {
                   label="TARGET LANGUAGE"
                   options={TARGET_LANGUAGES}
                 />
+                {sameLanguage && (
+                  <div role="alert" className="text-xs mt-2" style={{ color: "#b14a3a" }}>
+                    Source and target are the same language. For a same-language Word file, choose Editable copy.
+                  </div>
+                )}
               </>
             )}
 
@@ -549,18 +569,18 @@ export default function NewProjectPage() {
           <div>
             <button
               onClick={handleStart}
-              disabled={!file || loading}
+              disabled={!file || loading || sameLanguage}
               className="w-full flex items-center justify-center gap-2 py-4 rounded-full text-[15px] font-semibold transition"
               style={{
-                background: !file || loading ? "#9bc9c5" : "#0a7870",
+                background: !file || loading || sameLanguage ? "#9bc9c5" : "#0a7870",
                 color: "#ffffff",
-                cursor: !file || loading ? "not-allowed" : "pointer",
+                cursor: !file || loading || sameLanguage ? "not-allowed" : "pointer",
               }}
               onMouseEnter={(e) => {
-                if (file && !loading) e.currentTarget.style.background = "#0a645d"
+                if (file && !loading && !sameLanguage) e.currentTarget.style.background = "#0a645d"
               }}
               onMouseLeave={(e) => {
-                if (file && !loading) e.currentTarget.style.background = "#0a7870"
+                if (file && !loading && !sameLanguage) e.currentTarget.style.background = "#0a7870"
               }}
             >
               {loading
