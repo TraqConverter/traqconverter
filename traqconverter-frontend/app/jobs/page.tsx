@@ -28,6 +28,8 @@ type Project = {
   assignee: Assignee | null
   batch?: BatchRef | null
   partial?: boolean
+  failure_reason?: string | null
+  failure_code?: string | null
 }
 
 function effectiveStatus(p: { status?: string; review_status?: string }) {
@@ -148,6 +150,8 @@ function fromBatchDoc(d: BatchDoc, batch: BatchRef): Project {
     assignee: null,
     batch,
     partial: true,
+    failure_reason: d.failure_reason,
+    failure_code: d.failure_code,
   }
 }
 
@@ -678,6 +682,11 @@ function Jobs() {
               {meta}
               <span className="md:hidden"> · {relativeTime(p.created_at)}</span>
             </div>
+            {p.failure_code === "same_language" && p.failure_reason && (
+              <div className="text-xs" style={{ color: "#7a2f24" }}>
+                {p.failure_reason}
+              </div>
+            )}
           </div>
           <div className="md:hidden shrink-0">{renderActions(p)}</div>
         </div>

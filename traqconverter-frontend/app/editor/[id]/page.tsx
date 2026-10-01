@@ -53,6 +53,7 @@ type ProjectInfo = {
   assignee: Assignee | null
   uploader: Assignee | null
   failure_reason?: string | null
+  failure_code?: "same_language" | null
   rebuild_status?: "running" | "done" | "failed" | null
   rebuild_error?: string | null
   revision_count?: number
@@ -971,7 +972,24 @@ export default function EditorPage() {
         </div>
       )}
 
-      {project.status === "FAILED" && (
+      {project.status === "FAILED" && project.failure_code === "same_language" && (
+        <div
+          className="text-sm rounded-lg px-3 py-2 mb-4 flex items-center justify-between gap-3 flex-wrap"
+          style={{ background: "#f6e7c8", color: "#6b4a12" }}
+        >
+          <span>{project.failure_reason} Your credits were refunded.</span>
+          <button
+            type="button"
+            onClick={() => router.push("/new-translation")}
+            className="text-xs font-semibold px-3 py-1.5 rounded-full"
+            style={{ background: "#0a7870", color: "#ffffff" }}
+          >
+            New project
+          </button>
+        </div>
+      )}
+
+      {project.status === "FAILED" && project.failure_code !== "same_language" && (
         <div
           className="text-sm rounded-lg px-3 py-2 mb-4"
           style={{ background: "#f2d4cf", color: "#7a2f24" }}

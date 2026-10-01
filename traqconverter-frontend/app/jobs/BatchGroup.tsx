@@ -26,6 +26,7 @@ export type BatchDoc = {
   target_lang: string
   mode?: "translate" | "dtp"
   failure_reason: string | null
+  failure_code?: string | null
   created_at: string | null
 }
 
