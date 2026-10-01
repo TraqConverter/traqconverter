@@ -25,7 +25,7 @@ from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import can_manage_project, get_user_project_or_404
 from app.services import ai_actions, ai_usage, project_instructions
 from app.services.learning import capture_template_in_background
-from app.services.project_lifecycle import enqueue_job, job_charge_reference
+from app.services.project_lifecycle import enqueue_job, failure_code, job_charge_reference
 from app.models.project import MODE_DTP, MODE_TRANSLATE, PROJECT_MODES, TranslationProject, ProjectStatus, is_dtp
 from app.models.user import User
 from app.models.team import Team
@@ -472,6 +472,7 @@ def list_projects(
             "filename": p.file_name,
             "status": p.status,
             "failure_reason": p.failure_reason,
+            "failure_code": failure_code(p),
 
 
 
@@ -680,6 +681,7 @@ def get_project_status(
         "assignee": assignee_payload,
         "uploader": uploader_payload,
         "failure_reason": project.failure_reason,
+        "failure_code": failure_code(project),
         "rebuild_status": project.rebuild_status,
         "rebuild_error": project.rebuild_error,
         "revision_count": project.revision_count or 0,

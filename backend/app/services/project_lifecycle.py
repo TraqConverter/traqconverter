@@ -12,6 +12,8 @@ from app.services.credit_service import CreditService
 
 logger = logging.getLogger(__name__)
 
+SAME_LANGUAGE_REASON = "This document is already in {}. Choose another target language, or create an Editable copy instead."
+
 
 def job_priority(db: Session, project_id) -> int:
     """Queue priority from the project's team plan at enqueue time; Agency jobs are claimed first."""
@@ -67,6 +69,13 @@ def mark_project_failed(db: Session, project: TranslationProject, reason: str) -
     if refunded:
         logger.info("Refunded %d credits for failed project %s", refunded, project.id)
     return refunded
+
+
+def failure_code(project: TranslationProject) -> str | None:
+    """A stable code the UI can act on, for the failures that have one."""
+    if (project.failure_reason or "").startswith(SAME_LANGUAGE_REASON.split("{}")[0]):
+        return "same_language"
+    return None
 
 
 def fail_project_by_id(project_id: str, reason: str) -> None:

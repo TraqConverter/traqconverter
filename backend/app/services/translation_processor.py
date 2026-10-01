@@ -62,7 +62,8 @@ from app.services.layout_translator import (
 )
 from app.routers.ws import broadcast_progress
 from app.services import ai_usage, learning
-from app.services.glossary_service import lang_key, project_source_language
+from app.services.glossary_service import lang_key, language_name, project_source_language
+from app.services.project_lifecycle import SAME_LANGUAGE_REASON, mark_project_failed
 from app.dependencies.feature_guard import project_has_feature
 from concurrent.futures import ThreadPoolExecutor
 
@@ -245,6 +246,22 @@ def _finish_template_fill(db, project, job, temp_dir) -> bool:
     return True
 
 
+def _stop_if_already_in_target(db, project) -> bool:
+    """An auto-detected source in the target language fails with a full refund before any translation call."""
+    if is_dtp(project) or lang_key(project.source_language):
+        return False
+    detected = (project.doc_profile or {}).get("source_language")
+    # Only a detection that maps to a known language counts; anything unclear translates as usual.
+    src = tm_keys.family(detected)
+    if not src or src != tm_keys.family(project.target_language):
+        return False
+    mark_project_failed(db, project, SAME_LANGUAGE_REASON.format(language_name(lang_key(detected))))
+    db.commit()
+    logger.info("Project %s is already in %s; stopped before translation", project.id, detected)
+    safe_broadcast(str(project.id), project.progress_percent or 0, project.status.value)
+    return True
+
+
 def _image_to_pdf(data: bytes, file_name: str) -> bytes:
     img = fitz.open(stream=data, filetype=Path(file_name).suffix.lstrip(".").lower() or "png")
     try:
@@ -319,6 +336,8 @@ def process_translation_job(project_id: str):
         # The profile picks the template and detects an "auto" source language; otherwise it's skipped.
         if has_templates or not lang_key(project.source_language):
             learning.profile_project(db, project, source_bytes, source_text)
+        if _stop_if_already_in_target(db, project):
+            return
         if dtp:
             # An editable copy stays in the source language and uses no memory, glossary or template.
             project.target_language = project_source_language(project) or project.source_language
