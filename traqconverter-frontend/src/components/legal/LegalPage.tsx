@@ -86,22 +86,6 @@ export default function LegalPage({
             ))}
           </nav>
 
-          <div
-            role="note"
-            className="mb-6"
-            style={{
-              background: "#f6e3b8",
-              border: "1px solid #ecd08f",
-              color: "#6b4a0e",
-              borderRadius: 12,
-              padding: "10px 14px",
-              fontSize: 13,
-              fontWeight: 600,
-            }}
-          >
-            Draft — under legal review
-          </div>
-
           <div style={{ fontSize: 11, letterSpacing: "0.18em", color: TEAL, fontWeight: 600, marginBottom: 10 }}>
             LEGAL
           </div>
