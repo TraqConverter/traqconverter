@@ -145,6 +145,32 @@ class DeleteAccount(BaseModel):
     confirm: str
 
 
+def _stored_files(db: Session, team_id, user) -> list:
+    """Every storage key that belongs to the account, so deleting it also deletes the files."""
+    from sqlalchemy import text
+
+    keys = [getattr(user, "logo_s3_key", None)]
+    if team_id is None:
+        return [k for k in keys if k]
+    queries = [
+        "SELECT file_path, output_file, authored_docx_s3_key FROM translation_projects WHERE team_id = :tid",
+        "SELECT v.s3_key FROM document_versions v JOIN translation_projects p ON p.id = v.project_id WHERE p.team_id = :tid",
+        "SELECT l.file_key FROM delivery_links l JOIN translation_projects p ON p.id = l.project_id WHERE p.team_id = :tid",
+        "SELECT s3_key FROM document_templates WHERE team_id = :tid",
+        "SELECT file_path FROM certifications WHERE team_id = :tid",
+        "SELECT stamp_s3_key FROM teams WHERE id = :tid",
+        "SELECT original_key, translation_key FROM template_uploads WHERE team_id = :tid",
+    ]
+    for sql in queries:
+        try:
+            with db.begin_nested():
+                for row in db.execute(text(sql), {"tid": str(team_id)}):
+                    keys.extend(row)
+        except Exception as e:
+            logger.info("Storage key lookup skipped (%s): %s", sql.split(" FROM ")[1].split()[0], e)
+    return [k for k in keys if k]
+
+
 @router.post("/delete-account")
 def delete_account(
     payload: DeleteAccount,
@@ -181,6 +207,7 @@ def delete_account(
 
     user_id = current_user.id
     team = db.query(Team).filter(Team.owner_id == user_id).first()
+    stored_keys = _stored_files(db, team.id if team is not None else None, current_user)
 
     try:
         if team is not None:
@@ -336,6 +363,9 @@ def delete_account(
             detail="Couldn't delete account",
         )
 
+    from app.services.s3_service import delete_objects_from_s3
+
+    delete_objects_from_s3(stored_keys)
     return {"status": "deleted"}
 
 

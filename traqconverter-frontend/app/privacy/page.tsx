@@ -201,11 +201,6 @@ export default function PrivacyPage() {
               <td>Sending service emails, such as team invitations</td>
               <td>United States</td>
             </tr>
-            <tr>
-              <td>Sentry</td>
-              <td>Error monitoring for the API</td>
-              <td>United States</td>
-            </tr>
           </tbody>
         </table>
       </TableScroll>
@@ -242,7 +237,8 @@ export default function PrivacyPage() {
         </li>
         <li>
           <strong>Your account</strong>{" "}stays until you delete it from Settings. If you own a team, deleting your
-          account also deletes the team with its projects, memory, glossary, templates and credit history. If you are
+          account also deletes the team with its projects, memory, glossary, templates, certification files and credit
+          history, and the stored files behind them. If you are
           a team member, only your own account is removed; the team&apos;s work stays with its owner.
         </li>
         <li>
