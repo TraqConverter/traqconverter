@@ -47,7 +47,7 @@ def _pack(client, who):
 
 @pytest.mark.parametrize("start", [_plan, _pack])
 def test_checkout_adds_tax_for_a_new_customer(client, make_user, checkout, start):
-    who = make_user(plan="TRIAL")
+    who = make_user(plan="BASIC")
     assert start(client, who).status_code == 200
     kw = checkout[-1]
     assert {k: kw.get(k) for k in TAX_ON} == TAX_ON
@@ -55,7 +55,7 @@ def test_checkout_adds_tax_for_a_new_customer(client, make_user, checkout, start
 
 
 def test_new_customer_in_payment_mode_is_created_for_the_vat_id(client, make_user, checkout):
-    who = make_user(plan="TRIAL")
+    who = make_user(plan="BASIC")
     _pack(client, who)
     assert checkout[-1]["mode"] == "payment"
     assert checkout[-1]["customer_creation"] == "always"
@@ -66,7 +66,7 @@ def test_new_customer_in_payment_mode_is_created_for_the_vat_id(client, make_use
 
 @pytest.mark.parametrize("start", [_plan, _pack])
 def test_existing_customer_gets_address_and_name_saved(client, db, make_user, checkout, start):
-    who = make_user(plan="TRIAL")
+    who = make_user(plan="BASIC")
     _with_customer(db, who)
     assert start(client, who).status_code == 200
     kw = checkout[-1]
@@ -81,7 +81,7 @@ def test_env_flag_turns_tax_off(client, db, make_user, checkout, monkeypatch, st
     from app.routers import subscription
 
     monkeypatch.setattr(subscription.settings, "STRIPE_AUTOMATIC_TAX", False)
-    who = make_user(plan="TRIAL")
+    who = make_user(plan="BASIC")
     _with_customer(db, who)
     assert start(client, who).status_code == 200
     kw = checkout[-1]

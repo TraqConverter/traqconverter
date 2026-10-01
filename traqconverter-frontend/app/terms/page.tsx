@@ -65,8 +65,9 @@ export default function TermsPage() {
           don&apos;t carry over to the next period.
         </li>
         <li>
-          Credit packs are one-off purchases that add credits on top of your plan. They don&apos;t expire while your
-          account exists.
+          Credit packs are one-off purchases that add credits on top of your plan. They are available to teams with
+          an active paid subscription, not during the free trial or after a plan has ended. Credits you have already
+          bought don&apos;t expire while your account exists.
         </li>
         <li>Credits have no cash value and can&apos;t be transferred to another team.</li>
       </ul>

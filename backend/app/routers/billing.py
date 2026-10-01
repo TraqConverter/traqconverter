@@ -15,6 +15,7 @@ from app.config import settings
 from app.core.plan_features import (
     CREDIT_PACKS,
     PLAN_FEATURES,
+    credit_pack_prices,
     PLANS,
     SALES_EMAIL,
     TRIAL_PLAN,
@@ -67,6 +68,7 @@ def list_plans():
         "credit_packs": [
             {
                 **pack,
+                **credit_pack_prices(pack),
                 "available": bool(getattr(settings, f"STRIPE_PRICE_CREDITS_{pack['credits']}", None)),
             }
             for pack in CREDIT_PACKS

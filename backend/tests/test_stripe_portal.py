@@ -361,7 +361,7 @@ EXISTING = {
     "price_basic": _price("price_basic", "prod_basic", 1900),
     "price_pro": _price("price_pro", "prod_pro", 2900),
     "price_c10": _price("price_c10", "prod_c", 1000),
-    "price_c25": _price("price_c25", "prod_c", 2000),
+    "price_c25": _price("price_c25", "prod_c", 2500),
 }
 
 
@@ -386,8 +386,8 @@ def test_setup_dry_run_creates_nothing_when_prices_exist():
     }
     text = "\n".join(out)
     assert "STRIPE_PRICE_STUDIO=price_studio" in text and "STRIPE_PORTAL_CONFIGURATION=bpc_existing" in text
-    # The 25-credit pack is priced at 20 EUR in Stripe but 25 in PLANS.
-    assert "STRIPE_PRICE_CREDITS_25: price_c25 = 2000 eur  <-- MISMATCH" in text
+    # The 25-credit pack is still on the old 25 EUR price in Stripe; it now costs 22.50.
+    assert "STRIPE_PRICE_CREDITS_25: price_c25 = 2500 eur  <-- MISMATCH: expected 2250 eur" in text
     assert "STRIPE_PRICE_CREDITS_10: price_c10 = 1000 eur\n" in text + "\n"
     assert "STRIPE_PRICE_CREDITS_50: not set" in text
 

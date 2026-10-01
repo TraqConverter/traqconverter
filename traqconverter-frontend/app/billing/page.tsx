@@ -6,10 +6,14 @@ import { VAT_NOTE } from "@/lib/company"
 import {
   contactHref,
   euro,
+  euroCents,
   findPlan,
+  isPaidTier,
+  packPerPage,
   pagesLabel,
   planBullets,
   usePlans,
+  type CreditPack,
   type Plan,
   type PlanCatalog,
 } from "@/lib/plans"
@@ -166,6 +170,8 @@ export default function BillingPage() {
   const currentPlan = (wallet?.plan_type || "TRIAL").toUpperCase()
   const trialDaysLeft = wallet?.trial_days_left ?? null
   const subscribed = !!wallet?.has_subscription
+  // Matches the API: packs need an active paid plan (admins resolve to one).
+  const canBuyPacks = isPaidTier(tier)
 
   if (loading) {
     return (
@@ -355,7 +361,7 @@ export default function BillingPage() {
       </div>
 
       {}
-      <section>
+      <section id="plans" className="scroll-mt-6">
         <SectionHeader
           eyebrow="SUBSCRIPTION"
           title={subscribed ? "Your plan" : "Choose a plan"}
@@ -396,19 +402,25 @@ export default function BillingPage() {
         <SectionHeader
           eyebrow="ONE-TIME"
           title="Buy more credits"
-          subtitle="Top up at any time — purchased credits stack on top of your subscription and never expire."
+          subtitle={
+            canBuyPacks
+              ? "Top up at any time — purchased credits stack on top of your subscription and never expire. Bigger packs cost less per page."
+              : "Credit packs top up an active plan. Purchased credits never expire, and bigger packs cost less per page."
+          }
         />
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
           {(catalog?.credit_packs || []).map((pack, i) => (
             <CreditPackCard
               key={pack.credits}
-              credits={pack.credits}
-              label={pack.name}
-              note={`${pack.note} · ${euro(pack.price_eur)} + VAT where applicable`}
+              pack={pack}
               featured={i === 1}
+              locked={!canBuyPacks}
               busy={busy === `credits:${pack.credits}`}
               disabled={busy !== null}
               onBuy={() => handleBuyCredits(pack.credits)}
+              onSeePlans={() =>
+                document.getElementById("plans")?.scrollIntoView({ behavior: "smooth" })
+              }
             />
           ))}
         </div>
@@ -709,53 +721,95 @@ function PlanCard({
 }
 
 function CreditPackCard({
-  credits,
-  label,
-  note,
+  pack,
   featured,
+  locked,
   busy,
   disabled,
   onBuy,
+  onSeePlans,
 }: {
-  credits: number
-  label: string
-  note: string
+  pack: CreditPack
   featured: boolean
+  locked: boolean
   busy: boolean
   disabled: boolean
   onBuy: () => void
+  onSeePlans: () => void
 }) {
+  const highlight = featured && !locked
   return (
     <div
       className="rounded-2xl p-5 flex flex-col"
       style={{
-        background: "#ffffff",
-        border: featured ? "1px solid #0a7870" : "1px solid #e7ddc5",
-        boxShadow: featured
+        background: locked ? "#faf7f0" : "#ffffff",
+        border: highlight ? "1px solid #0a7870" : "1px solid #e7ddc5",
+        boxShadow: highlight
           ? "0 6px 18px rgba(10,120,112,0.06)"
-          : "0 1px 2px rgba(30,30,20,0.04)",
+          : locked
+            ? "none"
+            : "0 1px 2px rgba(30,30,20,0.04)",
+        position: "relative",
       }}
     >
-      <div className="text-[11px] font-semibold tracking-[0.14em] mb-2" style={{ color: "#9a9178" }}>
-        {label.toUpperCase()}
-      </div>
-      <div
-        className="text-[28px] font-semibold tracking-tight tabular-nums mb-1"
-        style={{ color: "#1f2a2e" }}
-      >
-        {credits.toLocaleString()}{" "}
-        <span className="text-sm font-normal" style={{ color: "#8a8270" }}>
-          credits
+      {pack.save_percent > 0 && (
+        <span
+          className="absolute -top-2.5 right-5 text-[10px] font-semibold tracking-[0.16em] px-2 py-1 rounded-full"
+          style={locked ? { background: "#e7ddc5", color: "#8a8270" } : { background: "#0a7870", color: "#fff" }}
+        >
+          SAVE {pack.save_percent}%
         </span>
+      )}
+      <div style={{ opacity: locked ? 0.55 : 1 }}>
+        <div className="text-[11px] font-semibold tracking-[0.14em] mb-2" style={{ color: "#9a9178" }}>
+          {pack.name.toUpperCase()}
+        </div>
+        <div
+          className="text-[28px] font-semibold tracking-tight tabular-nums mb-1"
+          style={{ color: "#1f2a2e" }}
+        >
+          {pack.credits.toLocaleString()}{" "}
+          <span className="text-sm font-normal" style={{ color: "#8a8270" }}>
+            credits
+          </span>
+        </div>
+        <div className="flex items-baseline flex-wrap gap-x-2 mb-1">
+          <span className="text-[18px] font-semibold tabular-nums" style={{ color: "#1f2a2e" }}>
+            {euroCents(pack.price_cents)}
+          </span>
+          <span className="text-sm tabular-nums" style={{ color: "#8a8270" }}>
+            {packPerPage(pack)}
+          </span>
+        </div>
+        <div className="text-[11px] mb-3" style={{ color: "#8a8270" }}>
+          + VAT where applicable
+        </div>
+        <div className="text-sm mb-5" style={{ color: "#4a4638" }}>
+          {pack.note}
+        </div>
       </div>
-      <div className="text-sm mb-5" style={{ color: "#4a4638" }}>
-        {note}
-      </div>
+      {locked ? (
+        <>
+          <div className="text-sm font-medium mb-3 mt-auto" style={{ color: "#6b6558" }}>
+            Available once you subscribe to a plan
+          </div>
+          <button
+            type="button"
+            onClick={onSeePlans}
+            className="w-full py-2.5 rounded-full text-sm font-semibold transition"
+            style={{ background: "#ffffff", color: "#1f2a2e", border: "1px solid #e7ddc5" }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "#f3ecdb")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "#ffffff")}
+          >
+            See the plans
+          </button>
+        </>
+      ) : (
       <button
         type="button"
         onClick={onBuy}
         disabled={disabled}
-        className="w-full py-2.5 rounded-full text-sm font-semibold transition"
+        className="w-full py-2.5 rounded-full text-sm font-semibold transition mt-auto"
         style={{
           background: disabled ? "#9bc9c5" : featured ? "#0a7870" : "#1f2a2e",
           color: "#fff",
@@ -770,6 +824,7 @@ function CreditPackCard({
       >
         {busy ? "Redirecting…" : "Buy now"}
       </button>
+      )}
     </div>
   )
 }

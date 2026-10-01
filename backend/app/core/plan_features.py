@@ -123,11 +123,23 @@ TRIAL_PLAN = {
     "seats": SEAT_LIMITS["TRIAL"],
 }
 
+# Sold to active subscribers only. price_cents is what Stripe's unit_amount must be.
 CREDIT_PACKS = [
-    {"credits": 10, "price_eur": 10, "name": "Starter pack", "note": "Top up a small project"},
-    {"credits": 25, "price_eur": 25, "name": "Standard pack", "note": "For a few documents"},
-    {"credits": 50, "price_eur": 50, "name": "Scale pack", "note": "For a busy month"},
+    {"credits": 10, "price_cents": 1000, "name": "Starter pack", "note": "Top up a small project"},
+    {"credits": 25, "price_cents": 2250, "name": "Standard pack", "note": "For a few documents"},
+    {"credits": 50, "price_cents": 4000, "name": "Scale pack", "note": "For a busy month"},
 ]
+
+
+def credit_pack_prices(pack: dict) -> dict:
+    """Euro price, price per page, and the per-page saving against the smallest pack."""
+    base = CREDIT_PACKS[0]["price_cents"] / CREDIT_PACKS[0]["credits"]
+    per_page = pack["price_cents"] / pack["credits"]
+    return {
+        "price_eur": pack["price_cents"] / 100,
+        "price_per_page_eur": round(per_page / 100, 2),
+        "save_percent": round((1 - per_page / base) * 100),
+    }
 
 
 def next_plan_with_more_seats(plan: str):

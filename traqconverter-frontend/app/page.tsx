@@ -9,6 +9,8 @@ import { VAT_NOTE } from "@/lib/company"
 import {
   contactHref,
   euro,
+  euroCents,
+  packPerPage,
   pagesLabel,
   planBullets,
   usePlans,
@@ -916,7 +918,7 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
             marginBottom: 6,
           }}
         >
-          NEED MORE? ADD CREDIT PACKS ANYTIME
+          NEED MORE? TOP UP YOUR PLAN
         </div>
         <h3
           style={{
@@ -924,11 +926,14 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
             fontWeight: 600,
             textAlign: "center",
             color: TEXT,
-            marginBottom: 24,
+            marginBottom: 6,
           }}
         >
           One-off credit packs — never expire
         </h3>
+        <p className="text-center" style={{ fontSize: 14, color: MUTED, marginBottom: 24 }}>
+          For subscribers: add pages to any active plan. Bigger packs cost less per page.
+        </p>
         <div className="grid md:grid-cols-3 gap-4 max-w-[860px] mx-auto">
           {catalog.credit_packs.map((pack, i) => {
             const featured = i === 1
@@ -947,6 +952,26 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
                     : "0 1px 2px rgba(30,30,20,0.03)",
                 }}
               >
+                {pack.save_percent > 0 && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: -11,
+                      left: "50%",
+                      transform: "translateX(-50%)",
+                      background: TEAL,
+                      color: "#fff",
+                      fontSize: 10,
+                      fontWeight: 700,
+                      padding: "4px 12px",
+                      borderRadius: 999,
+                      letterSpacing: "0.1em",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    SAVE {pack.save_percent}%
+                  </div>
+                )}
                 <div
                   style={{
                     fontSize: 11,
@@ -990,8 +1015,9 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
                     color: featured ? TEAL : TEXT,
                   }}
                 >
-                  {euro(pack.price_eur)}
+                  {euroCents(pack.price_cents)}
                 </div>
+                <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>{packPerPage(pack)}</div>
                 <div style={{ fontSize: 11, color: SUBTLE, marginTop: 2 }}>+ VAT where applicable</div>
               </div>
             )
@@ -1132,12 +1158,12 @@ function FAQ() {
   const pricingAnswer = catalog
     ? `Each page is one credit. Subscriptions include a monthly allowance (${catalog.plans
         .map((p) => `${p.credits} on ${p.name}`)
-        .join(", ")}) that resets each billing period. Credit packs of ${catalog.credit_packs
+        .join(", ")}) that resets each billing period. Subscribers can add credit packs of ${catalog.credit_packs
         .map((c) => c.credits)
-        .join(", ")} credits don't expire. The ${catalog.trial.days}-day trial includes ${pagesLabel(
+        .join(", ")} credits, which don't expire. The ${catalog.trial.days}-day trial includes ${pagesLabel(
         catalog.trial.credits,
       )}.`
-    : "Each page is one credit. Subscriptions include a monthly allowance that resets each billing period, and credit packs don't expire. The plans are listed above."
+    : "Each page is one credit. Subscriptions include a monthly allowance that resets each billing period, and subscribers can add credit packs that don't expire. The plans are listed above."
   const items = [
     {
       q: "Is the output ready to certify?",
