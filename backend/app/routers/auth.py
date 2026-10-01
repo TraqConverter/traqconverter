@@ -156,6 +156,8 @@ def _stored_files(db: Session, team_id, user) -> list:
         "SELECT file_path, output_file, authored_docx_s3_key FROM translation_projects WHERE team_id = :tid",
         "SELECT v.s3_key FROM document_versions v JOIN translation_projects p ON p.id = v.project_id WHERE p.team_id = :tid",
         "SELECT l.file_key FROM delivery_links l JOIN translation_projects p ON p.id = l.project_id WHERE p.team_id = :tid",
+        "SELECT jsonb_array_elements_text(l.preview_keys) FROM delivery_links l"
+        " JOIN translation_projects p ON p.id = l.project_id WHERE p.team_id = :tid AND l.preview_keys IS NOT NULL",
         "SELECT s3_key FROM document_templates WHERE team_id = :tid",
         "SELECT file_path FROM certifications WHERE team_id = :tid",
         "SELECT stamp_s3_key FROM teams WHERE id = :tid",

@@ -1,9 +1,12 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import Link from "next/link"
 import { api, apiErrorDetail } from "@/lib/api"
 
 type LinkKind = "delivery_pdf" | "pdf" | "docx"
+
+type PaymentStatus = "awaiting" | "claimed" | "unlocked"
 
 type DeliveryLink = {
   id: string
@@ -15,7 +18,16 @@ type DeliveryLink = {
   created_at: string
   download_count: number
   last_downloaded_at: string | null
+  protected: boolean
+  amount: number | null
+  currency: string
+  client_name: string | null
+  payment_status: PaymentStatus | null
+  paid_claimed_at: string | null
+  unlocked_at: string | null
 }
+
+type Payments = { paypal_me: string | null }
 
 const KINDS: { value: LinkKind; label: string }[] = [
   { value: "delivery_pdf", label: "Delivery PDF (translation + certification + original)" },
@@ -26,6 +38,36 @@ const KINDS: { value: LinkKind; label: string }[] = [
 const EXPIRY = [1, 7, 30] as const
 
 const KIND_SHORT: Record<LinkKind, string> = { delivery_pdf: "Delivery PDF", pdf: "PDF", docx: "DOCX" }
+
+const MAX_AMOUNT = 100000
+
+const PAYMENT_LABEL: Record<PaymentStatus, string> = {
+  awaiting: "Awaiting payment",
+  claimed: "Client says paid",
+  unlocked: "Unlocked",
+}
+
+const PAYMENT_STYLE: Record<PaymentStatus, { background: string; color: string }> = {
+  awaiting: { background: "#f3ecdb", color: "#6b6558" },
+  claimed: { background: "#f6e3b8", color: "#7a5a10" },
+  unlocked: { background: "#d8ead6", color: "#2d5a24" },
+}
+
+function parseAmount(raw: string): number | null {
+  const value = Number(raw.trim().replace(",", "."))
+  if (!raw.trim() || !Number.isFinite(value) || value <= 0 || value > MAX_AMOUNT) return null
+  return Math.round(value * 100) / 100
+}
+
+// 45 -> "45", 45.5 -> "45.50": the form a paypal.me link takes.
+function amountText(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2)
+}
+
+function money(value: number | null, currency: string) {
+  if (value == null) return ""
+  return currency === "EUR" ? `€${amountText(value)}` : `${amountText(value)} ${currency}`
+}
 
 function shortDate(iso: string | null) {
   if (!iso) return ""
@@ -50,6 +92,12 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
   const [links, setLinks] = useState<DeliveryLink[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [revoking, setRevoking] = useState<string | null>(null)
+  const [isProtected, setIsProtected] = useState(false)
+  const [amount, setAmount] = useState("")
+  const [clientName, setClientName] = useState("")
+  const [payments, setPayments] = useState<Payments | null>(null)
+  const [confirmUnlock, setConfirmUnlock] = useState<string | null>(null)
+  const [unlocking, setUnlocking] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -65,12 +113,35 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
   }, [load])
 
   useEffect(() => {
+    api
+      .get<Payments>("/settings/payments")
+      .then((res) => setPayments(res.data))
+      .catch(() => setPayments({ paypal_me: null }))
+  }, [])
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose()
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [onClose])
+
+  const handle = payments?.paypal_me || null
+  const parsedAmount = parseAmount(amount)
+  const amountInvalid = !!amount.trim() && parsedAmount == null
+  const ready = !isProtected || (!!handle && parsedAmount != null)
+
+  const toggleProtected = () => {
+    const next = !isProtected
+    setIsProtected(next)
+    setError(null)
+    if (next) {
+      // A protected preview is made from the delivery PDF, and the client needs time to pay.
+      setKind("delivery_pdf")
+      setDays(30)
+    }
+  }
 
   const create = async () => {
     setCreating(true)
@@ -81,6 +152,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
       const res = await api.post<{ url: string }>(`/projects/${projectId}/delivery-links`, {
         kind,
         expires_in_days: days,
+        ...(isProtected ? { protected: true, amount: parsedAmount, client_name: clientName.trim() || null } : {}),
       })
       setUrl(res.data.url)
       setCopied(await copyText(res.data.url))
@@ -89,6 +161,20 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
       setError(apiErrorDetail(err, "Couldn't create the link."))
     } finally {
       setCreating(false)
+    }
+  }
+
+  const unlock = async (id: string) => {
+    setUnlocking(id)
+    setError(null)
+    try {
+      await api.post(`/projects/${projectId}/delivery-links/${id}/unlock`)
+      setConfirmUnlock(null)
+      await load()
+    } catch (err) {
+      setError(apiErrorDetail(err, "Couldn't unlock the link."))
+    } finally {
+      setUnlocking(null)
     }
   }
 
@@ -138,8 +224,9 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
           id="share-kind"
           value={kind}
           onChange={(e) => setKind(e.target.value as LinkKind)}
+          disabled={isProtected}
           className="w-full rounded-lg px-3 py-2 text-sm mb-3"
-          style={{ background: "#ffffff", border: "1px solid #e7ddc5", color: "#1f2a2e" }}
+          style={{ background: "#ffffff", border: "1px solid #e7ddc5", color: "#1f2a2e", opacity: isProtected ? 0.7 : 1 }}
         >
           {KINDS.map((k) => (
             <option key={k.value} value={k.value}>
@@ -171,14 +258,110 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
           ))}
         </div>
 
+        <div
+          className="rounded-xl p-3 mb-4"
+          style={{ background: "#ffffff", border: `1px solid ${isProtected ? "#0a7870" : "#e7ddc5"}` }}
+        >
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isProtected}
+            onClick={toggleProtected}
+            className="flex w-full items-center gap-3 text-left"
+          >
+            <span
+              className="relative inline-block w-9 h-5 rounded-full shrink-0 transition"
+              style={{ background: isProtected ? "#0a7870" : "#d9d0ba" }}
+            >
+              <span
+                className="absolute top-0.5 w-4 h-4 rounded-full transition-all"
+                style={{ background: "#ffffff", left: isProtected ? "18px" : "2px" }}
+              />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-semibold" style={{ color: "#1f2a2e" }}>
+                Protected until paid
+              </span>
+              <span className="block text-[12px]" style={{ color: "#8a8270" }}>
+                The client sees a watermarked preview and a PayPal button until you unlock the link.
+              </span>
+            </span>
+          </button>
+
+          {isProtected && (
+            <div className="mt-3 pt-3" style={{ borderTop: "1px solid #efe6d0" }}>
+              {!handle ? (
+                <div className="text-[13px]" style={{ color: "#7a5a10" }}>
+                  {payments === null ? (
+                    "Checking your payment settings…"
+                  ) : (
+                    <>
+                      Add your PayPal.me name first, in{" "}
+                      <Link href="/settings/account#payments" className="font-semibold underline" style={{ color: "#0a5e58" }}>
+                        Settings → Payments
+                      </Link>
+                      .
+                    </>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_1.4fr] gap-2">
+                    <label className="block">
+                      <span className="block text-[12px] font-semibold mb-1" style={{ color: "#4a4638" }}>
+                        Amount (€)
+                      </span>
+                      <input
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        inputMode="decimal"
+                        placeholder="45"
+                        className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+                        style={{
+                          background: "#faf5ee",
+                          border: `1px solid ${amountInvalid ? "#ecc9c1" : "#e7ddc5"}`,
+                          color: "#1f2a2e",
+                        }}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="block text-[12px] font-semibold mb-1" style={{ color: "#4a4638" }}>
+                        Client name
+                      </span>
+                      <input
+                        value={clientName}
+                        onChange={(e) => setClientName(e.target.value)}
+                        maxLength={120}
+                        placeholder="Shown on the watermark"
+                        className="w-full rounded-lg px-3 py-2 text-sm outline-none"
+                        style={{ background: "#faf5ee", border: "1px solid #e7ddc5", color: "#1f2a2e" }}
+                      />
+                    </label>
+                  </div>
+                  <div className="text-[12px] mt-2 break-all" style={{ color: amountInvalid ? "#b14a3a" : "#8a8270" }}>
+                    {amountInvalid
+                      ? `Enter an amount above 0 and up to ${MAX_AMOUNT}.`
+                      : `Client pays at paypal.me/${handle}/${parsedAmount != null ? amountText(parsedAmount) : "…"}EUR`}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
         <button
           type="button"
           onClick={() => void create()}
-          disabled={creating}
+          disabled={creating || !ready}
           className="w-full rounded-full px-4 py-2.5 text-sm font-semibold transition"
-          style={{ background: "#0a7870", color: "#ffffff", opacity: creating ? 0.7 : 1 }}
+          style={{
+            background: ready ? "#0a7870" : "#9bc9c5",
+            color: "#ffffff",
+            opacity: creating ? 0.7 : 1,
+            cursor: creating || !ready ? "not-allowed" : "pointer",
+          }}
         >
-          {creating ? "Preparing the file…" : "Create link"}
+          {creating ? "Preparing the file…" : isProtected ? "Create protected link" : "Create link"}
         </button>
 
         {url && (
@@ -227,39 +410,94 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
             </div>
           ) : (
             <ul className="flex flex-col gap-2">
-              {links.map((l) => (
-                <li
-                  key={l.id}
-                  className="flex items-center gap-3 rounded-xl px-3 py-2"
-                  style={{ background: "#ffffff", border: "1px solid #efe6d0" }}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-semibold truncate" style={{ color: "#1f2a2e" }}>
-                      {KIND_SHORT[l.kind]} <span style={{ color: "#8a8270", fontWeight: 400 }}>· /d/{l.token_prefix}…</span>
+              {links.map((l) => {
+                const claimed = l.payment_status === "claimed" && l.status === "active"
+                const canUnlock = l.status === "active" && l.protected && l.payment_status !== "unlocked"
+                return (
+                  <li
+                    key={l.id}
+                    className="rounded-xl px-3 py-2"
+                    style={{ background: claimed ? "#fdf3dc" : "#ffffff", border: `1px solid ${claimed ? "#e8c46a" : "#efe6d0"}` }}
+                  >
+                    <div className="flex items-center gap-2 sm:gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-semibold truncate" style={{ color: "#1f2a2e" }}>
+                          {KIND_SHORT[l.kind]} <span style={{ color: "#8a8270", fontWeight: 400 }}>· /d/{l.token_prefix}…</span>
+                        </div>
+                        <div className="text-[12px]" style={{ color: "#8a8270" }}>
+                          {l.status === "active"
+                            ? `Expires ${shortDate(l.expires_at)}`
+                            : l.status === "revoked"
+                            ? "Revoked"
+                            : `Expired ${shortDate(l.expires_at)}`}
+                          {" · "}
+                          {l.download_count === 1 ? "1 download" : `${l.download_count} downloads`}
+                        </div>
+                        {l.protected && l.payment_status && (
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
+                            <span
+                              className="inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                              style={PAYMENT_STYLE[l.payment_status]}
+                            >
+                              {PAYMENT_LABEL[l.payment_status]}
+                            </span>
+                            <span className="text-[12px]" style={{ color: "#8a8270" }}>
+                              {[money(l.amount, l.currency), l.client_name].filter(Boolean).join(" · ")}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      {canUnlock && confirmUnlock !== l.id && (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmUnlock(l.id)}
+                          className="shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold"
+                          style={{ background: "#0a7870", color: "#ffffff" }}
+                        >
+                          Unlock
+                        </button>
+                      )}
+                      {l.status === "active" && (
+                        <button
+                          type="button"
+                          onClick={() => void revoke(l.id)}
+                          disabled={revoking === l.id}
+                          className="shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold"
+                          style={{ background: "#ffffff", color: "#b14a3a", border: "1px solid #ecc9c1" }}
+                        >
+                          {revoking === l.id ? "Revoking…" : "Revoke"}
+                        </button>
+                      )}
                     </div>
-                    <div className="text-[12px]" style={{ color: "#8a8270" }}>
-                      {l.status === "active"
-                        ? `Expires ${shortDate(l.expires_at)}`
-                        : l.status === "revoked"
-                        ? "Revoked"
-                        : `Expired ${shortDate(l.expires_at)}`}
-                      {" · "}
-                      {l.download_count === 1 ? "1 download" : `${l.download_count} downloads`}
-                    </div>
-                  </div>
-                  {l.status === "active" && (
-                    <button
-                      type="button"
-                      onClick={() => void revoke(l.id)}
-                      disabled={revoking === l.id}
-                      className="shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold"
-                      style={{ background: "#ffffff", color: "#b14a3a", border: "1px solid #ecc9c1" }}
-                    >
-                      {revoking === l.id ? "Revoking…" : "Revoke"}
-                    </button>
-                  )}
-                </li>
-              ))}
+                    {confirmUnlock === l.id && (
+                      <div className="mt-2 rounded-lg p-2.5" style={{ background: "#e1efec", border: "1px solid #cfe6e2" }}>
+                        <div className="text-[13px] mb-2" style={{ color: "#1f2a2e" }}>
+                          Check PayPal first. Once unlocked, {l.client_name || "the client"} can download the clean file from the same link.
+                        </div>
+                        <div className="flex gap-2 justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setConfirmUnlock(null)}
+                            className="rounded-full px-3 py-1.5 text-xs font-semibold"
+                            style={{ background: "#ffffff", color: "#1f2a2e", border: "1px solid #e7ddc5" }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void unlock(l.id)}
+                            disabled={unlocking === l.id}
+                            className="rounded-full px-3 py-1.5 text-xs font-semibold"
+                            style={{ background: "#0a7870", color: "#ffffff", opacity: unlocking === l.id ? 0.7 : 1 }}
+                          >
+                            {unlocking === l.id ? "Unlocking…" : "Yes, unlock"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           )}
         </div>

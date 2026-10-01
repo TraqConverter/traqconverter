@@ -23,4 +23,7 @@ class Team(Base):
     stamp_s3_key = Column(String, nullable=True)
     stamp_alignment = Column(String, nullable=False, default="right")
 
+    # paypal.me handle only (no URL); clients of protected links pay here.
+    paypal_me = Column(String(20), nullable=True)
+
     owner = relationship("User")

@@ -243,3 +243,52 @@ def update_stamp_alignment(
     team.stamp_alignment = alignment
     db.commit()
     return {"alignment": team.stamp_alignment}
+
+
+def _can_edit_team(db: Session, team, user: User) -> bool:
+    from app.models.team_member import TeamMember
+
+    if team.owner_id == user.id:
+        return True
+    member = db.query(TeamMember).filter(TeamMember.team_id == team.id, TeamMember.user_id == user.id).first()
+    return bool(member and (member.role or "").upper() == "ADMIN")
+
+
+def _payments(db: Session, team, user: User) -> dict:
+    return {
+        "paypal_me": team.paypal_me,
+        "paypal_url": f"https://paypal.me/{team.paypal_me}" if team.paypal_me else None,
+        "can_edit": _can_edit_team(db, team, user),
+    }
+
+
+class _Payments(BaseModel):
+    paypal_me: str | None = None
+
+
+@router.get("/payments")
+def get_payment_settings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Readable by the whole team: the share dialog shows the handle a protected link will use.
+    return _payments(db, _resolve_team(db, current_user), current_user)
+
+
+@router.put("/payments")
+def update_payment_settings(
+    payload: _Payments,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.services.paypal import normalise_handle
+
+    team = _resolve_team(db, current_user)
+    if not _can_edit_team(db, team, current_user):
+        raise HTTPException(status_code=403, detail="Only the team owner or an admin can change payment settings")
+    try:
+        team.paypal_me = normalise_handle(payload.paypal_me)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    return _payments(db, team, current_user)
