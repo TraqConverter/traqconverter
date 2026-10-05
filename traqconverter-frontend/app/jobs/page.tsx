@@ -55,6 +55,12 @@ type Member = {
 
 type StatusFilter = "all" | "active" | "review" | "delivered"
 
+type AssigneeFilter = "all" | "me" | "unassigned"
+
+function parseAssignee(raw: string | null): AssigneeFilter {
+  return raw === "me" || raw === "unassigned" ? raw : "all"
+}
+
 const STATUS_STYLES: Record<
   string,
   { bg: string; dot: string; text: string; label: string }
@@ -166,7 +172,18 @@ function initialsOf(fullName: string | null, email: string) {
 
 function Jobs() {
   const router = useRouter()
-  const highlight = useSearchParams().get("batch")
+  const searchParams = useSearchParams()
+  const highlight = searchParams.get("batch")
+  const assignee = parseAssignee(searchParams.get("assignee"))
+  const fetchSeq = useRef(0)
+
+  const setAssignee = (next: AssigneeFilter) => {
+    const params = new URLSearchParams(searchParams.toString())
+    if (next === "all") params.delete("assignee")
+    else params.set("assignee", next)
+    const qs = params.toString()
+    router.replace(qs ? `/jobs?${qs}` : "/jobs", { scroll: false })
+  }
 
   const [projects, setProjects] = useState<Project[]>([])
   const [summaries, setSummaries] = useState<Record<string, BatchSummary>>({})
@@ -244,18 +261,23 @@ function Jobs() {
   }
 
   const fetchJobs = useCallback(async () => {
+    // Only the latest request may write, so a slow response for an old filter can't replace the list.
+    const seq = ++fetchSeq.current
     try {
-      const res = await api.get("/projects/")
-      setProjects(res.data || [])
+      const res = await api.get("/projects/", {
+        params: assignee === "all" ? undefined : { assignee },
+      })
+      if (seq === fetchSeq.current) setProjects(res.data || [])
     } catch (err: any) {
-      setError(
-        err?.response?.data?.detail ||
-          "Couldn't load your projects — try refreshing in a moment."
-      )
+      if (seq === fetchSeq.current)
+        setError(
+          err?.response?.data?.detail ||
+            "Couldn't load your projects — try refreshing in a moment."
+        )
     } finally {
-      setLoading(false)
+      if (seq === fetchSeq.current) setLoading(false)
     }
-  }, [])
+  }, [assignee])
 
   const fetchSummaries = useCallback(async () => {
     try {
@@ -278,12 +300,15 @@ function Jobs() {
 
   useEffect(() => {
     fetchJobs()
+  }, [fetchJobs])
+
+  useEffect(() => {
     fetchSummaries()
     api
       .get("/members")
       .then((res) => setMembers(res.data?.members || []))
       .catch(() => setMembers([]))
-  }, [fetchJobs, fetchSummaries])
+  }, [fetchSummaries])
 
   const requested = useRef<Set<string>>(new Set())
   useEffect(() => {
@@ -341,6 +366,8 @@ function Jobs() {
         )
       )
       setAssigningId(null)
+      // The project may no longer match the assignee filter.
+      if (assignee !== "all") fetchJobs()
     } catch (err: any) {
       setError(
         err?.response?.data?.detail ||
@@ -383,7 +410,8 @@ function Jobs() {
       if (p.batch) byBatch.set(p.batch.id, [...(byBatch.get(p.batch.id) || []), p])
     }
     // GET /projects/ is capped, so a batch can have documents only its detail knows about.
-    for (const d of Object.values(details)) {
+    // Batch details carry no assignee, so they can't fill in a list filtered by assignee.
+    for (const d of assignee === "all" ? Object.values(details) : []) {
       const ref = { id: d.id, name: d.name }
       const extra = d.projects.filter((x) => !known.has(x.id)).map((x) => fromBatchDoc(x, ref))
       if (extra.length) byBatch.set(d.id, [...(byBatch.get(d.id) || []), ...extra])
@@ -396,7 +424,7 @@ function Jobs() {
       const all = byBatch.get(id) || []
       const nameHit = !!q && name.toLowerCase().includes(q)
       const docs = all.filter((p) => tabOk(p) && (nameHit || queryOk(p)))
-      if (docs.length || id === highlight || (nameHit && tab === "all")) {
+      if (docs.length || id === highlight || (nameHit && tab === "all" && assignee === "all")) {
         out.push({ kind: "group", id, name, docs, all })
       }
     }
@@ -415,7 +443,7 @@ function Jobs() {
       }
     }
     return out
-  }, [projects, details, summaries, tab, query, highlight])
+  }, [projects, details, summaries, tab, query, highlight, assignee])
 
   useEffect(() => {
     if (!highlight || scrolledTo.current === highlight || !highlightRef.current) return
@@ -728,7 +756,7 @@ function Jobs() {
     )
   }
 
-  const isFiltered = tab !== "all" || query.trim().length > 0
+  const isFiltered = tab !== "all" || assignee !== "all" || query.trim().length > 0
 
   return (
     <div className="space-y-6 pb-16">
@@ -766,15 +794,31 @@ function Jobs() {
       )}
 
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="max-w-full overflow-x-auto">
-          <div
-            className="inline-flex items-center gap-1 p-1 rounded-full"
-            style={{ background: "#f3ecdb", border: "1px solid #e7ddc5" }}
-          >
-            <TabButton label="All" count={counts.all} active={tab === "all"} onClick={() => setTab("all")} />
-            <TabButton label="In progress" count={counts.active} active={tab === "active"} onClick={() => setTab("active")} />
-            <TabButton label="Awaiting review" count={counts.review} active={tab === "review"} onClick={() => setTab("review")} />
-            <TabButton label="Delivered" count={counts.delivered} active={tab === "delivered"} onClick={() => setTab("delivered")} />
+        <div className="flex items-center flex-wrap gap-2 max-w-full">
+          <div className="max-w-full overflow-x-auto">
+            <div
+              role="group"
+              aria-label="Filter by status"
+              className="inline-flex items-center gap-1 p-1 rounded-full"
+              style={{ background: "#f3ecdb", border: "1px solid #e7ddc5" }}
+            >
+              <TabButton label="All" count={counts.all} active={tab === "all"} onClick={() => setTab("all")} />
+              <TabButton label="In progress" count={counts.active} active={tab === "active"} onClick={() => setTab("active")} />
+              <TabButton label="Awaiting review" count={counts.review} active={tab === "review"} onClick={() => setTab("review")} />
+              <TabButton label="Delivered" count={counts.delivered} active={tab === "delivered"} onClick={() => setTab("delivered")} />
+            </div>
+          </div>
+          <div className="max-w-full overflow-x-auto">
+            <div
+              role="group"
+              aria-label="Filter by assignee"
+              className="inline-flex items-center gap-1 p-1 rounded-full"
+              style={{ background: "#f3ecdb", border: "1px solid #e7ddc5" }}
+            >
+              <TabButton label="All people" active={assignee === "all"} onClick={() => setAssignee("all")} />
+              <TabButton label="Assigned to me" active={assignee === "me"} onClick={() => setAssignee("me")} />
+              <TabButton label="Unassigned" active={assignee === "unassigned"} onClick={() => setAssignee("unassigned")} />
+            </div>
           </div>
         </div>
 
@@ -822,6 +866,7 @@ function Jobs() {
             onReset={() => {
               setTab("all")
               setQuery("")
+              setAssignee("all")
             }}
           />
         ) : (
@@ -1032,7 +1077,7 @@ function TabButton({
   onClick,
 }: {
   label: string
-  count: number
+  count?: number
   active: boolean
   onClick: () => void
 }) {
@@ -1040,6 +1085,7 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className="px-3.5 py-1.5 rounded-full text-sm font-medium transition flex items-center gap-1.5 whitespace-nowrap"
       style={{
         background: active ? "#ffffff" : "transparent",
@@ -1049,16 +1095,18 @@ function TabButton({
       }}
     >
       {label}
-      <span
-        className="text-[10px] font-semibold tabular-nums px-1.5 py-0.5 rounded-full"
-        style={{
-          background: active ? "#f3ecdb" : "#ffffff",
-          color: "#8a8270",
-          border: "1px solid #e7ddc5",
-        }}
-      >
-        {count}
-      </span>
+      {count !== undefined && (
+        <span
+          className="text-[10px] font-semibold tabular-nums px-1.5 py-0.5 rounded-full"
+          style={{
+            background: active ? "#f3ecdb" : "#ffffff",
+            color: "#8a8270",
+            border: "1px solid #e7ddc5",
+          }}
+        >
+          {count}
+        </span>
+      )}
     </button>
   )
 }

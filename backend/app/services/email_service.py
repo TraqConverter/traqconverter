@@ -241,3 +241,105 @@ def render_password_reset_email(*, name: str | None, link: str) -> tuple[str, st
 </html>
 """
     return subject, html
+
+
+_STATUS_LABELS = {
+    "PENDING": "Queued",
+    "PROCESSING": "Translating",
+    "FAILED": "Failed",
+}
+
+
+def project_status_label(status: str | None, review_status: str | None) -> str:
+    """The status label the Projects page shows."""
+    s = (getattr(status, "value", status) or "").upper()
+    if s == "COMPLETED":
+        r = (review_status or "").upper()
+        if r == "CERTIFIED":
+            return "Certified"
+        if r == "IN_REVIEW":
+            return "In review"
+        return "Delivered"
+    return _STATUS_LABELS.get(s, "Queued")
+
+
+def render_assignment_email(
+    *,
+    assigner: str,
+    file_name: str | None,
+    source_language: str | None,
+    target_language: str | None,
+    page_count: int | None,
+    status: str,
+    link: str,
+) -> tuple[str, str, str]:
+    """Return (subject, html, text) for a project-assigned email."""
+    from html import escape
+
+    subject = f"{assigner} assigned you a translation"
+    pair = f"{source_language or '?'} → {target_language or '?'}"
+    pages = f"{page_count} page{'' if page_count == 1 else 's'}" if page_count is not None else "—"
+    rows = [("File", file_name or "Untitled"), ("Languages", pair), ("Pages", pages), ("Status", status)]
+    rows_html = "".join(
+        f'<tr><td style="padding:6px 16px 6px 0;font-size:13px;color:#8a8270;white-space:nowrap;vertical-align:top;">{label}</td>'
+        f'<td style="padding:6px 0;font-size:14px;color:#1f2a2e;font-weight:600;word-break:break-word;">{escape(value)}</td></tr>'
+        for label, value in rows
+    )
+    safe_link = escape(link, quote=True)
+
+    html = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{escape(subject)}</title>
+</head>
+<body style="margin:0;padding:0;background:#faf5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1f2a2e;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf5ee;padding:32px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e7ddc5;border-radius:18px;padding:36px 32px;max-width:560px;">
+        <tr><td>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px;">
+            <div style="width:36px;height:36px;border-radius:10px;background:#0a7870;color:#fff;font-weight:700;font-size:16px;display:inline-block;text-align:center;line-height:36px;">T</div>
+            <span style="font-weight:600;font-size:16px;color:#1f2a2e;margin-left:10px;">TraqConverter</span>
+          </div>
+          <h1 style="font-size:24px;font-weight:700;letter-spacing:-0.02em;color:#1f2a2e;margin:0 0 14px;">
+            You have a new translation
+          </h1>
+          <p style="font-size:15px;line-height:1.55;color:#4a4638;margin:0 0 18px;">
+            <strong>{escape(assigner)}</strong> assigned this project to you.
+          </p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf5ee;border:1px solid #f1e8d1;border-radius:12px;padding:10px 16px;">
+            {rows_html}
+          </table>
+          <div style="margin:28px 0;">
+            <a href="{safe_link}" style="display:inline-block;background:#0a7870;color:#ffffff;padding:13px 26px;border-radius:999px;font-weight:600;font-size:14px;text-decoration:none;">
+              Open project
+            </a>
+          </div>
+          <p style="font-size:13px;line-height:1.5;color:#8a8270;margin:0 0 8px;">
+            If the button doesn't work, copy this link into your browser:
+          </p>
+          <p style="font-size:12px;line-height:1.5;color:#0a7870;word-break:break-all;margin:0 0 24px;">
+            {safe_link}
+          </p>
+          <hr style="border:none;border-top:1px solid #f1e8d1;margin:20px 0;">
+          <p style="font-size:12px;color:#8a8270;line-height:1.5;margin:0;">
+            You're getting this because a teammate assigned you a project on TraqConverter.
+          </p>
+        </td></tr>
+      </table>
+      <p style="font-size:11px;color:#9a9178;margin-top:18px;">
+        Sent by TraqConverter · onlinedoctranslator.ai
+      </p>
+    </td></tr>
+  </table>
+</body>
+</html>
+"""
+    text = "\n".join(
+        [f"{assigner} assigned you a translation on TraqConverter.", ""]
+        + [f"{label}: {value}" for label, value in rows]
+        + ["", f"Open project: {link}"]
+    )
+    return subject, html, text
