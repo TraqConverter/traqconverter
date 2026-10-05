@@ -518,10 +518,43 @@ class _AssignPayload(BaseModel):
     assignee_id: str | None = None
 
 
+def _send_assignment_email(to: str, **fields) -> None:
+    from app.services import email_service
+
+    try:
+        subject, html, text = email_service.render_assignment_email(**fields)
+        email_service.send_email(to=to, subject=subject, html=html, text_fallback=text)
+    except Exception:
+        logger.exception("Couldn't send the assignment email to %s", to)
+
+
+def _queue_assignment_email(background_tasks: BackgroundTasks, project, assignee: User, assigner: User) -> None:
+    from app.config import settings
+    from app.services import email_service
+
+    if not assignee.email:
+        return
+    if not email_service.is_configured():
+        logger.warning("Project %s assigned but email is not configured (RESEND_API_KEY missing); no email sent", project.id)
+        return
+    background_tasks.add_task(
+        _send_assignment_email,
+        assignee.email,
+        assigner=(assigner.full_name or "").strip() or assigner.email,
+        file_name=project.file_name,
+        source_language=project.source_language,
+        target_language=project.target_language,
+        page_count=project.page_count,
+        status=email_service.project_status_label(project.status, project.review_status),
+        link=f"{settings.FRONTEND_URL.rstrip('/')}/editor/{project.id}",
+    )
+
+
 @router.patch("/{project_id}/assign")
 def assign_project(
     project_id: UUID,
     data: _AssignPayload,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -551,6 +584,8 @@ def assign_project(
     if not (is_owner or is_member):
         raise HTTPException(status_code=403, detail="You can't assign this project")
 
+    previous_assignee_id = project.assignee_id
+    target = None
     if data.assignee_id is None:
         project.assignee_id = None
     else:
@@ -576,6 +611,10 @@ def assign_project(
 
     db.commit()
     db.refresh(project)
+
+    if target is not None and target.id != previous_assignee_id and target.id != current_user.id:
+        _queue_assignment_email(background_tasks, project, target, current_user)
+
     return {
         "project_id": str(project.id),
         "assignee_id": str(project.assignee_id) if project.assignee_id else None,

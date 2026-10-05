@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 import BatchBadge, { type BatchRef } from "@/components/BatchBadge"
@@ -160,6 +161,7 @@ export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [tab, setTab] = useState<Tab>("all")
   const [name, setName] = useState<string>("")
+  const [meId, setMeId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -232,14 +234,13 @@ export default function DashboardPage() {
 
   const filtered = useMemo(() => {
     if (tab === "assigned") {
-
-      return projects
+      return meId ? projects.filter((p) => p.assignee?.id === meId) : []
     }
     if (tab === "review") {
       return projects.filter((p) => effectiveStatus(p) === "IN_REVIEW")
     }
     return projects
-  }, [projects, tab])
+  }, [projects, tab, meId])
 
   useEffect(() => {
     let cancelled = false
@@ -247,6 +248,7 @@ export default function DashboardPage() {
       .get("/auth/me")
       .then((res) => {
         if (cancelled) return
+        if (res.data?.id) setMeId(String(res.data.id))
         const fullName: string | null = res.data?.full_name
         const email: string | null = res.data?.email
         if (fullName && fullName.trim()) setName(fullName.split(" ")[0])
@@ -594,6 +596,13 @@ export default function DashboardPage() {
         </div>
         </div>
         </div>
+        {tab === "assigned" && !loading && (
+          <div className="px-5 sm:px-7 py-4" style={{ borderTop: "1px solid #f1e8d1" }}>
+            <Link href="/jobs?assignee=me" className="text-sm font-semibold" style={{ color: "#0a7870" }}>
+              View all assigned to me →
+            </Link>
+          </div>
+        )}
       </section>
     </div>
   )
