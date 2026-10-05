@@ -1,6 +1,10 @@
+import hashlib
 import logging
+import secrets
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -9,13 +13,16 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.dependencies.rate_limit import rate_limit
+from app.dependencies.rate_limit import _hit, client_ip, rate_limit
 from app.models.user import User
 from app.models.team import Team
 from app.models.credit import CreditTransaction, CreditWallet
-from app.schemas.auth import UserRegister, UserLogin, TokenResponse
+from app.models.password_reset import PasswordResetToken
+from app.schemas.auth import ForgotPassword, ResetPassword, UserRegister, UserLogin, TokenResponse
+from app.services import email_service
 from app.core.security import hash_password, verify_password, create_access_token
 from app.core.plan_features import TRIAL_DAYS, TRIAL_CREDITS
 from app.routers.members import auto_accept_invites
@@ -115,6 +122,94 @@ def change_password(
         token_version=int(current_user.token_version),
     )
     return {"status": "password_updated", "access_token": new_token}
+
+
+RESET_TOKEN_MINUTES = 60
+FORGOT_MESSAGE = "If an account exists for that email, we've sent a reset link."
+INVALID_RESET_MESSAGE = "This reset link is invalid or has expired."
+
+_forgot_ip_limit = rate_limit("auth_forgot", max_requests=5, per_seconds=3600)
+_reset_ip_limit = rate_limit("auth_reset", max_requests=10, per_seconds=900)
+
+
+def _hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _invalidate_reset_tokens(db: Session, user_id, now: datetime) -> None:
+    db.query(PasswordResetToken).filter(
+        PasswordResetToken.user_id == user_id,
+        PasswordResetToken.used_at.is_(None),
+    ).update({PasswordResetToken.used_at: now}, synchronize_session=False)
+
+
+def _send_reset_email(to: str, name: str | None, link: str) -> None:
+    subject, html = email_service.render_password_reset_email(name=name, link=link)
+    text = (
+        f"Reset your TraqConverter password: {link}\n\n"
+        "This link expires in 60 minutes.\n"
+        "If you didn't ask for this, you can ignore this email."
+    )
+    email_service.send_email(to=to, subject=subject, html=html, text_fallback=text)
+
+
+@router.post("/forgot-password", dependencies=[Depends(_forgot_ip_limit)])
+def forgot_password(
+    payload: ForgotPassword,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    email = payload.email.strip().lower()
+    _hit((f"email:{email}", "auth_forgot_email"), max_requests=5, per_seconds=3600)
+
+    user = db.query(User).filter(func.lower(User.email) == email).first()
+    if user is None or user.is_active is False:
+        return {"message": FORGOT_MESSAGE}
+
+    now = datetime.utcnow()
+    _invalidate_reset_tokens(db, user.id, now)
+    token = secrets.token_urlsafe(32)
+    db.add(PasswordResetToken(
+        user_id=user.id,
+        token_hash=_hash_reset_token(token),
+        created_at=now,
+        expires_at=now + timedelta(minutes=RESET_TOKEN_MINUTES),
+        request_ip=client_ip(request)[:64],
+    ))
+    db.commit()
+
+    if not email_service.is_configured():
+        logger.warning("Password reset requested but email is not configured (RESEND_API_KEY missing); no email sent")
+        return {"message": FORGOT_MESSAGE}
+
+    link = f"{settings.FRONTEND_URL.rstrip('/')}/reset-password?{urlencode({'token': token})}"
+    # Sent after the response so known and unknown emails answer in the same time.
+    background_tasks.add_task(_send_reset_email, user.email, user.full_name, link)
+    return {"message": FORGOT_MESSAGE}
+
+
+@router.post("/reset-password", dependencies=[Depends(_reset_ip_limit)])
+def reset_password(payload: ResetPassword, db: Session = Depends(get_db)):
+    now = datetime.utcnow()
+    row = (
+        db.query(PasswordResetToken)
+        .filter(PasswordResetToken.token_hash == _hash_reset_token(payload.token))
+        .with_for_update()
+        .first()
+    )
+    if row is None or row.used_at is not None or row.expires_at <= now:
+        raise HTTPException(status_code=400, detail=INVALID_RESET_MESSAGE)
+    user = db.query(User).filter(User.id == row.user_id).first()
+    if user is None or user.is_active is False:
+        raise HTTPException(status_code=400, detail=INVALID_RESET_MESSAGE)
+
+    user.password_hash = hash_password(payload.new_password)
+    # Signs out every existing session (JWTs carry the token version).
+    user.token_version = int(user.token_version or 0) + 1
+    _invalidate_reset_tokens(db, user.id, now)
+    db.commit()
+    return {"status": "password_updated"}
 
 
 

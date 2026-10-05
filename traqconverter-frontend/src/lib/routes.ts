@@ -6,10 +6,12 @@ export function isPublicRoute(pathname: string): boolean {
 }
 
 const LEGAL_ROUTES = new Set(["/terms", "/privacy", "/cookies"])
+// Open rather than public: an emailed reset link must work even in a browser that is still signed in.
+const PASSWORD_RESET_ROUTES = new Set(["/forgot-password", "/reset-password"])
 
-// Reachable with or without a token, and shown without the app chrome (client download links, legal pages).
+// Reachable with or without a token, and shown without the app chrome (client download links, legal pages, password reset).
 export function isOpenRoute(pathname: string): boolean {
-  return pathname.startsWith("/d/") || LEGAL_ROUTES.has(pathname)
+  return pathname.startsWith("/d/") || LEGAL_ROUTES.has(pathname) || PASSWORD_RESET_ROUTES.has(pathname)
 }
 
 export function safeNextPath(next: string | null | undefined): string {

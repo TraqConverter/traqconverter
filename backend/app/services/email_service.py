@@ -180,3 +180,64 @@ def render_invite_email(
 </html>
 """
     return subject, html
+
+
+def render_password_reset_email(*, name: str | None, link: str) -> tuple[str, str]:
+    """Return (subject, html) for a password-reset email."""
+    from html import escape
+
+    subject = "Reset your TraqConverter password"
+    greeting = f"Hi {escape(name)}," if name else "Hi,"
+    safe_link = escape(link, quote=True)
+
+    html = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{subject}</title>
+</head>
+<body style="margin:0;padding:0;background:#faf5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1f2a2e;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf5ee;padding:32px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e7ddc5;border-radius:18px;padding:36px 32px;max-width:560px;">
+        <tr><td>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px;">
+            <div style="width:36px;height:36px;border-radius:10px;background:#0a7870;color:#fff;font-weight:700;font-size:16px;display:inline-block;text-align:center;line-height:36px;">T</div>
+            <span style="font-weight:600;font-size:16px;color:#1f2a2e;margin-left:10px;">TraqConverter</span>
+          </div>
+          <h1 style="font-size:24px;font-weight:700;letter-spacing:-0.02em;color:#1f2a2e;margin:0 0 14px;">
+            Reset your password
+          </h1>
+          <p style="font-size:15px;line-height:1.55;color:#4a4638;margin:0 0 18px;">
+            {greeting} we got a request to reset the password for your TraqConverter account. Use the button below to choose a new one.
+          </p>
+          <div style="margin:28px 0;">
+            <a href="{safe_link}" style="display:inline-block;background:#0a7870;color:#ffffff;padding:13px 26px;border-radius:999px;font-weight:600;font-size:14px;text-decoration:none;">
+              Set a new password
+            </a>
+          </div>
+          <p style="font-size:14px;line-height:1.5;color:#4a4638;margin:0 0 18px;">
+            This link expires in 60 minutes and works once.
+          </p>
+          <p style="font-size:13px;line-height:1.5;color:#8a8270;margin:0 0 8px;">
+            If the button doesn't work, copy this link into your browser:
+          </p>
+          <p style="font-size:12px;line-height:1.5;color:#0a7870;word-break:break-all;margin:0 0 24px;">
+            {safe_link}
+          </p>
+          <hr style="border:none;border-top:1px solid #f1e8d1;margin:20px 0;">
+          <p style="font-size:12px;color:#8a8270;line-height:1.5;margin:0;">
+            If you didn't ask for this, you can ignore this email. Your password won't change.
+          </p>
+        </td></tr>
+      </table>
+      <p style="font-size:11px;color:#9a9178;margin-top:18px;">
+        Sent by TraqConverter · onlinedoctranslator.ai
+      </p>
+    </td></tr>
+  </table>
+</body>
+</html>
+"""
+    return subject, html

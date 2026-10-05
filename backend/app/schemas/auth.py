@@ -1,6 +1,12 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
+def check_password_strength(v: str) -> str:
+    if not v or v.strip() == "":
+        raise ValueError("Password cannot be empty or whitespace")
+    return v
+
+
 class UserRegister(BaseModel):
     email: EmailStr
 
@@ -12,10 +18,7 @@ class UserRegister(BaseModel):
     @field_validator("password")
     @classmethod
     def _password_strength(cls, v: str) -> str:
-
-        if not v or v.strip() == "":
-            raise ValueError("Password cannot be empty or whitespace")
-        return v
+        return check_password_strength(v)
 
     @field_validator("accept_terms")
     @classmethod
@@ -23,6 +26,21 @@ class UserRegister(BaseModel):
         if v is not True:
             raise ValueError("You must accept the Terms of Service and the Privacy Policy")
         return v
+
+
+class ForgotPassword(BaseModel):
+    email: EmailStr
+
+
+class ResetPassword(BaseModel):
+    token: str = Field(min_length=1, max_length=200)
+    # Same rules as registration.
+    new_password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("new_password")
+    @classmethod
+    def _password_strength(cls, v: str) -> str:
+        return check_password_strength(v)
 
 
 class UserLogin(BaseModel):

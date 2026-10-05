@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import CompanyLine from "@/components/legal/CompanyLine"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
@@ -186,14 +187,9 @@ export default function LoginPage() {
               <Check checked={remember} />
               <span className="text-sm" style={{ color: "#4a4638" }}>Remember me</span>
             </label>
-            <button
-              type="button"
-              className="text-sm hover:underline"
-              style={{ color: "#0a7870" }}
-              onClick={() => alert("Password reset is not configured yet — ping your admin.")}
-            >
+            <Link href="/forgot-password" className="text-sm hover:underline" style={{ color: "#0a7870" }}>
               Forgot password?
-            </button>
+            </Link>
           </div>
 
           <button
