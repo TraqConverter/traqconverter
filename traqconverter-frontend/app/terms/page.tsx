@@ -6,26 +6,26 @@ import PlanTable from "@/components/legal/PlanTable"
 import { COMPANY, VAT_NOTE } from "@/lib/company"
 
 export const metadata: Metadata = {
-  title: "Terms of Service · TraqConverter",
-  description: "The terms for using TraqConverter, sold by Espresso Translations S.r.l.",
+  title: "Terms of Service · OnlineDocTranslator",
+  description: "The terms for using OnlineDocTranslator, sold by Espresso Translations S.r.l.",
 }
 
 export default function TermsPage() {
   return (
     <LegalPage
       title="Terms of Service"
-      intro="These terms are the agreement between you and us for using TraqConverter. We've kept them short and plain. Please read them before you sign up."
+      intro="These terms are the agreement between you and us for using OnlineDocTranslator. We've kept them short and plain. Please read them before you sign up."
     >
       <h2 id="who">1. Who we are</h2>
       <p>
-        TraqConverter is provided by {COMPANY.name}, P.IVA and codice fiscale {COMPANY.vat}, registered office{" "}
+        OnlineDocTranslator is provided by {COMPANY.name}, P.IVA and codice fiscale {COMPANY.vat}, registered office{" "}
         {COMPANY.address}{" "}(&quot;we&quot;, &quot;us&quot;). By creating an account you accept these terms and
         confirm you have read our <Link href="/privacy">Privacy Policy</Link>.
       </p>
 
       <h2 id="service">2. The service</h2>
       <p>
-        TraqConverter is an online workspace for professional translators and agencies. You upload a document (PDF,
+        OnlineDocTranslator is an online workspace for professional translators and agencies. You upload a document (PDF,
         image or DOCX); the service produces an AI draft translation with the original layout rebuilt, which you
         review and edit. Depending on your plan it also offers translation memory, glossaries, templates,
         certification pages, client delivery links and team collaboration.
@@ -127,7 +127,7 @@ export default function TermsPage() {
           it.
         </li>
         <li>
-          <strong>Certification is your act.</strong>{" "}TraqConverter never certifies a translation. Signing a
+          <strong>Certification is your act.</strong>{" "}OnlineDocTranslator never certifies a translation. Signing a
           certification, a sworn statement or an affidavit is your professional act, made under your own credentials
           and responsibility.
         </li>
@@ -174,7 +174,7 @@ export default function TermsPage() {
 
       <h2 id="availability">13. Availability and changes to the service</h2>
       <p>
-        We work to keep TraqConverter available and reliable, but we don&apos;t guarantee uninterrupted service and
+        We work to keep OnlineDocTranslator available and reliable, but we don&apos;t guarantee uninterrupted service and
         offer no service level agreement (SLA). We may need maintenance windows. We may improve, change or remove
         features; if a change takes away something important you pay for, we will tell you in advance. Keep your
         own copies of finished work.

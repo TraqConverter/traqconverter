@@ -78,7 +78,7 @@ class Settings(BaseSettings):
 
 
     RESEND_FROM_EMAIL: Optional[str] = (
-        "TraqConverter <notifications@onlinedoctranslator.ai>"
+        "OnlineDocTranslator <notifications@onlinedoctranslator.ai>"
     )
 
 

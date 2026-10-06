@@ -403,7 +403,7 @@ def test_setup_dry_run_plans_missing_prices_without_creating():
     assert result["portal"] == stripe_setup.PLANNED
     text = "\n".join(out)
     assert "STUDIO: would create price 7900 eur/month, lookup_key traq_studio_monthly_eur" in text
-    assert "AGENCY: would create product 'TraqConverter Agency'" in text
+    assert "AGENCY: would create product 'OnlineDocTranslator Agency'" in text
     assert "STUDIO: would create product" not in text
 
 
@@ -445,7 +445,7 @@ def test_setup_creates_missing_prices_and_the_portal():
         "allowed_updates": ["address", "tax_id", "name", "email"],
     }
     assert portal["business_profile"] == {
-        "headline": "TraqConverter subscription",
+        "headline": "OnlineDocTranslator subscription",
         "privacy_policy_url": "https://www.onlinedoctranslator.ai/privacy",
         "terms_of_service_url": "https://www.onlinedoctranslator.ai/terms",
     }

@@ -17,6 +17,7 @@ import {
   type Plan,
   type PlanCatalog,
 } from "@/lib/plans"
+import { BrandMark, BrandName } from "@/components/brand/Logo"
 
 const CREAM = "#faf5ee"
 const CREAM_DARK = "#f3ecdb"
@@ -72,17 +73,11 @@ function TopBar() {
         className="max-w-[1200px] mx-auto flex items-center justify-between"
         style={{ padding: "14px 20px" }}
       >
-        <Link href="/" className="flex items-center gap-3" aria-label="TraqConverter home">
-          <div
-            aria-hidden="true"
-            className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white"
-            style={{ background: TEAL, fontSize: 18 }}
-          >
-            T
-          </div>
+        <Link href="/" className="flex items-center gap-3" aria-label="OnlineDocTranslator home">
+          <BrandMark size={36} />
           <div>
             <div style={{ fontSize: 16, fontWeight: 600, color: TEXT }}>
-              TraqConverter
+              <BrandName />
             </div>
             <div
               style={{
@@ -224,7 +219,7 @@ function Hero() {
                 maxWidth: 580,
               }}
             >
-              Upload a scan, PDF, photo or Word file. TraqConverter translates it,
+              Upload a scan, PDF, photo or Word file. OnlineDocTranslator translates it,
               rebuilds the page and marks signatures, stamps and unreadable parts.
               You check it next to the original, add your certification page,
               and send it to the client, with payment collected first if you want.
@@ -1047,7 +1042,7 @@ function BuiltForCertified() {
             }}
           >
             <div style={{ padding: "14px 24px" }}>WHAT CERTIFIED WORK NEEDS</div>
-            <div style={{ padding: "14px 24px", color: TEAL }}>HOW TRAQCONVERTER HANDLES IT</div>
+            <div style={{ padding: "14px 24px", color: TEAL }}>HOW ONLINEDOCTRANSLATOR HANDLES IT</div>
           </div>
           <ul>
             {NEEDS.map((n, i) => (
@@ -1562,7 +1557,7 @@ function FAQ() {
   const items = [
     {
       q: "Is the output ready to certify?",
-      a: "It's a draft for you to review, not a certified translation. You check it, correct it and sign your statement; TraqConverter never certifies anything itself. The ready-to-certify check lists what to look at first. On Pro and above, your certification page is added to the export. Acceptance still depends on your credentials and the receiving authority's rules.",
+      a: "It's a draft for you to review, not a certified translation. You check it, correct it and sign your statement; OnlineDocTranslator never certifies anything itself. The ready-to-certify check lists what to look at first. On Pro and above, your certification page is added to the export. Acceptance still depends on your credentials and the receiving authority's rules.",
     },
     {
       q: "How does the free trial work?",
@@ -1782,15 +1777,9 @@ function Footer() {
       <div className="max-w-[1200px] mx-auto grid sm:grid-cols-2 md:grid-cols-4 gap-8">
         <div>
           <div className="flex items-center gap-2 mb-3">
-            <div
-              aria-hidden="true"
-              className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white"
-              style={{ background: TEAL, fontSize: 14 }}
-            >
-              T
-            </div>
+            <BrandMark size={32} />
             <div style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>
-              TraqConverter
+              <BrandName />
             </div>
           </div>
           <p style={{ fontSize: 12, color: MUTED, lineHeight: 1.6 }}>

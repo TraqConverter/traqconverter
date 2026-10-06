@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
 import CompanyLine from "@/components/legal/CompanyLine"
+import { BrandMark, BrandName } from "@/components/brand/Logo"
 
 // The login page's card layout, for the smaller public auth pages.
 export default function AuthCard({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
@@ -10,9 +11,9 @@ export default function AuthCard({ title, subtitle, children }: { title: string;
         style={{ background: "#ffffff", border: "1px solid #e7ddc5", boxShadow: "0 1px 2px rgba(30,30,20,0.04)" }}
       >
         <div className="flex items-center gap-3 mb-8">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-lg" style={{ background: "#0a7870" }}>T</div>
+          <BrandMark size={40} />
           <div className="leading-tight">
-            <div className="font-semibold text-[17px]">TraqConverter</div>
+            <div className="font-semibold text-[17px]"><BrandName /></div>
             <div className="text-[10px] tracking-[0.18em]" style={{ color: "#8a8270" }}>WORKSPACE</div>
           </div>
         </div>

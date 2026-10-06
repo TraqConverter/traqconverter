@@ -11,6 +11,7 @@ import NotificationBell from "@/components/NotificationBell"
 import { isStaffRole } from "@/lib/staff"
 import { loadWallet, planFor, resetWallet, useWallet, type PlanFeature } from "@/lib/plan"
 import { findPlan, usePlans } from "@/lib/plans"
+import { BrandMark, BrandName } from "@/components/brand/Logo"
 
 type NavItem = {
   name: string
@@ -288,15 +289,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <div className="px-5 py-6 overflow-y-auto">
           {}
           <div className="flex items-center gap-3 mb-10">
-            <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-white text-lg"
-              style={{ background: "#0a7870" }}
-            >
-              T
-            </div>
+            <BrandMark size={40} />
             <div className="leading-tight">
               <div className="font-semibold text-[17px]" style={{ color: "#1f2a2e" }}>
-                TraqConverter
+                <BrandName />
               </div>
               <div className="text-[10px] tracking-[0.18em]" style={{ color: "#8a8270" }}>
                 WORKSPACE

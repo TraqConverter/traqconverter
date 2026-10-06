@@ -5,8 +5,8 @@ import LegalPage, { TableScroll } from "@/components/legal/LegalPage"
 import { COMPANY } from "@/lib/company"
 
 export const metadata: Metadata = {
-  title: "Privacy Policy · TraqConverter",
-  description: "How Espresso Translations S.r.l. handles personal data in TraqConverter.",
+  title: "Privacy Policy · OnlineDocTranslator",
+  description: "How Espresso Translations S.r.l. handles personal data in OnlineDocTranslator.",
 }
 
 const mail = `mailto:${COMPANY.privacyEmail}`
@@ -15,11 +15,11 @@ export default function PrivacyPage() {
   return (
     <LegalPage
       title="Privacy Policy"
-      intro="This policy explains what personal data TraqConverter handles, why, who else processes it, how long we keep it, and the rights you have."
+      intro="This policy explains what personal data OnlineDocTranslator handles, why, who else processes it, how long we keep it, and the rights you have."
     >
       <h2 id="who-we-are">1. Who we are</h2>
       <p>
-        TraqConverter ({COMPANY.site.replace("https://", "")}) is run by {COMPANY.name}, P.IVA and codice fiscale{" "}
+        OnlineDocTranslator ({COMPANY.site.replace("https://", "")}) is run by {COMPANY.name}, P.IVA and codice fiscale{" "}
         {COMPANY.vat}, registered office {COMPANY.address}{" "}(&quot;we&quot;, &quot;us&quot;).
       </p>
       <p>
@@ -302,7 +302,7 @@ export default function PrivacyPage() {
       </p>
 
       <h2 id="children">11. Children</h2>
-      <p>TraqConverter is a professional tool. It is not meant for anyone under 18.</p>
+      <p>OnlineDocTranslator is a professional tool. It is not meant for anyone under 18.</p>
 
       <h2 id="changes">12. Changes to this policy</h2>
       <p>

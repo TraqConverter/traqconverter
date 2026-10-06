@@ -146,7 +146,7 @@ def _invalidate_reset_tokens(db: Session, user_id, now: datetime) -> None:
 def _send_reset_email(to: str, name: str | None, link: str) -> None:
     subject, html = email_service.render_password_reset_email(name=name, link=link)
     text = (
-        f"Reset your TraqConverter password: {link}\n\n"
+        f"Reset your OnlineDocTranslator password: {link}\n\n"
         "This link expires in 60 minutes.\n"
         "If you didn't ask for this, you can ignore this email."
     )
