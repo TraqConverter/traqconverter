@@ -317,7 +317,8 @@ WATCHDOG_INTERVAL_SECONDS = 60
 async def _watchdog_loop():
     while True:
         try:
-            recover_stalled_jobs()
+            # Off the event loop: a slow or unreachable database would stall every request.
+            await asyncio.to_thread(recover_stalled_jobs)
         except Exception:
             logger.exception("Watchdog cycle errored")
         try:
