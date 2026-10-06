@@ -8,9 +8,10 @@ from app.database import Base
 
 
 class Certification(Base):
-    """A team-scoped library entry: signed affidavits, ISO 17100 certificates,
-    sworn declarations, or other supporting docs that get attached to delivered
-    translations.
+    """A team-scoped library entry: a Word certification template or a
+    supporting file attached to delivered translations. kind is derived from
+    the file type (TEMPLATE for .docx, OTHER otherwise); old rows may hold
+    the legacy user-chosen values.
 
     file_hash is a SHA-256 of the uploaded bytes — surfaced in the UI so the
     document can be independently verified ("tamper-evident hashes").

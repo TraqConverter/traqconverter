@@ -191,6 +191,22 @@ def generate_presigned_download_url(
         raise
 
 
+def object_exists(key: str) -> bool:
+    """False only when storage says the key is missing; other errors fall through to the signed URL."""
+    try:
+        s3_client.head_object(Bucket=BUCKET_NAME, Key=key)
+        return True
+    except ClientError as e:
+        code = str(e.response.get("Error", {}).get("Code", ""))
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return False
+        logger.warning("head_object failed for %s: %s", key, code)
+        return True
+    except Exception:
+        logger.exception("head_object failed for %s", key)
+        return True
+
+
 def delete_objects_from_s3(keys) -> None:
     """Best-effort delete; a storage hiccup must not block deleting the project row."""
     for key in {k for k in keys if k}:

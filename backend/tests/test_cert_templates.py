@@ -479,6 +479,61 @@ def test_download_url_is_signed_and_team_scoped(client, owner_project, make_user
     assert client.get("/certifications/not-a-uuid/download-url", headers=owner["headers"]).status_code == 404
 
 
+def test_download_url_is_404_when_the_stored_object_is_gone(client, db, storage, owner_project):
+    from app.models.certification import Certification
+
+    owner, _ = owner_project
+    cert = _upload(client, owner, b"%PDF-1.4 x", name="gone.pdf")
+    key = db.query(Certification).filter(Certification.id == uuid.UUID(cert["id"])).one().file_path
+    del storage["objects"][key]
+    r = client.get(f"/certifications/{cert['id']}/download-url", headers=owner["headers"])
+    assert r.status_code == 404
+    assert r.json()["detail"] == "This file is no longer available"
+
+
+def test_upload_kind_is_derived_from_the_file_type(client, owner_project):
+    owner, _ = owner_project
+
+    def upload(name, data, kind=None):
+        r = client.post(
+            "/certifications/upload",
+            headers=owner["headers"],
+            files={"file": (name, data, "application/octet-stream")},
+            data={"kind": kind} if kind else {},
+        )
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    docx = upload("cert.docx", _template())
+    assert docx["kind"] == "TEMPLATE" and docx["is_template"]
+    pdf = upload("scan.pdf", b"%PDF-1.4 x")
+    assert pdf["kind"] == "OTHER" and not pdf["is_template"]
+    legacy = upload("affidavit.pdf", b"%PDF-1.4 y", kind="affidavit")
+    assert legacy["kind"] == "AFFIDAVIT"
+    assert upload("x.pdf", b"%PDF-1.4 z", kind="whatever")["kind"] == "OTHER"
+
+
+def test_object_exists_maps_missing_keys_to_false(monkeypatch):
+    from botocore.exceptions import ClientError
+
+    import app.services.s3_service as s3
+
+    def head(code):
+        def _head(**kw):
+            raise ClientError({"Error": {"Code": code}}, "HeadObject")
+
+        return _head
+
+    monkeypatch.setattr(s3.s3_client, "head_object", head("404"))
+    assert s3.object_exists("k") is False
+    monkeypatch.setattr(s3.s3_client, "head_object", head("NoSuchKey"))
+    assert s3.object_exists("k") is False
+    monkeypatch.setattr(s3.s3_client, "head_object", head("403"))
+    assert s3.object_exists("k") is True
+    monkeypatch.setattr(s3.s3_client, "head_object", lambda **kw: {})
+    assert s3.object_exists("k") is True
+
+
 def test_italian_template_gets_italian_values_even_for_english_target():
     import io
 
