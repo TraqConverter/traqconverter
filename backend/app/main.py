@@ -147,6 +147,9 @@ app.middleware("http")(_ai_usage.attribution_middleware)
 
 from app.config import settings as _settings
 
+if _settings.environment.lower() == "production" and "localhost" in _settings.FRONTEND_URL:
+    logger.error("FRONTEND_URL is %s in production: emailed and client links will point at localhost", _settings.FRONTEND_URL)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_settings.cors_origins,
