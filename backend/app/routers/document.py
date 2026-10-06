@@ -1,5 +1,6 @@
 """Editable translated document: typed paragraph edits, Claude chat edits and undo."""
 import logging
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,10 +12,19 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import get_user_project_or_404
-from app.models.project import TranslationProject
+from app.models.project import TranslationProject, is_dtp
 from app.models.translation_segment import TranslationSegment
 from app.models.user import User
-from app.services import ai_allowance, ai_usage, docx_blocks, document_editor, learning, tm_capture
+from app.services import (
+    ai_allowance,
+    ai_usage,
+    docx_blocks,
+    docx_images,
+    docx_page_stamp,
+    document_editor,
+    learning,
+    tm_capture,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +56,27 @@ class _ChatPayload(BaseModel):
     history: list[_Turn] = Field(default_factory=list, max_length=20)
 
 
+class StampUnavailable(Exception):
+    pass
+
+
+def team_stamp(db: Session, project: TranslationProject) -> tuple[Optional[docx_images.PreparedImage], str]:
+    """The team's saved stamp ready for the page and its default alignment; None when the team has none."""
+    from app.models.team import Team
+
+    team = db.query(Team).filter(Team.id == project.team_id).first()
+    align = (getattr(team, "stamp_alignment", None) or "right").lower()
+    align = align if align in docx_images.ALIGNS else "right"
+    if not team or not team.stamp_s3_key:
+        return None, align
+    try:
+        raw = document_editor._download(team.stamp_s3_key)
+        return docx_images.prepare_image(raw, remove_background=True), align
+    except Exception as e:
+        logger.warning("Couldn't load the team stamp for the page stamp (project=%s): %s", project.id, e)
+        raise StampUnavailable() from e
+
+
 def _initial_builder(db: Session, project: TranslationProject, user: User):
     def build() -> bytes:
         from app.models.project import ProjectStatus
@@ -64,7 +95,24 @@ def _initial_builder(db: Session, project: TranslationProject, user: User):
             raise HTTPException(status_code=404, detail="The translation isn't ready yet")
         project._export_user_email = user.email or ""
         project._export_user_logo_key = getattr(user, "logo_s3_key", None)
-        return _resolve_rebuild_docx_bytes(project, segments, preview_only=True)
+        stamp = align = None
+        page_stamp = not is_dtp(project)
+        if page_stamp:
+            try:
+                stamp, align = team_stamp(db, project)
+            except StampUnavailable:
+                # Unmarked, so the export still adds the stamp the old way.
+                page_stamp = False
+        # The footer stamp replaces the one the layout renderer would put under each page.
+        project._page_stamp_in_footer = page_stamp
+        data = _resolve_rebuild_docx_bytes(project, segments, preview_only=True)
+        if not page_stamp:
+            return data
+        try:
+            return docx_page_stamp.install(data, stamp, align or "right")
+        except Exception:
+            logger.exception("Couldn't add the page stamp (project=%s)", project.id)
+            return data
 
     return build
 

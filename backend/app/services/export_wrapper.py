@@ -32,7 +32,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.section import WD_SECTION
 from docx.oxml.ns import qn
-from docx.shared import Cm, Pt
+from docx.shared import Cm, Emu, Pt
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ def _render_source_pages_as_images(pdf_path: Path, work_dir: Path) -> list:
 
 
 
-def _install_stamp_in_footer(section, stamp_path: Path, alignment: str = "right"):
+def _install_stamp_in_footer(section, stamp_path, alignment: str = "right", width=None):
     """Insert the team stamp image into the section's footer. Word
     auto-replicates section footers on every page of that section, so
     the stamp shows up on every page without per-page code."""
@@ -112,7 +112,8 @@ def _install_stamp_in_footer(section, stamp_path: Path, alignment: str = "right"
         run = p.add_run()
 
 
-        run.add_picture(str(stamp_path), width=Cm(3))
+        source = stamp_path if hasattr(stamp_path, "read") else str(stamp_path)
+        run.add_picture(source, width=width or Cm(3))
     except Exception:
         logger.exception("Failed to install team stamp in footer")
 
@@ -434,11 +435,16 @@ def build_full_export_docx(
         section.right_margin = Cm(2)
 
 
+        from app.services import docx_page_stamp
+
+        # The editor document carries its own stamp, as the user placed (or removed) it.
+        editor_stamp = docx_page_stamp.is_marked(translated_docx_bytes)
         try:
-            from app.services.export_service import _resolve_team_stamp
-            stamp_path, alignment = _resolve_team_stamp(project, work_dir)
-            if stamp_path:
-                _install_stamp_in_footer(section, Path(stamp_path), alignment)
+            if not editor_stamp:
+                from app.services.export_service import _resolve_team_stamp
+                stamp_path, alignment = _resolve_team_stamp(project, work_dir)
+                if stamp_path:
+                    _install_stamp_in_footer(section, Path(stamp_path), alignment)
         except Exception:
             logger.exception(
                 "Team-stamp resolution failed — continuing without footer stamp"
@@ -516,6 +522,18 @@ def build_full_export_docx(
             logger.exception(
                 "Source-page embedding failed — continuing without source pages"
             )
+
+        if editor_stamp:
+            # Installed after the original's pages, whose sections then keep an empty footer as in the editor.
+            try:
+                shown = docx_page_stamp.export_stamp(translated_docx_bytes)
+                if shown:
+                    image, alignment, width_emu = shown
+                    # Otherwise python-docx writes the footer into the first (original page) section.
+                    section.footer.is_linked_to_previous = False
+                    _install_stamp_in_footer(section, BytesIO(image), alignment, Emu(width_emu))
+            except Exception:
+                logger.exception("Editor page stamp couldn't be placed in the export")
 
 
         try:

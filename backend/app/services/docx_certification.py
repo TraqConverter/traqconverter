@@ -19,6 +19,9 @@ START, END = blocks.CERT_MARKERS
 PAGE_STYLE_ID = "TQCertificationPage"
 LOGO_WIDTH_CM = 3.5
 STAMP_WIDTH_CM = 3.8
+# Kept in the picture's description so a rebuilt page reuses the user's placement instead of adding a second one.
+LOGO_ROLE = "Certification logo"
+STAMP_ROLE = "Certification stamp"
 _TOKEN_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 _DOCUMENT = "word/document.xml"
 
@@ -248,7 +251,12 @@ def _ensure_page_style(doc: _Doc) -> None:
     doc.files["word/styles.xml"] = etree.tostring(styles, xml_declaration=True, encoding="UTF-8", standalone=True)
 
 
-def _opening_paragraph(doc: _Doc, content: CertContent, with_logo: bool):
+def _sized(cx_default: int, image: images.PreparedImage, cx: int | None) -> tuple[int, int]:
+    cx = cx or cx_default
+    return cx, max(1, int(cx * image.height_px / max(1, image.width_px)))
+
+
+def _opening_paragraph(doc: _Doc, content: CertContent, with_logo: bool, logo_cx: int | None = None):
     # docx-preview only breaks pages on a style's pageBreakBefore; Word and the export read the direct one.
     p = _paragraph("center", after=240)
     ppr = p.find(w("pPr"))
@@ -258,10 +266,10 @@ def _opening_paragraph(doc: _Doc, content: CertContent, with_logo: bool):
     style.addnext(etree.Element(w("pageBreakBefore")))
     if with_logo and content.logo is not None:
         rid = images.add_image_part(doc, content.logo)
-        cx = int(LOGO_WIDTH_CM * images.EMU_PER_CM)
-        cy = max(1, int(cx * content.logo.height_px / max(1, content.logo.width_px)))
-        image_id = "img_" + secrets.token_hex(4)
+        cx, cy = _sized(int(LOGO_WIDTH_CM * images.EMU_PER_CM), content.logo, logo_cx)
+        image_id = images._new_image_id(doc)
         frame = images._build_inline(image_id, images._next_docpr_id(doc), cx, cy, images._graphic(rid, image_id, cx, cy))
+        frame.find(images.wp("docPr")).set("descr", LOGO_ROLE)
         p.append(images._new_run(frame))
     return p
 
@@ -277,17 +285,33 @@ def _add_marker(p, name: str, bid: int, at_start: bool) -> None:
         p.append(end)
 
 
-def _place_stamp(doc: _Doc, signature, stamp: images.PreparedImage) -> None:
+def _place_stamp(doc: _Doc, signature, stamp: images.PreparedImage, cx: int | None = None) -> None:
     rid = images.add_image_part(doc, stamp)
-    cx = int(STAMP_WIDTH_CM * images.EMU_PER_CM)
-    cy = max(1, int(cx * stamp.height_px / max(1, stamp.width_px)))
-    image_id = "img_" + secrets.token_hex(4)
+    cx, cy = _sized(int(STAMP_WIDTH_CM * images.EMU_PER_CM), stamp, cx)
+    image_id = images._new_image_id(doc)
     # Overlap the signature line the way a hand-applied stamp would.
     frame = images._build_anchor(
         image_id, images._next_docpr_id(doc), cx, cy, images._graphic(rid, image_id, cx, cy),
         int(6.5 * images.EMU_PER_CM), -int(cy * 0.55),
     )
+    frame.find(images.wp("docPr")).set("descr", STAMP_ROLE)
     signature.insert(images._insertion_index(signature), images._new_run(frame))
+
+
+def _placed_roles(doc: _Doc) -> dict[str, dict]:
+    """Per role: whether the user moved it off the page (`outside`) and its width on the page (`cx`)."""
+    page = {el for unit in _marker_units(doc) for el in unit.iter(images.wp("docPr"))}
+    out: dict[str, dict] = {}
+    for docpr in doc.trees[_DOCUMENT].iter(images.wp("docPr")):
+        role = docpr.get("descr")
+        if role not in (LOGO_ROLE, STAMP_ROLE):
+            continue
+        entry = out.setdefault(role, {"outside": False, "cx": None})
+        if docpr in page:
+            entry["cx"] = entry["cx"] or images._size(docpr.getparent())[0]
+        else:
+            entry["outside"] = True
+    return out
 
 
 def _remove_units(doc: _Doc):
@@ -307,6 +331,8 @@ def add_certification(data: bytes, content: CertContent, report=None) -> bytes:
     from app.services import docx_cert_template
 
     doc = _Doc.load(data)
+    placed = _placed_roles(doc)
+    logo, stamp = placed.get(LOGO_ROLE, {}), placed.get(STAMP_ROLE, {})
     after = _remove_units(doc)
     if content.template_docx:
         report = report if report is not None else docx_cert_template.TemplateReport()
@@ -316,15 +342,15 @@ def add_certification(data: bytes, content: CertContent, report=None) -> bytes:
             report.note("Your saved logo isn't added because the template has its own pictures.")
         if content.stamp is not None and signature is not None:
             report.note("Your saved stamp is placed over the signature line.")
-        opening = _opening_paragraph(doc, content, with_logo=not has_own_images)
+        opening = _opening_paragraph(doc, content, not has_own_images and not logo.get("outside"), logo.get("cx"))
     else:
         units, signature = _default_units(content)
-        opening = _opening_paragraph(doc, content, with_logo=True)
+        opening = _opening_paragraph(doc, content, not logo.get("outside"), logo.get("cx"))
     units.insert(0, opening)
     if units[-1].tag != w("p"):
         units.append(_paragraph(after=0))
-    if content.stamp is not None and signature is not None:
-        _place_stamp(doc, signature, content.stamp)
+    if content.stamp is not None and signature is not None and not stamp.get("outside"):
+        _place_stamp(doc, signature, content.stamp, stamp.get("cx"))
     bid = doc.next_bookmark_id()
     _add_marker(units[0], START, bid, at_start=True)
     _add_marker(units[-1], END, bid + 1, at_start=False)
