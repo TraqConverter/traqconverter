@@ -202,6 +202,22 @@ def test_batch_never_reads_multiline_segments_line_by_line(monkeypatch):
     assert ats.translate_batch(["Ciao", "Mondo"], "Italian", "English") == ["Hello", "World"]
 
 
+def test_cut_off_term_mining_reply_is_dropped_not_retried(monkeypatch):
+    from app.services import claude_params, learning
+
+    monkeypatch.setattr(claude_params, "api_key", lambda: "k")
+    monkeypatch.setattr(
+        claude_params, "create_message",
+        lambda client, **kw: SimpleNamespace(
+            content=[SimpleNamespace(type="text", text='{"terms": [{"source_term": "Comu')],
+            stop_reason="max_tokens", usage=None, model=kw["model"],
+        ),
+    )
+    project = SimpleNamespace(id=None, team_id=None, source_language="Italian", target_language="English", doc_profile=None)
+    assert learning.extract_terms(project, "Comune", [("Town", "Municipality")]) == []
+    assert learning.classify_document(b"x", "a.txt", "some text") is None
+
+
 def _word_file(path):
     from docx import Document
     from docx.oxml import parse_xml

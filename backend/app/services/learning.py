@@ -154,7 +154,7 @@ def classify_document(data: bytes, file_name: str, text_hint: str = "") -> Optio
         **claude_params.request_params(model, max_tokens=400),
     )
     claude_params.log_usage("doc_profile", resp)
-    if resp.stop_reason == "refusal":
+    if resp.stop_reason in ("refusal", "max_tokens"):
         return None
     raw = next((b.text for b in resp.content if b.type == "text"), "")
     profile = {k: str(v or "").strip() for k, v in json.loads(raw).items()}
@@ -527,7 +527,8 @@ def extract_terms(project: TranslationProject, source_text: str, pairs: list[tup
             **claude_params.request_params(model, max_tokens=2000),
         )
     claude_params.log_usage("learn_terms", resp)
-    if resp.stop_reason == "refusal":
+    # A cut-off reply is unreadable JSON; raising would retry the same paid call every 10 minutes for 2 days.
+    if resp.stop_reason in ("refusal", "max_tokens"):
         return []
     raw = next((b.text for b in resp.content if b.type == "text"), "")
     return list(json.loads(raw).get("terms") or [])
