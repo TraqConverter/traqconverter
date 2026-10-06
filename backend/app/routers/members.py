@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import Optional
+from uuid import UUID
 
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -188,7 +190,7 @@ def invite_member(
     if current_user.email and current_user.email.lower() == email:
         raise HTTPException(status_code=400, detail="You're already on this team")
 
-    existing_user = db.query(User).filter(User.email == email).first()
+    existing_user = db.query(User).filter(func.lower(User.email) == email).first()
     if existing_user:
 
         already = (
@@ -310,7 +312,7 @@ def _send_invite_email(
 
 @router.delete("/invites/{invite_id}")
 def cancel_invite(
-    invite_id: str,
+    invite_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -337,7 +339,7 @@ def cancel_invite(
 
 @router.patch("/{user_id}")
 def update_role(
-    user_id: str,
+    user_id: UUID,
     data: RoleUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -374,7 +376,7 @@ def update_role(
 
 @router.delete("/{user_id}")
 def remove_member(
-    user_id: str,
+    user_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

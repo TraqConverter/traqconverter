@@ -113,7 +113,11 @@ class CreditService:
 
 
 
-        total_available = wallet.subscription_credits + wallet.purchased_credits
+        # An inactive subscription's leftover credits can't be spent.
+        spendable_subscription = (
+            wallet.subscription_credits if wallet.subscription_status in ("ACTIVE", "TRIAL") else 0
+        )
+        total_available = spendable_subscription + wallet.purchased_credits
 
         if total_available < amount:
             raise InsufficientCreditsError("Insufficient credits")

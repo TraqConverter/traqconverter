@@ -9,7 +9,6 @@ from datetime import datetime
 from app.database import get_db
 from app.models.user import User
 from app.models.credit import CreditTransaction, CreditWallet
-from app.models.team import Team
 from app.models.stripe_event import StripeEvent
 from app.config import settings
 from app.core.plan_features import PAID_PLANS, SUBSCRIPTION_GRANTS, price_lookup_key
@@ -105,6 +104,20 @@ def _subscription_period(sub, field):
 
 def _utc(ts):
     return datetime.utcfromtimestamp(ts) if ts else None
+
+
+def _plan_for_invoice_price(price, price_id):
+    """_plan_for_price, asking Stripe for the price's lookup_key when the invoice only names its id."""
+    plan = _plan_for_price(price if isinstance(price, dict) else price_id)
+    if plan or not price_id:
+        return plan
+    # Raises when Stripe can't be reached, so the webhook fails and Stripe retries it.
+    return _plan_for_price(stripe.Price.retrieve(price_id))
+
+
+def _record_grant(db: Session, wallet, kind: str, amount: int, reference: str):
+    """A ledger row for credits Stripe paid for, so they show in the wallet history."""
+    db.add(CreditTransaction(wallet_id=wallet.id, type=kind, amount=amount, reference_id=reference))
 
 
 def _locked_wallet(db: Session, team_id):
@@ -342,6 +355,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                     db.flush()
 
                 wallet.purchased_credits += credits
+                _record_grant(db, wallet, "PURCHASE", credits, reference)
 
                 db.add(StripeEvent(id=reference, event_type="credit_grant"))
 
@@ -399,6 +413,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
 
                 wallet.subscription_expires_at = None
+                _record_grant(db, wallet, "SUBSCRIPTION_GRANT", SUBSCRIPTION_GRANTS[plan], reference)
 
                 user = db.query(User).filter(User.id == user_id).first()
                 if user:
@@ -425,6 +440,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
             plan_line = _invoice_plan_line(invoice)
             price_id = _line_price_id(plan_line)
+            price = plan_line.get("price") or price_id
 
 
             metadata = invoice.get("metadata", {})
@@ -444,43 +460,31 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
                     items = sub.get("items", {}).get("data", [])
                     if items and not price_id:
-                        price_id = items[0].get("price", {}).get("id")
+                        price = items[0].get("price") or {}
+                        price_id = stripe_id(price)
 
                 except Exception as e:
                     logger.warning(f"Stripe fallback failed: {e}")
 
-            if not user_id or not team_id or not price_id:
+            # The team pays; the user who checked out may have left it or deleted their account.
+            if not team_id or not price_id:
                 db.commit()
                 return {"status": "ignored"}
 
-            user = db.query(User).filter(User.id == user_id).first()
-            team = db.query(Team).filter(Team.id == team_id).first()
+            team = team_for_subscription(db, team_id, None, None)
 
-            if not user or not team:
+            if not team:
                 db.commit()
                 return {"status": "ignored"}
 
-            wallet = db.query(CreditWallet)\
-                .filter(CreditWallet.team_id == team.id)\
-                .with_for_update()\
-                .first()
+            plan = _plan_for_invoice_price(price, price_id)
 
-            if not wallet:
-                wallet = CreditWallet(
-                    team_id=team.id,
-                    purchased_credits=0,
-                    subscription_credits=0,
-                    subscription_status="INACTIVE"
-                )
-                db.add(wallet)
-                db.flush()
-
-            plan_config = PLAN_CONFIG.get(price_id)
-
-            if not plan_config:
+            if not plan:
                 logger.warning(f"Unknown price_id: {price_id}")
                 db.commit()
                 return {"status": "unknown_plan"}
+
+            wallet = _locked_wallet(db, team.id)
 
             expiry_timestamp = invoice.get("current_period_end")
 
@@ -490,17 +494,23 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             expiry_date = datetime.utcfromtimestamp(expiry_timestamp) if expiry_timestamp else None
 
             wallet.subscription_status = "ACTIVE"
-            wallet.subscription_credits = plan_config["credits"]
+            wallet.subscription_credits = SUBSCRIPTION_GRANTS[plan]
             wallet.subscription_expires_at = expiry_date
+            wallet.plan_type = plan
+            _record_grant(
+                db, wallet, "SUBSCRIPTION_GRANT", SUBSCRIPTION_GRANTS[plan], f"invoice_{invoice.get('id') or event_id}"
+            )
 
-
-
-            wallet.plan_type = plan_config["plan"]
-
-            user.subscription_status = "ACTIVE"
-            user.subscription_plan = plan_config["plan"]
-            user.stripe_subscription_id = subscription_id
-            user.stripe_customer_id = stripe_id(invoice.get("customer")) or user.stripe_customer_id
+            # With nobody left holding the subscription, the owner takes it so the portal still finds it.
+            members = team_users(db, team)
+            member_ids = {u.id for u in members}
+            users = [u for u in _subscription_users(db, team, subscription_id, user_id) if u.id in member_ids]
+            users = users or members[:1]
+            for user in users:
+                user.subscription_status = "ACTIVE"
+                user.subscription_plan = plan
+                user.stripe_subscription_id = subscription_id
+                user.stripe_customer_id = stripe_id(invoice.get("customer")) or user.stripe_customer_id
 
             db.commit()
             logger.info("Subscription updated")
