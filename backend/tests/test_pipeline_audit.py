@@ -168,6 +168,28 @@ def test_regenerate_holds_the_row_lock_while_counting(db, make_user, make_projec
         second.close()
 
 
+def test_certification_page_names_the_detected_source_language(db, make_user, make_project):
+    from app.services import cert_page
+
+    owner = make_user()
+    project = make_project(owner)
+    project.source_language = "auto"
+    project.doc_profile = {"source_language": "Italian"}
+    db.commit()
+    content = cert_page.content_for_project(db, project, owner["user"], None)
+    assert content.values["source_language"] == "Italian"
+
+
+def test_status_menu_cannot_certify_an_unfinished_project(client, db, make_user, make_project):
+    owner = make_user()
+    project = make_project(owner, status=ProjectStatus.FAILED)
+    r = client.patch(f"/projects/{project.id}/review-status", headers=owner["headers"], json={"status": "CERTIFIED"})
+    assert r.status_code == 400
+    db.refresh(project)
+    assert (project.review_status or "DRAFT") != "CERTIFIED"
+    assert client.patch(f"/projects/{project.id}/review-status", headers=owner["headers"], json={"status": "IN_REVIEW"}).status_code == 200
+
+
 def _word_file(path):
     from docx import Document
     from docx.oxml import parse_xml

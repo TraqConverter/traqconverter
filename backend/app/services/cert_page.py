@@ -152,6 +152,7 @@ def page_language(target_language, template: Optional[bytes]) -> str:
 def content_for_project(db: Session, project, user, template: Optional[bytes]) -> docx_certification.CertContent:
     from app.models.team import Team
     from app.services.cert_template_service import build_substitution_values
+    from app.services.glossary_service import project_source_language
 
     lang = page_language(project.target_language, template)
     today = date.today()
@@ -161,7 +162,8 @@ def content_for_project(db: Session, project, user, template: Optional[bytes]) -
         user, team, lang, today,
         file_name=project.file_name or "",
         document=Path(project.file_name or "").stem.replace("_", " ").strip(),
-        source=project.source_language, target=project.target_language,
+        # An "auto" upload names its language only in the detected profile.
+        source=project_source_language(project) or project.source_language, target=project.target_language,
         pages=project.page_count or 0, client=_batch_name(db, project),
         certificate_number=extra.get("certificate_number", ""),
     )
