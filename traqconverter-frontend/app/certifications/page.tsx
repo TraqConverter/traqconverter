@@ -140,9 +140,8 @@ export default function CertificationsPage() {
       const fd = new FormData()
       fd.append("file", pendingFile)
       if (uploadNotes.trim()) fd.append("notes", uploadNotes.trim())
-      const res = await api.post<Cert>("/certifications/upload", fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-      })
+      // No manual Content-Type: the browser must add the multipart boundary itself.
+      const res = await api.post<Cert>("/certifications/upload", fd)
       if (res.data?.is_template) setCheckId(res.data.id)
       setFlash(`${pendingFile.name} archived with a tamper-evident hash.`)
       setTimeout(() => setFlash(null), 4500)
@@ -151,10 +150,14 @@ export default function CertificationsPage() {
       await fetchItems()
     } catch (err: any) {
       console.error("UPLOAD CERT ERROR:", err)
-      setError(
-        err?.response?.data?.detail ||
-          "Couldn't upload that file. Please try again."
-      )
+      const detail = err?.response?.data?.detail
+      if (typeof detail === "string") setError(detail)
+      else if (err?.response?.status === 413) setError("That file is over the 20 MB limit.")
+      else if (!err?.response)
+        setError(
+          "The upload didn't reach our server. If the file is in iCloud Drive or OneDrive, download it to your computer first (or save a copy on the Desktop), then try again.",
+        )
+      else setError(`Upload failed (error ${err.response.status}). Please try again.`)
     } finally {
       setBusy(null)
     }
