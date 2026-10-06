@@ -190,6 +190,18 @@ def test_status_menu_cannot_certify_an_unfinished_project(client, db, make_user,
     assert client.patch(f"/projects/{project.id}/review-status", headers=owner["headers"], json={"status": "IN_REVIEW"}).status_code == 200
 
 
+def test_batch_never_reads_multiline_segments_line_by_line(monkeypatch):
+    from app.services import ai_translation_service as ats
+
+    texts = ["Nome:\nMario", "Nato:\n1990"]
+    # The model dropped the second segment; its two lines happen to equal the segment count.
+    monkeypatch.setattr(ats, "_call_model", lambda **kw: "Name:\nMario<<<SEG>>>")
+    assert ats.translate_batch(texts, "Italian", "English") == ["Name:\nMario"]
+
+    monkeypatch.setattr(ats, "_call_model", lambda **kw: "1. Hello\n2. World")
+    assert ats.translate_batch(["Ciao", "Mondo"], "Italian", "English") == ["Hello", "World"]
+
+
 def _word_file(path):
     from docx import Document
     from docx.oxml import parse_xml
