@@ -71,7 +71,8 @@ def request_params(
             thinking_on = False
     elif thinking:
         params["thinking"] = {"type": "adaptive"}
-    elif m.startswith("claude-opus-5"):
+    elif category == ADAPTIVE_NO_SAMPLING and m.startswith("claude-opus-5") and effort not in ("xhigh", "max"):
+        # Opus 5 thinks by default; 5.5 can't turn it off, and 5 rejects "disabled" above high effort.
         params["thinking"] = {"type": "disabled"}
 
     if effort:
