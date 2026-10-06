@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { api } from "@/lib/api"
 import { isPaidTier, planDisplayName } from "@/lib/plans"
+import { loadWallet } from "@/lib/plan"
 
 const POLL_INTERVAL_MS = 1500
 const MAX_POLLS = 20
@@ -21,12 +22,16 @@ export default function CheckoutSuccessPage() {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
 
+    // The cached wallet still holds the old plan; refresh it so paywalls lift without a reload.
+    const finish = () => {
+      void loadWallet(true)
+      setTimeout(() => router.push("/billing"), 800)
+    }
+
     const settle = (t: string) => {
       if (cancelled) return
       setTier(t)
-      if (isPaidTier(t)) {
-        setTimeout(() => router.push("/billing"), 800)
-      }
+      if (isPaidTier(t)) finish()
     }
 
     const apply = async () => {
@@ -47,7 +52,7 @@ export default function CheckoutSuccessPage() {
           if (data.kind === "credits" || data.status === "success") {
 
             setTier("CREDITS")
-            setTimeout(() => router.push("/billing"), 800)
+            finish()
             return
           }
         } catch (err: any) {
@@ -56,6 +61,7 @@ export default function CheckoutSuccessPage() {
       }
 
       let initialCredits: number | null = null
+      let polls = 0
       const poll = async () => {
         try {
           const res = await api.get("/billing/wallet")
@@ -63,7 +69,7 @@ export default function CheckoutSuccessPage() {
           const t = (res.data?.tier || "").toUpperCase()
           setTier(t)
           if (isPaidTier(t)) {
-            setTimeout(() => router.push("/billing"), 800)
+            finish()
             return
           }
 
@@ -72,14 +78,15 @@ export default function CheckoutSuccessPage() {
             initialCredits = tot
           } else if (tot > initialCredits) {
             setTier("CREDITS")
-            setTimeout(() => router.push("/billing"), 800)
+            finish()
             return
           }
-          setTries((n) => n + 1)
         } catch {
-
+          // A failed poll still counts, so the waiting message appears even if the wallet is unreachable.
         }
-        if (!cancelled) {
+        polls += 1
+        setTries(polls)
+        if (!cancelled && polls < MAX_POLLS) {
           timer = setTimeout(poll, POLL_INTERVAL_MS)
         }
       }

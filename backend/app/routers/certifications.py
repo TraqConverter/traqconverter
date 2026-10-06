@@ -346,14 +346,7 @@ def download_certification(
     from app.services.s3_service import generate_presigned_download_url
     from fastapi.responses import RedirectResponse
 
-    team = _resolve_team(db, current_user)
-    cert = (
-        db.query(Certification)
-        .filter(Certification.id == cert_id, Certification.team_id == team.id)
-        .first()
-    )
-    if not cert:
-        raise HTTPException(status_code=404, detail="Certification not found")
+    _, cert = _team_cert(db, current_user, cert_id)
     if not cert.file_path:
         raise HTTPException(status_code=410, detail="File missing")
 
@@ -390,14 +383,7 @@ def scan_certification(
 ):
     from app.services.cert_template_service import scan_docx_for_tokens
 
-    team = _resolve_team(db, current_user)
-    cert = (
-        db.query(Certification)
-        .filter(Certification.id == cert_id, Certification.team_id == team.id)
-        .first()
-    )
-    if not cert:
-        raise HTTPException(status_code=404, detail="Certification not found")
+    _, cert = _team_cert(db, current_user, cert_id)
 
     name = (cert.file_name or "").lower()
     if not name.endswith(".docx"):
@@ -479,14 +465,7 @@ def delete_certification(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    team = _resolve_team(db, current_user)
-    cert = (
-        db.query(Certification)
-        .filter(Certification.id == cert_id, Certification.team_id == team.id)
-        .first()
-    )
-    if not cert:
-        raise HTTPException(status_code=404, detail="Certification not found")
+    team, cert = _team_cert(db, current_user, cert_id)
 
 
     is_owner = team.owner_id == current_user.id

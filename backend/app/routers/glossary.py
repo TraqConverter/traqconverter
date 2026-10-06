@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
+from uuid import UUID
 
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -114,7 +115,7 @@ def create_term(
 
 @router.patch("/{term_id}")
 def update_term(
-    term_id: str,
+    term_id: UUID,
     data: GlossaryUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -145,7 +146,7 @@ def update_term(
 
 @router.delete("/{term_id}")
 def delete_term(
-    term_id: str,
+    term_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

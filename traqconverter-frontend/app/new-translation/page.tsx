@@ -108,6 +108,7 @@ export default function NewProjectPage() {
   const [batchId, setBatchId] = useState<string | null>(null)
   const [uploads, setUploads] = useState<Record<string, UploadState>>({})
   const [batchNotice, setBatchNotice] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -272,11 +273,12 @@ export default function NewProjectPage() {
   }
 
   const handleStart = async () => {
-    if (!file) return alert("Please select a file first")
+    if (!file) return
     if (multi) return handleStartBatch()
 
     try {
       setLoading(true)
+      setUploadError(null)
 
       const res = await api.post("/projects/upload", buildForm(file))
       const projectId = res.data.project_id
@@ -285,8 +287,8 @@ export default function NewProjectPage() {
       router.push(`/editor/${projectId}`)
     } catch (err: any) {
       console.error(err)
-      const message = err?.response?.data?.detail || "Upload failed"
-      alert(message)
+      const detail = err?.response?.data?.detail
+      setUploadError(typeof detail === "string" && detail ? detail : "Upload failed. Try again in a minute.")
     } finally {
       setLoading(false)
     }
@@ -297,7 +299,7 @@ export default function NewProjectPage() {
       {}
       <div className="mb-3">
         <div className="text-sm" style={{ color: "#8a8270" }}>
-          <span>Espresso</span>
+          <span>TraqConverter</span>
           <span className="mx-2">›</span>
           <span>Projects</span>
           <span className="mx-2">›</span>
@@ -596,6 +598,15 @@ export default function NewProjectPage() {
                 : "Start OCR & translation"}
               {!loading && <IconArrowRight />}
             </button>
+            {uploadError && !multi && (
+              <div
+                role="alert"
+                className="text-sm rounded-lg px-3 py-2 mt-3"
+                style={{ background: "#f2d4cf", color: "#7a2f24" }}
+              >
+                {uploadError}
+              </div>
+            )}
             <div className="text-xs text-center mt-3" style={{ color: "#8a8270" }}>
               {multi
                 ? dtp

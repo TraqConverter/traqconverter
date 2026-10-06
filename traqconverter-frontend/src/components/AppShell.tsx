@@ -476,7 +476,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
             >
               <span style={{ color: "#9a9178" }}>{IconSearch}</span>
               <input
+                type="search"
                 placeholder="Search projects…"
+                aria-label="Search projects"
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return
+                  const q = e.currentTarget.value.trim()
+                  router.push(q ? `/jobs?q=${encodeURIComponent(q)}` : "/jobs")
+                }}
                 className="flex-1 bg-transparent outline-none text-sm"
                 style={{ color: "#1f2a2e" }}
               />
