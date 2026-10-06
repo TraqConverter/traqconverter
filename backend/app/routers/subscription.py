@@ -11,7 +11,7 @@ from app.dependencies.feature_guard import effective_plan
 from app.models.user import User
 from app.models.team import Team
 from app.models.team_member import TeamMember
-from app.models.credit import CreditWallet
+from app.models.credit import CreditTransaction, CreditWallet
 from app.models.stripe_event import StripeEvent
 from app.config import settings
 from app.core.plan_features import CREDIT_PACKS as PLAN_CREDIT_PACKS
@@ -281,6 +281,7 @@ def sync_session(
             db.flush()
 
         wallet.purchased_credits += credits
+        db.add(CreditTransaction(wallet_id=wallet.id, type="PURCHASE", amount=credits, reference_id=reference))
         db.add(StripeEvent(id=reference, event_type="credit_grant"))
         db.commit()
 
@@ -334,6 +335,9 @@ def sync_session(
     wallet.subscription_status = "ACTIVE"
     wallet.subscription_credits = SUBSCRIPTION_GRANTS[plan]
     wallet.subscription_expires_at = None
+    db.add(CreditTransaction(
+        wallet_id=wallet.id, type="SUBSCRIPTION_GRANT", amount=SUBSCRIPTION_GRANTS[plan], reference_id=reference,
+    ))
 
     user = db.query(User).filter(User.id == current_user.id).first()
     if user:
