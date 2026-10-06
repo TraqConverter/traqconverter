@@ -55,3 +55,54 @@ def test_job_writes_the_source_inside_its_temp_dir(db, make_user, make_project, 
     for path in written:
         assert path.resolve().parent.parent == temp_root
     assert [p.name for p in written] == ["escaped_by_name.pdf", "translated_escaped_by_name.pdf"]
+
+
+def test_a_failed_vision_page_falls_back_instead_of_dropping_the_page(tmp_path, monkeypatch):
+    from app.services import claude_vision_ocr, layout_translator
+    from tests.conftest import make_pdf
+
+    pdf = make_pdf(tmp_path / "two.pdf", pages=2)
+    answers = iter([[{"text": "Pagina 1", "bbox": [10, 10, 200, 40]}], None])
+    monkeypatch.setattr(claude_vision_ocr, "is_available", lambda: True)
+    monkeypatch.setattr(claude_vision_ocr, "ocr_image", lambda path: next(answers))
+    assert layout_translator._extract_pdf_via_claude(str(pdf)) is None
+
+    blank_then_text = iter([[], [{"text": "Pagina 2", "bbox": [10, 10, 200, 40]}]])
+    monkeypatch.setattr(claude_vision_ocr, "ocr_image", lambda path: next(blank_then_text))
+    segs = layout_translator._extract_pdf_via_claude(str(pdf))
+    assert [(s.text, s.layout["page"]) for s in segs] == [("Pagina 2", 1)]
+
+
+def _ocr_reply(monkeypatch, body):
+    import json
+
+    from app.services import claude_params, claude_vision_ocr
+
+    monkeypatch.setattr(claude_vision_ocr, "is_available", lambda: True)
+    monkeypatch.setattr(
+        claude_params, "create_message",
+        lambda client, **kw: SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(body))], usage=None),
+    )
+    return claude_vision_ocr
+
+
+def test_vision_bboxes_default_to_the_frame_the_model_saw(tmp_path, monkeypatch):
+    from PIL import Image
+
+    image = tmp_path / "scan.png"
+    # Sent at 1568x392 (long edge cap); the reply gives no width/height.
+    Image.new("RGB", (2000, 500), "white").save(image)
+    ocr = _ocr_reply(monkeypatch, {"elements": [{"text": "Comune di Bari", "bbox": [100, 100, 500, 150]}]})
+    (line,) = ocr.ocr_image(str(image))
+    sx, sy = 2000 / 1568, 500 / 392
+    assert line["bbox"] == pytest.approx([100 * sx, 100 * sy, 500 * sx, 150 * sy], rel=0.01)
+
+
+def test_vision_reply_that_is_not_an_object_is_a_failed_read(tmp_path, monkeypatch):
+    from PIL import Image
+
+    image = tmp_path / "scan.png"
+    Image.new("RGB", (400, 300), "white").save(image)
+    assert _ocr_reply(monkeypatch, [{"text": "x"}]).ocr_image(str(image)) is None
+    ocr = _ocr_reply(monkeypatch, {"elements": ["stray", {"text": "Kept", "bbox": [1, 1, 100, 40]}]})
+    assert [line["text"] for line in ocr.ocr_image(str(image))] == ["Kept"]

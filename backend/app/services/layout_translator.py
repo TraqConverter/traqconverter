@@ -491,12 +491,12 @@ def _extract_pdf_via_claude(file_path: str) -> list[ExtractedSegment] | None:
                 pix.save(str(page_png))
 
                 lines = ocr_image(str(page_png))
+                if lines is None:
+                    # A failed page would silently drop out of the translation; read the whole PDF the other way.
+                    logger.warning("Claude Vision failed on PDF page %d; falling back to text extraction", page_index)
+                    return None
                 if not lines:
-                    logger.warning(
-                        "Claude Vision returned nothing for PDF page %d — "
-                        "skipping this page in the Claude path",
-                        page_index,
-                    )
+                    logger.info("Claude Vision found no text on PDF page %d", page_index)
                     continue
 
 
