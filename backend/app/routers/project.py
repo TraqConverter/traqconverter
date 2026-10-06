@@ -25,7 +25,7 @@ from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature, user_has_feature
 from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import can_manage_project, get_user_project_or_404
-from app.services import ai_actions, ai_usage, project_instructions
+from app.services import ai_actions, ai_usage, job_progress, project_instructions
 from app.services.learning import capture_template_in_background
 from app.services.project_lifecycle import enqueue_job, failure_code, job_charge_reference
 from app.models.project import MODE_DTP, MODE_TRANSLATE, PROJECT_MODES, TranslationProject, ProjectStatus, is_dtp
@@ -522,11 +522,7 @@ def list_projects(
 
     result = []
     for p in projects:
-        progress = 0
-        if p.total_segments and p.total_segments > 0:
-            progress = int((p.translated_segments / p.total_segments) * 100)
-        if p.status == ProjectStatus.COMPLETED:
-            progress = 100
+        progress = job_progress.display_percent(p)
 
         a = users_by_id.get(str(p.assignee_id)) if p.assignee_id else None
         o = users_by_id.get(str(p.user_id)) if p.user_id else None
@@ -542,6 +538,7 @@ def list_projects(
 
             "review_status": p.review_status or "DRAFT",
             "progress": progress,
+            **job_progress.stage_fields(p),
             "source_lang": p.source_language,
             "target_lang": p.target_language,
             "mode": p.mode or MODE_TRANSLATE,
@@ -771,11 +768,7 @@ def get_project_status(
 
     project = get_user_project_or_404(db, project_id, current_user)
 
-    progress = 0
-    if project.total_segments and project.total_segments > 0:
-        progress = int(
-            (project.translated_segments / project.total_segments) * 100
-        )
+    progress = job_progress.display_percent(project)
 
 
     total = (
@@ -840,6 +833,8 @@ def get_project_status(
         "status": project.status,
         "review_status": project.review_status or "DRAFT",
         "progress_percent": progress,
+        **job_progress.stage_fields(project),
+        "page_count": project.page_count,
         "retry_count": project.retry_count,
         "created_at": project.created_at,
         "file_name": project.file_name,
@@ -1426,6 +1421,9 @@ def rerun_project(
     ai_actions.charge(db, project, current_user, job_charge_reference(project.id, attempt))
     project.status = ProjectStatus.PENDING
     project.progress_percent = 0
+    project.progress_stage = None
+    project.progress_detail = None
+    project.stage_started_at = None
     project.failure_reason = None
     enqueue_job(db, project.id, project.file_path)
     db.commit()

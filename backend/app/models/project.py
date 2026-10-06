@@ -74,6 +74,10 @@ class TranslationProject(Base):
 
 
     progress_percent = Column(Integer, nullable=False, default=0)
+    # reading | translating | rebuilding | finishing while PROCESSING; see services/job_progress.py.
+    progress_stage = Column(String(20), nullable=True)
+    progress_detail = Column(String(120), nullable=True)
+    stage_started_at = Column(DateTime, nullable=True)
 
 
     total_segments = Column(Integer, nullable=False, default=0)

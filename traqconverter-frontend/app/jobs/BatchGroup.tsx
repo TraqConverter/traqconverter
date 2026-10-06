@@ -21,6 +21,8 @@ export type BatchDoc = {
   status: string
   review_status: string
   progress: number
+  progress_stage?: string | null
+  progress_detail?: string | null
   page_count: number
   source_lang: string
   target_lang: string

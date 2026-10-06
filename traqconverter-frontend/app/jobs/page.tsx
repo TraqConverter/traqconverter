@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { api } from "@/lib/api"
+import { stageText } from "@/lib/jobProgress"
 import { type BatchRef } from "@/components/BatchBadge"
 import BatchGroup, { type BatchDetail, type BatchDoc, type BatchSummary } from "./BatchGroup"
 
@@ -18,6 +19,8 @@ type Project = {
   status: string
   review_status?: string
   progress: number
+  progress_stage?: string | null
+  progress_detail?: string | null
   source_lang: string
   target_lang: string
   mode?: "translate" | "dtp"
@@ -154,6 +157,8 @@ function fromBatchDoc(d: BatchDoc, batch: BatchRef): Project {
     status: d.status,
     review_status: d.review_status,
     progress: d.progress,
+    progress_stage: d.progress_stage,
+    progress_detail: d.progress_detail,
     source_lang: d.source_lang,
     target_lang: d.target_lang,
     mode: d.mode,
@@ -777,6 +782,12 @@ function Jobs() {
               {meta}
               <span className="md:hidden"> · {relativeTime(p.created_at)}</span>
             </div>
+            {(p.status || "").toUpperCase() === "PROCESSING" && (
+              <div className="text-xs truncate" style={{ color: "#0a7870" }}>
+                {stageText(p)}
+                <span className="xl:hidden"> · {progress}%</span>
+              </div>
+            )}
             {p.failure_code === "same_language" && p.failure_reason && (
               <div className="text-xs" style={{ color: "#7a2f24" }}>
                 {p.failure_reason}

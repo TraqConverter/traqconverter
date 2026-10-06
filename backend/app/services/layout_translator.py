@@ -452,6 +452,16 @@ def _map_pdf_font(font_name: str | None, flags: int) -> str:
     return "helv"
 
 
+def _report_reading(page_index: int, page_total: int) -> None:
+    from app.services import job_progress
+
+    job_progress.report(
+        job_progress.READING,
+        page_index / max(page_total, 1),
+        f"Reading page {page_index + 1} of {page_total}",
+    )
+
+
 def _extract_pdf_via_claude(file_path: str) -> list[ExtractedSegment] | None:
     """Render each PDF page to an image and OCR it with Claude Vision.
 
@@ -481,11 +491,9 @@ def _extract_pdf_via_claude(file_path: str) -> list[ExtractedSegment] | None:
     try:
         doc = fitz.open(file_path)
         try:
+            page_total = len(doc)
             for page_index, page in enumerate(doc):
-
-
-
-
+                _report_reading(page_index, page_total)
                 pix = page.get_pixmap(dpi=200, alpha=False)
                 page_png = tmp_dir / f"page_{page_index}.png"
                 pix.save(str(page_png))
@@ -749,7 +757,9 @@ def _extract_pdf_via_ocr(file_path: str) -> list[ExtractedSegment]:
 
         OCR_SCALE = 2.0
         matrix = fitz.Matrix(OCR_SCALE, OCR_SCALE)
+        page_total = len(doc)
         for page_index, page in enumerate(doc):
+            _report_reading(page_index, page_total)
             pix = page.get_pixmap(matrix=matrix)
             img = Image.frombytes(
                 "RGB", [pix.width, pix.height], pix.samples

@@ -29,6 +29,7 @@ from typing import Optional
 
 from app.services import script_sandbox
 from app.services import claude_params
+from app.services import job_progress
 
 logger = logging.getLogger(__name__)
 
@@ -752,50 +753,60 @@ def _format_image_list(images: list) -> str:
 
 
 
-def _extract_tables_via_vision(
-    pdf_bytes: bytes,
-    model: str = claude_params.TABLE_EXTRACT_MODEL,
-) -> list:
-    """Pre-pass: render each page of the PDF as an image and ask
-    Claude Vision to extract any data tables as structured JSON.
+# The Messages API refuses requests over 32 MB (413); a batch of page images stays well under that.
+TABLE_BATCH_BYTES = 16_000_000
+TABLE_BATCH_MAX_PAGES = 8
+# The API caps each image at 5 MB; bigger renders are redone at a lower scale.
+TABLE_IMAGE_MAX_BYTES = 3_700_000
+TABLE_PARALLEL_CALLS = 3
 
-    Returns a list of dicts:
-        [{"page": 1, "title": "FIRST YEAR",
-          "headers": ["Course Code","Course","Outcome",...],
-          "rows": [["00000001","ADMINISTRATIVE LAW","Passed",...], ...]},
-         ...]
+_TABLE_EXTRACT_PROMPT = textwrap.dedent("""
+    Look at the attached PDF page image(s). Identify every data
+    table on every page — a "data table" is a multi-row grid of
+    values like a courses/grades list, an invoice line-items
+    block, a price list, a schedule, etc. Single-row layout
+    tables (logo|name header, label|value pairs) DO NOT count.
 
-    Empty list if no tables detected or the call fails. This list is
-    embedded into the author prompt under EXTRACTED TABLES so the
-    author script can paste cell values verbatim instead of trying
-    to OCR them itself.
-    """
-    try:
-        import json as _json
-        import anthropic  # type: ignore
-        import fitz
-    except Exception:
-        logger.warning("Vision table extraction unavailable (missing dep)")
-        return []
+    For each real data table, return a JSON object with these
+    fields:
+        "page": <1-indexed page number>
+        "title": <the heading immediately above the table,
+                   e.g. "FIRST YEAR", or "" if none>
+        "headers": <list of column header strings, in left-to-
+                    right order>
+        "rows": <list of rows, each row a list of cell values in
+                 left-to-right order, ONE value per cell>
 
-    api_key = claude_params.api_key()
-    if not api_key:
-        return []
+    Read each row CAREFULLY column by column. Course codes,
+    outcomes ("Passed"/"Failed"), grades ("29/30"), credit
+    counts, sector codes (e.g. "IUS/10"), dates and trailing
+    identifiers MUST land in separate cells.
+
+    Return ONE JSON object wrapped in ```json … ```:
+        {"tables": [ {...}, {...}, ... ]}
+
+    Empty array if no real data tables exist. No prose. No
+    commentary. Just the JSON block.
+""").strip()
+
+
+def _render_table_pages(pdf_bytes: bytes) -> list:
+    """Base64 PNG per page, each under the API's per-image size cap."""
+    import fitz
 
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     except Exception as e:
         logger.warning("Vision table pre-pass: PDF open failed: %s", e)
         return []
-
-    page_imgs_b64 = []
+    images = []
     try:
         for p in doc:
             try:
-                pix = p.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
-                page_imgs_b64.append(
-                    base64.standard_b64encode(pix.tobytes("png")).decode("ascii")
-                )
+                png = p.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False).tobytes("png")
+                if len(png) > TABLE_IMAGE_MAX_BYTES:
+                    png = p.get_pixmap(matrix=fitz.Matrix(1.4, 1.4), alpha=False).tobytes("png")
+                images.append(base64.standard_b64encode(png).decode("ascii"))
             except Exception as e:
                 logger.warning("Vision pre-pass page render failed: %s", e)
     finally:
@@ -803,82 +814,33 @@ def _extract_tables_via_vision(
             doc.close()
         except Exception:
             pass
-
-    if not page_imgs_b64:
-        return []
-
-    client = anthropic.Anthropic(api_key=api_key)
-
-    EXTRACT_PROMPT = textwrap.dedent("""
-        Look at the attached PDF page image(s). Identify every data
-        table on every page — a "data table" is a multi-row grid of
-        values like a courses/grades list, an invoice line-items
-        block, a price list, a schedule, etc. Single-row layout
-        tables (logo|name header, label|value pairs) DO NOT count.
-
-        For each real data table, return a JSON object with these
-        fields:
-            "page": <1-indexed page number>
-            "title": <the heading immediately above the table,
-                       e.g. "FIRST YEAR", or "" if none>
-            "headers": <list of column header strings, in left-to-
-                        right order>
-            "rows": <list of rows, each row a list of cell values in
-                     left-to-right order, ONE value per cell>
-
-        Read each row CAREFULLY column by column. Course codes,
-        outcomes ("Passed"/"Failed"), grades ("29/30"), credit
-        counts, sector codes (e.g. "IUS/10"), dates and trailing
-        identifiers MUST land in separate cells.
-
-        Return ONE JSON object wrapped in ```json … ```:
-            {"tables": [ {...}, {...}, ... ]}
-
-        Empty array if no real data tables exist. No prose. No
-        commentary. Just the JSON block.
-    """).strip()
-
-    content = []
-    for b64 in page_imgs_b64:
-        content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/png",
-                "data": b64,
-            },
-        })
-    content.append({"type": "text", "text": EXTRACT_PROMPT})
-
-    try:
-        resp = claude_params.create_message(
-            client,
-            model=model,
-            max_tokens=16000,
-            messages=[{"role": "user", "content": content}],
-            **claude_params.request_params(model, max_tokens=16000, temperature=0.1),
-        )
-    except anthropic.APIError as e:
-        logger.warning("Vision table extraction call failed: %s", e)
-        return []
-    claude_params.log_usage("Vision table extraction", resp)
-
-    raw = ""
-    for block in resp.content or []:
-        if getattr(block, "type", None) == "text":
-            raw += getattr(block, "text", "") or ""
+    return images
 
 
-    m = re.search(r"```(?:json)?\s*\n(.*?)```", raw, re.DOTALL)
-    payload = m.group(1).strip() if m else raw.strip()
-    try:
-        data = _json.loads(payload)
-    except Exception:
-        logger.warning(
-            "Vision table extraction returned non-JSON: %r", raw[:300]
-        )
-        return []
+def _batch_page_images(
+    images: list,
+    budget_bytes: int = TABLE_BATCH_BYTES,
+    max_pages: int = TABLE_BATCH_MAX_PAGES,
+) -> list:
+    """Group consecutive pages into (first_page_index, images) batches under the byte budget."""
+    batches: list = []
+    current: list = []
+    start = 0
+    size = 0
+    for i, b64 in enumerate(images):
+        if current and (size + len(b64) > budget_bytes or len(current) >= max_pages):
+            batches.append((start, current))
+            current, size = [], 0
+        if not current:
+            start = i
+        current.append(b64)
+        size += len(b64)
+    if current:
+        batches.append((start, current))
+    return batches
 
+
+def _clean_tables(data, page_offset: int, page_count: int) -> list:
     tables = data.get("tables", []) if isinstance(data, dict) else []
     cleaned = []
     for t in tables:
@@ -888,12 +850,93 @@ def _extract_tables_via_vision(
         rows = t.get("rows") or []
         if not isinstance(headers, list) or not isinstance(rows, list):
             continue
+        try:
+            page = int(t.get("page", 0) or 0)
+        except (TypeError, ValueError):
+            page = 0
+        # The model numbers the images it was sent from 1; map that back to the document's page.
+        page = page_offset + min(max(page, 1), page_count)
         cleaned.append({
-            "page": int(t.get("page", 0) or 0),
+            "page": page,
             "title": str(t.get("title", "") or ""),
             "headers": [str(h) for h in headers],
             "rows": [[str(c) for c in r] for r in rows if isinstance(r, list)],
         })
+    return cleaned
+
+
+def _extract_tables_from_batch(client, model: str, page_offset: int, images: list) -> list:
+    """One vision call for one batch of pages; [] when it fails, so the other batches still count."""
+    import json as _json
+
+    label = f"pages {page_offset + 1}-{page_offset + len(images)}"
+    content = [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}}
+        for b64 in images
+    ]
+    content.append({"type": "text", "text": _TABLE_EXTRACT_PROMPT})
+    try:
+        resp = claude_params.create_message(
+            client,
+            model=model,
+            max_tokens=16000,
+            messages=[{"role": "user", "content": content}],
+            **claude_params.request_params(model, max_tokens=16000, temperature=0.1),
+        )
+    except Exception as e:
+        logger.warning("Vision table extraction call failed (%s): %s", label, e)
+        return []
+    claude_params.log_usage("Vision table extraction", resp)
+
+    raw = ""
+    for block in getattr(resp, "content", None) or []:
+        if getattr(block, "type", None) == "text":
+            raw += getattr(block, "text", "") or ""
+    m = re.search(r"```(?:json)?\s*\n(.*?)```", raw, re.DOTALL)
+    payload = m.group(1).strip() if m else raw.strip()
+    try:
+        data = _json.loads(payload)
+    except Exception:
+        logger.warning("Vision table extraction returned non-JSON (%s): %r", label, raw[:300])
+        return []
+    return _clean_tables(data, page_offset, len(images))
+
+
+def _extract_tables_via_vision(
+    pdf_bytes: bytes,
+    model: str = claude_params.TABLE_EXTRACT_MODEL,
+) -> list:
+    """Pre-pass: ask Claude Vision for every data table as structured JSON, a batch of pages per call.
+
+    Returns [{"page": 1, "title": ..., "headers": [...], "rows": [[...], ...]}, ...] in page
+    order; [] when nothing is found or every call fails.
+    """
+    try:
+        import anthropic  # type: ignore
+    except Exception:
+        logger.warning("Vision table extraction unavailable (missing dep)")
+        return []
+
+    api_key = claude_params.api_key()
+    if not api_key:
+        return []
+
+    images = _render_table_pages(pdf_bytes)
+    if not images:
+        return []
+
+    client = anthropic.Anthropic(api_key=api_key)
+    batches = _batch_page_images(images)
+    if len(batches) > 1:
+        logger.info("Vision table extraction: %d pages in %d batches", len(images), len(batches))
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=min(TABLE_PARALLEL_CALLS, len(batches))) as pool:
+        results = list(pool.map(lambda b: _extract_tables_from_batch(client, model, b[0], b[1]), batches))
+
+    cleaned = [t for batch_tables in results for t in batch_tables]
+    cleaned.sort(key=lambda t: t["page"])
     logger.info(
         "Vision table extraction: %d table(s), %d total rows",
         len(cleaned),
@@ -2380,12 +2423,14 @@ def author_rebuild_docx(
 
 
 
+    job_progress.report(job_progress.REBUILDING, 0.0)
     try:
         tables = _extract_tables_via_vision(pdf_bytes)
     except Exception:
         logger.exception("Vision table pre-pass failed — continuing without")
         tables = []
 
+    job_progress.report(job_progress.REBUILDING, 0.2)
     try:
         raw = _call_claude_to_author(
             pdf_bytes=pdf_bytes,
@@ -2401,6 +2446,7 @@ def author_rebuild_docx(
         )
         script = _strip_code_fence(raw)
         _validate_script(script, output_path)
+        job_progress.report(job_progress.REBUILDING, 0.85)
         docx_bytes = _run_script_in_sandbox(
             script,
             output_path=output_path,

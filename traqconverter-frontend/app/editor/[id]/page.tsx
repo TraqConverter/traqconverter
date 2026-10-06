@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation"
 import { api, apiErrorDetail, fetchObjectUrl } from "@/lib/api"
 import LearningPanel from "@/components/learning/LearningPanel"
 import { useFeature } from "@/lib/plan"
+import { stageText } from "@/lib/jobProgress"
 import { SavedInstructionPicker, useSavedInstructions } from "@/components/SavedInstructions"
 import DocumentEditor, {
   STANDARD_PAGE,
@@ -30,6 +31,9 @@ type ProjectInfo = {
   status: string
   review_status: string
   progress_percent: number
+  progress_stage?: string | null
+  progress_detail?: string | null
+  page_count?: number | null
   file_name: string
   source_language: string
   target_language: string
@@ -276,6 +280,8 @@ export default function EditorPage() {
                   ...p,
                   status: res.data?.status || "PENDING",
                   progress_percent: 0,
+                  progress_stage: null,
+                  progress_detail: null,
                   failure_reason: null,
                 }
               : p,
@@ -567,14 +573,36 @@ export default function EditorPage() {
   }
 
   if (project && project.status !== "COMPLETED" && project.status !== "FAILED") {
+    const percent = Math.max(0, Math.min(99, project.progress_percent || 0))
+    const kind = (project.source_kind || "").toUpperCase()
+    const pages = project.page_count || 0
+    const showHint = pages > 0 && kind !== "DOCX" && kind !== "TXT"
     return (
-      <div className="py-20 text-center">
+      <div className="py-20 px-4 text-center">
         <h2 className="text-xl font-semibold mb-2" style={{ color: "#1f2a2e" }}>
           Processing your document…
         </h2>
-        <p style={{ color: "#8a8270" }}>
-          {project.progress_percent || 0}% complete · polling every 3 seconds
+        <p style={{ color: "#4a4638" }}>
+          {stageText(project)} · {percent}% complete
         </p>
+        <div
+          className="mx-auto mt-4 h-1.5 w-full max-w-xs rounded-full overflow-hidden"
+          style={{ background: "#f1e8d1" }}
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+        >
+          <div
+            className="h-full transition-all"
+            style={{ width: `${percent}%`, background: percent > 0 ? "#0a7870" : "#cfc6ad" }}
+          />
+        </div>
+        {showHint && (
+          <p className="mt-3 text-sm" style={{ color: "#8a8270" }}>
+            {pages} page{pages === 1 ? "" : "s"} · usually 1–2 minutes per page for scans.
+          </p>
+        )}
       </div>
     )
   }
