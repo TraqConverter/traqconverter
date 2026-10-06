@@ -145,12 +145,10 @@ function IconPlus() {
   )
 }
 
-function IconDots() {
+function IconChevron() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="#9a9178">
-      <circle cx="6" cy="12" r="1.6" />
-      <circle cx="12" cy="12" r="1.6" />
-      <circle cx="18" cy="12" r="1.6" />
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9a9178" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m9 6 6 6-6 6" />
     </svg>
   )
 }
@@ -216,7 +214,7 @@ export default function DashboardPage() {
     )
 
     const pairs = new Set<string>()
-    for (const p of projects) {
+    for (const p of projects.filter(isActive)) {
       const src = p.source_language || (p as any).source_lang
       const tgt = p.target_language || (p as any).target_lang
       if (src && tgt) pairs.add(`${src}→${tgt}`)
@@ -306,7 +304,7 @@ export default function DashboardPage() {
           pill={null}
           footer={
             kpis.pagesInFlight > 0
-              ? `${kpis.activePagesCount} project${kpis.activePagesCount === 1 ? "" : "s"} still translating`
+              ? `${kpis.activePagesCount} project${kpis.activePagesCount === 1 ? "" : "s"} not yet delivered`
               : "Nothing in the queue"
           }
         />
@@ -386,6 +384,9 @@ export default function DashboardPage() {
 
             {}
             <button
+              type="button"
+              onClick={() => router.push("/jobs")}
+              title="Filter by status, person or name on the Projects page"
               className="flex items-center gap-2 px-4 py-2 rounded-full text-sm"
               style={{
                 background: "#ffffff",
@@ -426,7 +427,7 @@ export default function DashboardPage() {
           <div>LANGUAGES</div>
           <div>STATUS</div>
           <div>PROGRESS</div>
-          <div>TEAM · DUE</div>
+          <div>TEAM</div>
           <div />
         </div>
 
@@ -447,8 +448,8 @@ export default function DashboardPage() {
           {!loading &&
             filtered.map((p, idx) => {
               const title = p.name || p.file_name || p.filename || p.title || "Untitled project"
-              const src = p.source_language || p.source_lang || "en-GB"
-              const tgt = p.target_language || p.target_lang || "en-US"
+              const src = p.source_language || p.source_lang || "—"
+              const tgt = p.target_language || p.target_lang || "—"
               const progress = p.progress_percent ?? p.progress ?? 0
               const s = statusStyle(effectiveStatus(p))
 
@@ -459,7 +460,6 @@ export default function DashboardPage() {
               if (ownerInitials && ownerInitials !== assigneeInitials)
                 teamInitials.push(ownerInitials)
               const team = teamInitials
-              const due = p.due || p.due_date || "—"
 
               return (
                 <div
@@ -573,22 +573,17 @@ export default function DashboardPage() {
                         Unassigned
                       </span>
                     )}
-                    <span className="text-xs" style={{ color: "#6b6558" }}>
-                      {due}
-                    </span>
                   </div>
 
                   {}
                   <div className="flex justify-end">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                      }}
+                    <span
+                      aria-hidden="true"
                       className="w-8 h-8 rounded-md flex items-center justify-center"
                       style={{ color: "#9a9178" }}
                     >
-                      <IconDots />
-                    </button>
+                      <IconChevron />
+                    </span>
                   </div>
                 </div>
               )

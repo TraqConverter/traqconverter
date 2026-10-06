@@ -1,7 +1,9 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import Link from "next/link"
 import { api, apiErrorDetail } from "@/lib/api"
+import { planFor, useFeature } from "@/lib/plan"
 
 type Member = {
   id: string
@@ -80,9 +82,19 @@ export default function MembersPage() {
   const [inviteEmail, setInviteEmail] = useState("")
   const [inviteRole, setInviteRole] = useState("MEMBER")
 
+  const [meId, setMeId] = useState<string | null>(null)
+
   useEffect(() => {
     fetchMembers()
+    api
+      .get("/auth/me")
+      .then((res) => setMeId(res.data?.id ? String(res.data.id) : null))
+      .catch(() => setMeId(null))
   }, [])
+
+  // Inviting, changing roles and removing are owner-only on the server; don't offer them to anyone else.
+  const teamAccess = useFeature("team_collaboration")
+  const isOwner = !!meId && !!snapshot?.members.some((m) => m.is_owner && m.id === meId)
 
   const fetchMembers = async () => {
     try {
@@ -234,6 +246,16 @@ export default function MembersPage() {
           </p>
         </div>
 
+        {isOwner && teamAccess === "locked" && (
+          <Link
+            href="/billing"
+            className="px-4 py-2.5 rounded-full text-sm font-semibold"
+            style={{ background: "#f3ecdb", color: "#6b6558", border: "1px solid #e7ddc5" }}
+          >
+            Invite teammates with {planFor("team_collaboration")}
+          </Link>
+        )}
+        {isOwner && teamAccess !== "locked" && (
         <button
           type="button"
           onClick={() => {
@@ -261,6 +283,7 @@ export default function MembersPage() {
           </svg>
           {showInvite ? "Close" : "Invite by email"}
         </button>
+        )}
       </div>
 
       {error && (
@@ -382,9 +405,10 @@ export default function MembersPage() {
 
       {}
       <div
-        className="rounded-2xl overflow-hidden"
+        className="rounded-2xl overflow-x-auto"
         style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
       >
+        <div className={snapshot?.members.length ? "min-w-[640px]" : undefined}>
         <div
           className="grid items-center text-[11px] font-semibold tracking-[0.14em] px-5 py-3"
           style={{
@@ -454,7 +478,7 @@ export default function MembersPage() {
                 {m.email}
               </div>
               <div>
-                {m.is_owner ? (
+                {m.is_owner || !isOwner ? (
                   <span
                     className="inline-flex items-center text-[12px] font-semibold tracking-[0.04em] px-2.5 py-1 rounded-full"
                     style={{
@@ -486,14 +510,14 @@ export default function MembersPage() {
                 )}
               </div>
               <div className="flex justify-end">
-                {m.is_owner ? null : (
+                {m.is_owner || !isOwner ? null : (
                   <button
                     type="button"
                     onClick={() => removeMember(m.id, m.email)}
                     disabled={busy === `del:${m.id}`}
                     aria-label="Remove member"
                     title="Remove member"
-                    className="opacity-0 group-hover:opacity-100 transition p-1.5 rounded-full"
+                    className="sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 transition p-1.5 rounded-full"
                     style={{ color: "#b14a3a", background: "transparent" }}
                     onMouseEnter={(e) =>
                       (e.currentTarget.style.background = "#f9efe9")
@@ -522,6 +546,7 @@ export default function MembersPage() {
             </div>
           ))
         )}
+        </div>
       </div>
 
       {}
@@ -534,9 +559,10 @@ export default function MembersPage() {
             PENDING INVITES
           </div>
           <div
-            className="rounded-2xl overflow-hidden"
+            className="rounded-2xl overflow-x-auto"
             style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
           >
+            <div className="min-w-[640px]">
             {snapshot.pending_invites.map((inv) => (
               <div
                 key={inv.id}
@@ -582,13 +608,14 @@ export default function MembersPage() {
                   </span>
                 </div>
                 <div className="flex justify-end">
+                  {isOwner && (
                   <button
                     type="button"
                     onClick={() => cancelInvite(inv.id)}
                     disabled={busy === `del-invite:${inv.id}`}
                     aria-label="Cancel invite"
                     title="Cancel invite"
-                    className="opacity-0 group-hover:opacity-100 transition p-1.5 rounded-full"
+                    className="sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 transition p-1.5 rounded-full"
                     style={{ color: "#b14a3a", background: "transparent" }}
                     onMouseEnter={(e) =>
                       (e.currentTarget.style.background = "#f9efe9")
@@ -610,9 +637,11 @@ export default function MembersPage() {
                       <path d="M18 6 6 18M6 6l12 12" />
                     </svg>
                   </button>
+                  )}
                 </div>
               </div>
             ))}
+            </div>
           </div>
         </div>
       )}
