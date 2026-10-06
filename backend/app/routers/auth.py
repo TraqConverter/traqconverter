@@ -653,6 +653,10 @@ def login(user_data: UserLogin, db: Session = Depends(get_db)):
     if not verify_password(user_data.password, user.password_hash):
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
+    # Same answer as a wrong password, so a deactivated account can't be told apart.
+    if user.is_active is False:
+        raise HTTPException(status_code=400, detail="Invalid credentials")
+
     token = create_access_token(
         {"sub": str(user.id)},
         token_version=int(getattr(user, "token_version", 0) or 0),
