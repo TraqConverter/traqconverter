@@ -35,6 +35,9 @@ type Busy = null | "chat" | "undo" | "image" | "cert"
 type Align = "left" | "center" | "right"
 type Selected = { id: string; floating: boolean; top: number; left: number; below: boolean }
 type Assets = { logo: { available: boolean; url: string | null }; stamp: { available: boolean; url: string | null } }
+// `managed` is false for documents from before the editable stamp: their stamp is still added at export.
+type PageStamp = { version: number; available: boolean; managed: boolean; enabled: boolean; align: Align; width_cm: number }
+type PagePlacement = { block_id: string; x_emu: number; y_emu: number }
 type CertFields = {
   translator: string
   date: string
@@ -69,6 +72,10 @@ const HIGHLIGHT_MS = 3200
 const DRAG_THRESHOLD_PX = 4
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"]
+// A copied picture travels as a reference; its file stays in the document.
+const IMAGE_CLIP_TYPE = "application/x-odt-image"
+const STAMP_MIN_MM = 25
+const STAMP_MAX_MM = 60
 const QUICK_PROMPTS = [
   "Match the source layout here",
   "Make this a two-column table",
@@ -226,6 +233,8 @@ export default function DocumentEditor({
   const [selected, setSelected] = useState<Selected | null>(null)
   const [imageMenuOpen, setImageMenuOpen] = useState(false)
   const [assets, setAssets] = useState<Assets | null>(null)
+  const [pageStamp, setPageStamp] = useState<PageStamp | null>(null)
+  const [stampWidthMm, setStampWidthMm] = useState(30)
   const [certOpen, setCertOpen] = useState(false)
   const [cert, setCert] = useState<CertState | null>(null)
   const [certDraft, setCertDraft] = useState<CertFields>(EMPTY_FIELDS)
@@ -254,6 +263,8 @@ export default function DocumentEditor({
   const editTargetsRef = useRef<HTMLElement[]>([])
   const imagesRef = useRef<DocImage[]>([])
   const selectedIdRef = useRef<string | null>(null)
+  const copiedImageRef = useRef<string | null>(null)
+  const stampTimerRef = useRef<number | null>(null)
   const caretBlockRef = useRef<string | null>(null)
   const typedSinceRenderRef = useRef(false)
   const imageCountRef = useRef<{ p: HTMLElement; count: number } | null>(null)
@@ -263,6 +274,7 @@ export default function DocumentEditor({
     deleteSelected: () => void
     insertFiles: (files: File[], blockId: string | null) => void
     placeImage: (id: string, blockId: string, x: number, y: number) => void
+    pasteImage: (id: string, blockId: string | null) => void
   } | null>(null)
   const onVersionChangeRef = useRef(onVersionChange)
   const onActiveBlockRef = useRef(onActiveBlockChange)
@@ -436,7 +448,9 @@ export default function DocumentEditor({
     const below = pos.top < 52
     const top = below ? pos.bottom + 10 : pos.top - 44
     const rect = image.img.getBoundingClientRect()
-    const left = Math.min(Math.max(pos.left + rect.width / 2, 150), pos.width - 150)
+    // Half the toolbar's width, so it stays inside the pane.
+    const half = Math.min(205, pos.width / 2)
+    const left = Math.min(Math.max(pos.left + rect.width / 2, half), pos.width - half)
     setSelected({ id: image.id, floating: image.floating, top, left, below })
   }, [toFrameBox])
 
@@ -571,14 +585,38 @@ export default function DocumentEditor({
         if (changed) scheduleSave()
       })
 
-      idoc.addEventListener("paste", (e: ClipboardEvent) => {
-        e.preventDefault()
-        const files = Array.from(e.clipboardData?.files ?? []).filter((f) => IMAGE_TYPES.includes(f.type))
-        if (files.length) {
-          actionsRef.current?.insertFiles(files, selectionBlock()?.getAttribute(BLOCK_ATTR) ?? null)
+      idoc.addEventListener("copy", (e: ClipboardEvent) => {
+        const id = selectedIdRef.current
+        if (!id) {
+          copiedImageRef.current = null
           return
         }
-        const text = (e.clipboardData?.getData("text/plain") ?? "").replace(/\s*\r?\n\s*/g, " ")
+        e.preventDefault()
+        e.clipboardData?.setData(IMAGE_CLIP_TYPE, id)
+        e.clipboardData?.setData("text/plain", "")
+        copiedImageRef.current = id
+        setNotice(`Picture copied. Click in a paragraph and press ${isMac() ? "⌘" : "Ctrl+"}V to paste it there.`)
+      })
+      idoc.addEventListener("cut", (e: ClipboardEvent) => {
+        if (selectedIdRef.current) e.preventDefault()
+      })
+
+      idoc.addEventListener("paste", (e: ClipboardEvent) => {
+        e.preventDefault()
+        const target = selectionBlock()
+        const blockId = target && !target.closest("header, footer") ? target.getAttribute(BLOCK_ATTR) : null
+        const files = Array.from(e.clipboardData?.files ?? []).filter((f) => IMAGE_TYPES.includes(f.type))
+        if (files.length) {
+          actionsRef.current?.insertFiles(files, blockId)
+          return
+        }
+        const raw = e.clipboardData?.getData("text/plain") ?? ""
+        const copied = e.clipboardData?.getData(IMAGE_CLIP_TYPE) || (!raw && copiedImageRef.current)
+        if (copied) {
+          actionsRef.current?.pasteImage(copied, blockId)
+          return
+        }
+        const text = raw.replace(/\s*\r?\n\s*/g, " ")
         if (text) idoc.execCommand("insertText", false, text)
       })
 
@@ -705,6 +743,15 @@ export default function DocumentEditor({
         if (mod && !e.shiftKey && e.key.toLowerCase() === "z" && !typedSinceRenderRef.current) {
           e.preventDefault()
           actionsRef.current?.undo()
+          return
+        }
+        if (mod && e.key.toLowerCase() === "c" && selectedIdRef.current) {
+          // With no text selected some browsers skip the copy event; fire it so the reference is recorded.
+          e.preventDefault()
+          if (!idoc.execCommand("copy")) {
+            copiedImageRef.current = selectedIdRef.current
+            setNotice("Picture copied. Click in a paragraph and paste to place a copy.")
+          }
           return
         }
         if (selectedIdRef.current && (e.key === "Delete" || e.key === "Backspace")) {
@@ -1147,6 +1194,140 @@ export default function DocumentEditor({
     })
   }
 
+  const duplicateAt = async (id: string, blockId: string) => {
+    let newId = ""
+    await runChange(
+      "image",
+      async (version) => {
+        const res = await api.post<{ version: number; image_id: string }>(
+          `/projects/${projectId}/document/images/${id}/duplicate`,
+          { version, target_block_id: blockId },
+        )
+        newId = res.data.image_id
+        return res.data
+      },
+      (idoc) => selectAfterRender(newId)(idoc),
+      "Couldn't copy the picture.",
+    )
+  }
+
+  const pasteImage = (id: string, blockId: string | null) => {
+    const block = blockId ?? caretBlockRef.current
+    if (!block) {
+      setNotice("Click in a paragraph, then paste.")
+      return
+    }
+    void duplicateAt(id, block)
+  }
+
+  const duplicateSelected = () => {
+    const id = selectedIdRef.current
+    const image = id ? imagesRef.current.find((i) => i.id === id) : null
+    const own = image?.img.closest(`p[${BLOCK_ATTR}]`)?.getAttribute(BLOCK_ATTR)
+    if (!image || !own) return
+    void duplicateAt(image.id, own)
+  }
+
+  // Pages as the editor renders them: docx-preview makes one section.docx per page break or section.
+  const copyToEveryPage = async () => {
+    const idoc = docRef.current
+    const id = selectedIdRef.current
+    const image = id ? imagesRef.current.find((i) => i.id === id) : null
+    if (!idoc || !image) return
+    const pages = Array.from(idoc.querySelectorAll<HTMLElement>("section.docx"))
+    const certStart = idoc.getElementById(CERT_START_ID)?.closest("section.docx")
+    const certIndex = certStart ? pages.indexOf(certStart as HTMLElement) : -1
+    const translated = certIndex >= 0 ? pages.slice(0, certIndex) : pages
+    const firstParagraph = (page: HTMLElement) => {
+      const all = Array.from(page.querySelectorAll<HTMLElement>(`p[${BLOCK_ATTR}]`)).filter((p) => !p.closest("header, footer"))
+      return all.find((p) => !p.closest("td")) ?? all[0] ?? null
+    }
+    const source = image.img.closest("section.docx") as HTMLElement | null
+    const anchor = source ? firstParagraph(source) : null
+    if (!source || !anchor) return
+    const scale = pageScale(source, pageWidthPx(source))
+    const r = image.img.getBoundingClientRect()
+    const x = Math.round(((r.left - columnLeft(anchor, scale)) / scale) * EMU_PER_PX)
+    const y = Math.round(((r.top - anchor.getBoundingClientRect().top) / scale) * EMU_PER_PX)
+    const src = image.img.src
+    const targets: PagePlacement[] = []
+    for (const page of translated) {
+      // Body pictures only: the footer's page stamp can be the very same file.
+      const shown = Array.from(page.querySelectorAll<HTMLImageElement>(`img[${IMAGE_ATTR}]`)).some((img) => img.src === src)
+      if (page === source || shown) continue
+      const first = firstParagraph(page)
+      const block = first?.getAttribute(BLOCK_ATTR)
+      if (block) targets.push({ block_id: block, x_emu: x, y_emu: y })
+    }
+    if (!targets.length) {
+      setNotice("Every page of the translation already has this picture.")
+      return
+    }
+    let added = 0
+    const ok = await runChange(
+      "image",
+      async (version) => {
+        const res = await api.post<{ version: number; image_ids: string[] }>(
+          `/projects/${projectId}/document/images/${image.id}/copy-to-pages`,
+          { version, targets },
+        )
+        added = res.data.image_ids.length
+        return res.data
+      },
+      selectAfterRender(image.id),
+      "Couldn't copy the picture to the other pages.",
+    )
+    if (ok) setNotice(added === 1 ? "Added to 1 more page. Undo removes it." : `Added to ${added} more pages. Undo removes them all.`)
+  }
+
+  const loadPageStamp = async () => {
+    try {
+      const res = await api.get<PageStamp>(`/projects/${projectId}/document/page-stamp`)
+      setPageStamp(res.data)
+      setStampWidthMm(Math.round(res.data.width_cm * 10))
+    } catch {
+      setPageStamp(null)
+    }
+  }
+
+  const updatePageStamp = async (change: { enabled?: boolean; align?: Align; width_cm?: number }) => {
+    if (!pageStamp) return
+    const saved: { state?: PageStamp } = {}
+    await runChange(
+      "image",
+      async (version) => {
+        const body = change.enabled ? { align: pageStamp.align, width_cm: stampWidthMm / 10, ...change } : change
+        saved.state = (await api.put<PageStamp>(`/projects/${projectId}/document/page-stamp`, { version, ...body })).data
+        return saved.state
+      },
+      undefined,
+      "Couldn't change the page stamp.",
+    )
+    const state = saved.state ?? pageStamp
+    if (saved.state) setPageStamp(saved.state)
+    setStampWidthMm(Math.round(state.width_cm * 10))
+  }
+
+  const commitStampWidthRef = useRef<(mm: number) => void>(() => {})
+  useEffect(() => {
+    commitStampWidthRef.current = (mm: number) => {
+      if (pageStamp && Math.round(pageStamp.width_cm * 10) !== mm) void updatePageStamp({ width_cm: mm / 10 })
+    }
+  })
+  useEffect(() => () => {
+    if (stampTimerRef.current) window.clearTimeout(stampTimerRef.current)
+  }, [])
+
+  // One version per settled slider position, not one per step.
+  const changeStampWidth = (mm: number) => {
+    setStampWidthMm(mm)
+    if (stampTimerRef.current) window.clearTimeout(stampTimerRef.current)
+    stampTimerRef.current = window.setTimeout(() => {
+      stampTimerRef.current = null
+      commitStampWidthRef.current(mm)
+    }, 600)
+  }
+
   const scrollToCertification = (idoc: Document) => {
     const start = idoc.getElementById(CERT_START_ID)
     const p = start?.closest("p") as HTMLElement | null
@@ -1401,6 +1582,7 @@ export default function DocumentEditor({
       deleteSelected: () => void deleteSelected(),
       insertFiles: (files, blockId) => void insertFiles(files, blockId),
       placeImage,
+      pasteImage,
     }
   })
 
@@ -1421,6 +1603,7 @@ export default function DocumentEditor({
     setChecksOpen(false)
     const next = !imageMenuOpen
     setImageMenuOpen(next)
+    if (next) void loadPageStamp()
     if (next && !assets) {
       try {
         setAssets((await api.get<Assets>(`/projects/${projectId}/document/assets`)).data)
@@ -1585,6 +1768,16 @@ export default function DocumentEditor({
               <div className="px-3 pt-1.5 pb-1 text-[10px] font-normal tracking-normal" style={{ color: "#9a9178" }}>
                 Goes after the paragraph you clicked. Drag it anywhere afterwards, or drop and paste pictures straight onto the page.
               </div>
+              {pageStamp?.available && (
+                <PageStampControls
+                  stamp={pageStamp}
+                  widthMm={stampWidthMm}
+                  disabled={busy !== null}
+                  onToggle={(on) => void updatePageStamp({ enabled: on })}
+                  onAlign={(align) => void updatePageStamp({ align })}
+                  onWidth={changeStampWidth}
+                />
+              )}
             </div>
           )}
 
@@ -1812,10 +2005,19 @@ export default function DocumentEditor({
                 <path d="M4 6h16M10 12h10M7 18h13" />
               </BarButton>
               <span className="w-px h-4 mx-1" style={{ background: "#4a5559" }} />
+              <BarButton label={`Duplicate (${modKey}C, then ${modKey}V in a paragraph)`} onClick={duplicateSelected}>
+                <rect x="9" y="9" width="11" height="11" rx="2" />
+                <path d="M5 15V6a2 2 0 0 1 2-2h8" />
+              </BarButton>
+              <BarButton label="Copy to every page" onClick={() => void copyToEveryPage()}>
+                <rect x="4" y="3" width="10" height="13" rx="1.5" />
+                <path d="M10 8v13h10V8z" />
+              </BarButton>
+              <span className="w-px h-4 mx-1" style={{ background: "#4a5559" }} />
               <BarButton label="Delete" onClick={() => void deleteSelected()}>
                 <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
               </BarButton>
-              <span className="pl-1.5 pr-2 text-[10px] whitespace-nowrap" style={{ color: "#aab4b6" }}>
+              <span className="pl-1.5 pr-2 text-[10px] whitespace-nowrap max-sm:hidden" style={{ color: "#aab4b6" }}>
                 {selected.floating ? "Free" : "In line"} · drag to place
               </span>
             </div>
@@ -2012,6 +2214,86 @@ function MenuItem({ label, hint, thumb, onClick }: { label: string; hint?: strin
         {hint && <span className="text-[10px] font-normal" style={{ color: "#9a9178" }}>{hint}</span>}
       </span>
     </button>
+  )
+}
+
+function PageStampControls({
+  stamp,
+  widthMm,
+  disabled,
+  onToggle,
+  onAlign,
+  onWidth,
+}: {
+  stamp: PageStamp
+  widthMm: number
+  disabled: boolean
+  onToggle: (on: boolean) => void
+  onAlign: (align: Align) => void
+  onWidth: (mm: number) => void
+}) {
+  if (!stamp.managed) {
+    return (
+      <div className="mx-3 mt-1.5 pt-2 pb-1 text-[10px] font-normal tracking-normal" style={{ color: "#9a9178", borderTop: "1px solid #f1e8d1" }}>
+        Page stamp: this document was created before the editable stamp, so your stamp is added to every page when you export.
+      </div>
+    )
+  }
+  return (
+    <div className="mx-3 mt-1.5 pt-2 pb-1 text-[12px] font-medium tracking-normal" style={{ color: "#1f2a2e", borderTop: "1px solid #f1e8d1" }}>
+      <label className="flex items-center justify-between gap-2">
+        <span>Page stamp</span>
+        <input
+          type="checkbox"
+          checked={stamp.enabled}
+          disabled={disabled}
+          onChange={(e) => onToggle(e.target.checked)}
+          aria-label="Show my stamp at the bottom of every page"
+          className="accent-[#0a7870]"
+        />
+      </label>
+      {stamp.enabled && (
+        <div className="mt-2 space-y-2">
+          <div className="flex gap-1" role="group" aria-label="Page stamp position">
+            {(["left", "center", "right"] as const).map((a) => (
+              <button
+                key={a}
+                type="button"
+                disabled={disabled}
+                aria-pressed={stamp.align === a}
+                onClick={() => stamp.align !== a && onAlign(a)}
+                className="flex-1 text-[11px] py-1 rounded-md disabled:opacity-50"
+                style={
+                  stamp.align === a
+                    ? { background: "#e3f1ee", color: "#0a5e58", border: "1px solid #cfe6e2" }
+                    : { background: "#faf5ee", color: "#6b6558", border: "1px solid #e7ddc5" }
+                }
+              >
+                {a === "left" ? "Left" : a === "center" ? "Centre" : "Right"}
+              </button>
+            ))}
+          </div>
+          <label className="flex items-center gap-2 text-[11px]" style={{ color: "#6b6558" }}>
+            <span className="shrink-0">Size</span>
+            <input
+              type="range"
+              min={STAMP_MIN_MM}
+              max={STAMP_MAX_MM}
+              step={1}
+              value={widthMm}
+              disabled={disabled}
+              onChange={(e) => onWidth(Number(e.target.value))}
+              aria-label="Page stamp width in millimetres"
+              className="flex-1 accent-[#0a7870]"
+            />
+            <span className="w-11 text-right tabular-nums">{widthMm} mm</span>
+          </label>
+        </div>
+      )}
+      <div className="mt-1.5 text-[10px] font-normal" style={{ color: "#9a9178" }}>
+        Repeats at the bottom of every page and is exported exactly as shown.
+      </div>
+    </div>
   )
 }
 
