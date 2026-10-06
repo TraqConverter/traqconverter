@@ -850,6 +850,8 @@ def update_review_status(
     project = get_user_project_or_404(db, project_id, current_user)
     if new_status == "CERTIFIED":
         refuse_dtp_certification(project)
+        if project.status != ProjectStatus.COMPLETED:
+            raise HTTPException(status_code=400, detail="The translation must finish before it can be certified.")
 
     project.review_status = new_status
     db.commit()
