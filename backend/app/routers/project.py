@@ -1156,6 +1156,14 @@ def _resolve_rebuild_docx_bytes(
     docx_buf = _build_layout_docx_live(
         segments, project, preview_only=preview_only
     )
+    if docx_buf is None and (project.source_kind or "").upper() == "DOCX" and project.output_file:
+        # A Word upload is translated in place; the worker's rebuilt copy is the document.
+        from app.services.document_editor import _download
+
+        try:
+            return _download(project.output_file)
+        except Exception:
+            logger.exception("Rebuilt DOCX download failed (project=%s)", project.id)
     if docx_buf is None:
         raise HTTPException(
             status_code=500, detail="Couldn't build rebuild DOCX"

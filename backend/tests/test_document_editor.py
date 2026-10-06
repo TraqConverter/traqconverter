@@ -98,6 +98,16 @@ def test_regenerated_document_replaces_the_edited_one_and_undo_returns_to_it(cli
     assert _texts(_get(client, owner, project)[0])[1] == "edited"
 
 
+def test_word_upload_opens_in_the_editor(client, db, storage, make_user, make_project):
+    owner = make_user()
+    project = make_project(owner, source_kind="DOCX")
+    project.file_name = "contract.docx"
+    storage["objects"][project.output_file] = _docx("Translated contract", "Clause 1")
+    db.commit()
+    data, version = _get(client, owner, project)
+    assert version == 1 and _texts(data) == ["Translated contract", "Clause 1"]
+
+
 def test_editor_refuses_a_project_still_processing(client, db, project_with_doc):
     from app.models.project import ProjectStatus
 
