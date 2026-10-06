@@ -421,3 +421,18 @@ def test_paid_claim_emails_the_creator_not_the_owner(client, db, storage, make_u
     _, token = _protected(client, translator, project)
     assert client.post(f"/public/delivery/{token}/paid").status_code == 200
     assert [m["to"] for m in emails] == ["translator@traqtest.io"]
+
+
+def test_connect_explains_when_the_platform_setup_is_unfinished(client, make_user, monkeypatch):
+    import stripe
+
+    def refuse(**kwargs):
+        raise stripe.InvalidRequestError(
+            "You must complete your platform profile to use Connect and create live connected accounts.", None
+        )
+
+    monkeypatch.setattr(stripe.Account, "create", refuse)
+    owner = make_user()
+    r = client.post("/settings/payments/stripe/connect", headers=owner["headers"])
+    assert r.status_code == 503
+    assert "Stripe setup isn't finished" in r.json()["detail"]
