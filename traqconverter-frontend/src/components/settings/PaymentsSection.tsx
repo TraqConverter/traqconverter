@@ -188,8 +188,10 @@ export default function PaymentsSection() {
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
+    // Back from Stripe onboarding: ask Stripe now rather than wait out the server's refresh interval.
+    const back = new URLSearchParams(window.location.search).get("stripe") === "return"
     api
-      .get<Payments>("/settings/payments")
+      .get<Payments>("/settings/payments", { params: back ? { refresh: 1 } : undefined })
       .then((res) => {
         setData(res.data)
         setValue(res.data.paypal_me || "")

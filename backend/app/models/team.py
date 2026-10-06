@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, ForeignKey
+from sqlalchemy import Column, DateTime, String, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -30,5 +30,7 @@ class Team(Base):
     stripe_account_id = Column(String(255), nullable=True, unique=True)
     # pending | active (charges enabled) | restricted
     stripe_account_status = Column(String(20), nullable=True)
+    # Last time GET /settings/payments asked Stripe for that status; throttles the lookup.
+    stripe_account_checked_at = Column(DateTime, nullable=True)
 
     owner = relationship("User")

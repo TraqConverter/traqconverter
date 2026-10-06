@@ -16,7 +16,7 @@ from app.models.user import User
 from app.models.team import Team
 from app.models.team_member import TeamMember
 from app.models.certification import Certification
-from app.core.file_validation import validate_file_extension, validate_file_size
+from app.core.file_validation import local_file_name, validate_file_extension, validate_file_size
 
 
 logger = logging.getLogger(__name__)
@@ -160,7 +160,7 @@ async def upload_certification(
             tmp_path = _Path(tmp.name)
 
 
-        renamed = tmp_path.with_name(file.filename or tmp_path.name)
+        renamed = tmp_path.with_name(local_file_name(file.filename or tmp_path.name))
         try:
             tmp_path.rename(renamed)
             tmp_path = renamed

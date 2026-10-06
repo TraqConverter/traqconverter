@@ -6,7 +6,8 @@ import os
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
-from app.core.file_validation import validate_file_extension, validate_file_size
+from app.core.file_validation import local_file_name, validate_file_extension, validate_file_size
+from app.dependencies.tenant import can_manage_team
 from app.services.storage_service import save_certification_file
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,7 @@ async def upload_logo(
         )
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="logo_"))
-    tmp_path = tmp_dir / (file.filename or "logo.png")
+    tmp_path = tmp_dir / local_file_name(file.filename or "logo.png")
     try:
         with open(tmp_path, "wb") as f:
             f.write(data)
@@ -136,6 +137,13 @@ def _resolve_team(db: Session, user: User):
     raise HTTPException(status_code=404, detail="No team found")
 
 
+def _stamp_team(db: Session, user: User):
+    team = _resolve_team(db, user)
+    if not can_manage_team(db, team, user):
+        raise HTTPException(status_code=403, detail="Only the team owner or an admin can change the team stamp")
+    return team
+
+
 @router.get("/stamp")
 def get_stamp(
     db: Session = Depends(get_db),
@@ -158,6 +166,7 @@ def get_stamp(
         "has_stamp": bool(team.stamp_s3_key),
         "url": url,
         "alignment": team.stamp_alignment or "right",
+        "can_edit": can_manage_team(db, team, current_user),
     }
 
 
@@ -171,7 +180,7 @@ async def upload_stamp(
     import tempfile
     from app.services.s3_service import upload_file_to_s3
 
-    team = _resolve_team(db, current_user)
+    team = _stamp_team(db, current_user)
 
     name = (file.filename or "").lower()
     if not name.endswith((".png", ".jpg", ".jpeg")):
@@ -185,7 +194,7 @@ async def upload_stamp(
         )
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="stamp_"))
-    tmp_path = tmp_dir / (file.filename or "stamp.png")
+    tmp_path = tmp_dir / local_file_name(file.filename or "stamp.png")
     try:
         with open(tmp_path, "wb") as f:
             f.write(data)
@@ -213,7 +222,7 @@ def delete_stamp(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    team = _resolve_team(db, current_user)
+    team = _stamp_team(db, current_user)
     team.stamp_s3_key = None
     db.commit()
     return {"message": "Stamp removed"}
@@ -239,19 +248,10 @@ def update_stamp_alignment(
             status_code=400,
             detail="alignment must be one of: left, center, right",
         )
-    team = _resolve_team(db, current_user)
+    team = _stamp_team(db, current_user)
     team.stamp_alignment = alignment
     db.commit()
     return {"alignment": team.stamp_alignment}
-
-
-def _can_edit_team(db: Session, team, user: User) -> bool:
-    from app.models.team_member import TeamMember
-
-    if team.owner_id == user.id:
-        return True
-    member = db.query(TeamMember).filter(TeamMember.team_id == team.id, TeamMember.user_id == user.id).first()
-    return bool(member and (member.role or "").upper() == "ADMIN")
 
 
 def _payments(db: Session, team, user: User, account=None) -> dict:
@@ -260,14 +260,14 @@ def _payments(db: Session, team, user: User, account=None) -> dict:
     return {
         "paypal_me": team.paypal_me,
         "paypal_url": f"https://paypal.me/{team.paypal_me}" if team.paypal_me else None,
-        "can_edit": _can_edit_team(db, team, user),
+        "can_edit": can_manage_team(db, team, user),
         **stripe_connect.summary(team, account),
     }
 
 
 def _editable_team(db: Session, user: User):
     team = _resolve_team(db, user)
-    if not _can_edit_team(db, team, user):
+    if not can_manage_team(db, team, user):
         raise HTTPException(status_code=403, detail="Only the team owner or an admin can change payment settings")
     return team
 
@@ -276,11 +276,18 @@ class _Payments(BaseModel):
     paypal_me: str | None = None
 
 
+STRIPE_REFRESH_SECONDS = 300
+
+
 @router.get("/payments")
 def get_payment_settings(
+    refresh: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """`refresh` (back from Stripe onboarding) skips the throttle on asking Stripe for the account's status."""
+    from datetime import datetime, timedelta
+
     from app.services import stripe_connect
 
     # Readable by the whole team: the share dialog shows the handle a protected link will use.
@@ -288,7 +295,13 @@ def get_payment_settings(
     account = None
     if team.stripe_account_id and team.stripe_account_status != "active":
         # Onboarding may have just finished; the webhook can lag behind the redirect back here.
-        account = stripe_connect.refresh(db, team)
+        now = datetime.utcnow()
+        checked = team.stripe_account_checked_at
+        due = checked is None or now - checked >= timedelta(seconds=STRIPE_REFRESH_SECONDS)
+        if due or (refresh and can_manage_team(db, team, current_user)):
+            team.stripe_account_checked_at = now
+            db.commit()
+            account = stripe_connect.refresh(db, team)
     return _payments(db, team, current_user, account)
 
 
@@ -301,7 +314,7 @@ def update_payment_settings(
     from app.services.paypal import normalise_handle
 
     team = _resolve_team(db, current_user)
-    if not _can_edit_team(db, team, current_user):
+    if not can_manage_team(db, team, current_user):
         raise HTTPException(status_code=403, detail="Only the team owner or an admin can change payment settings")
     try:
         team.paypal_me = normalise_handle(payload.paypal_me)
@@ -368,5 +381,6 @@ def disconnect_stripe(
     team = _editable_team(db, current_user)
     team.stripe_account_id = None
     team.stripe_account_status = None
+    team.stripe_account_checked_at = None
     db.commit()
     return _payments(db, team, current_user)
