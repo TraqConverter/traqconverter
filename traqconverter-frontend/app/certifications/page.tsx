@@ -812,7 +812,8 @@ function TemplateHelp() {
 
   const copy = async (name: string) => {
     try {
-      await navigator.clipboard.writeText(name)
+      // Copy the ready-to-paste token, so it can go straight into the Word document.
+      await navigator.clipboard.writeText(`{{${name}}}`)
       setCopied(name)
       setTimeout(() => setCopied(null), 1400)
     } catch {
@@ -889,11 +890,11 @@ function TemplateHelp() {
                   background: copied === f.names[0] ? "#cfe6e2" : "#faf5ee",
                   border: `1px solid ${copied === f.names[0] ? "#0a7870" : "#e7ddc5"}`,
                 }}
-                title={`Copy ${f.names[0]}`}
+                title={`Copy {{${f.names[0]}}} to paste into your Word certification`}
               >
                 <div className="flex items-baseline justify-between gap-2">
                   <code className="text-[12px] font-mono font-semibold truncate" style={{ color: "#1f2a2e" }}>
-                    {f.names[0]}
+                    {`{{${f.names[0]}}}`}
                   </code>
                   <span
                     className="text-[11px] font-semibold shrink-0"
