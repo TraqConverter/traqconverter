@@ -62,11 +62,12 @@ from app.services.layout_translator import (
     rebuild_output,
 )
 from app.routers.ws import broadcast_progress
-from app.services import ai_usage, learning, notifications
+from app.services import ai_usage, job_progress, learning, notifications
 from app.services.glossary_service import lang_key, language_name, project_source_language
 from app.services.project_lifecycle import SAME_LANGUAGE_REASON, mark_project_failed
 from app.dependencies.feature_guard import project_has_feature
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 
 from docx import Document
 import fitz
@@ -81,29 +82,14 @@ TEMPLATE_FILL_TIMEOUT = 600
 
 
 
-def safe_broadcast(project_id: str, progress: int, status: str):
+def safe_broadcast(project_id: str, progress: int, status: str, extra: dict | None = None):
+    payload = {"progress": progress, "status": status, **(extra or {})}
     try:
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(
-                broadcast_progress(
-                    project_id,
-                    {
-                        "progress": progress,
-                        "status": status,
-                    }
-                )
-            )
+            loop.create_task(broadcast_progress(project_id, payload))
         except RuntimeError:
-            asyncio.run(
-                broadcast_progress(
-                    project_id,
-                    {
-                        "progress": progress,
-                        "status": status,
-                    }
-                )
-            )
+            asyncio.run(broadcast_progress(project_id, payload))
     except Exception as e:
         logger.warning(f"WebSocket broadcast failed: {e}")
 
@@ -279,6 +265,7 @@ def process_translation_job(project_id: str):
     db: Session = SessionLocal()
     temp_dir = None
     project = None
+    progress_scope = ExitStack()
 
     try:
         project_uuid = UUID(project_id)
@@ -295,6 +282,9 @@ def process_translation_job(project_id: str):
 
         project.status = ProjectStatus.PROCESSING
         project.progress_percent = 0
+        project.progress_stage = job_progress.READING
+        project.progress_detail = job_progress.STAGE_LABELS[job_progress.READING]
+        project.stage_started_at = datetime.utcnow()
         project.translated_segments = 0
         project.failure_reason = None
         project.authored_docx_s3_key = None
@@ -305,7 +295,9 @@ def process_translation_job(project_id: str):
 
         db.commit()
 
-        safe_broadcast(project_id, 0, "PROCESSING")
+        safe_broadcast(project_id, 0, "PROCESSING", {"stage": project.progress_stage, "detail": project.progress_detail})
+        progress = job_progress.ProjectProgress(db, project, safe_broadcast)
+        progress_scope.enter_context(job_progress.bind(progress))
 
 
 
@@ -443,28 +435,20 @@ def process_translation_job(project_id: str):
 
 
             db.commit()
-            progress = int(
-                (
-                    project.translated_segments
-                    / max(project.total_segments, 1)
-                )
-                * 100
-            )
-            project.progress_percent = progress
-            project.last_heartbeat = datetime.utcnow()
-            db.commit()
+            progress(job_progress.TRANSLATING, project.translated_segments / max(project.total_segments, 1))
             logger.info(
                 "TM fast path: %d/%d segments served from memory (%d%% of doc)",
                 tm_hit_count,
                 len(segments),
                 int((tm_hit_count / max(len(segments), 1)) * 100),
             )
-            safe_broadcast(project_id, progress, "PROCESSING")
 
 
 
 
         texts = [] if dtp else miss_texts
+        if texts:
+            progress(job_progress.TRANSLATING, project.translated_segments / max(project.total_segments, 1))
 
         def _translate_resilient(batch_texts, depth=0):
             """Translate a batch with automatic fall-back on count
@@ -564,24 +548,7 @@ def process_translation_job(project_id: str):
 
 
             # The memory only takes the translator's text (editor saves and delivery), never these drafts.
-
-            progress = int(
-                (
-                    project.translated_segments /
-                    max(project.total_segments, 1)
-                ) * 100
-            )
-
-            project.progress_percent = progress
-            project.last_heartbeat = datetime.utcnow()
-
-            db.commit()
-
-            safe_broadcast(
-                project_id,
-                progress,
-                "PROCESSING"
-            )
+            progress(job_progress.TRANSLATING, project.translated_segments / max(project.total_segments, 1))
 
 
 
@@ -614,6 +581,7 @@ def process_translation_job(project_id: str):
 
 
 
+        progress(job_progress.REBUILDING, 0.0)
         output_file = temp_dir / f"translated_{input_file.name}"
 
         try:
@@ -657,6 +625,8 @@ def process_translation_job(project_id: str):
 
 
 
+        if template_job is not None:
+            progress(job_progress.REBUILDING, 0.05, "Filling the saved template")
         used_template = _finish_template_fill(db, project, template_job, temp_dir)
         if dtp:
             # The editable copy is the layout rebuild; scans uploaded as images get one too.
@@ -713,7 +683,12 @@ def process_translation_job(project_id: str):
 
 
 
+        progress(job_progress.FINISHING, 0.0)
+        progress_scope.close()
         project.progress_percent = 100
+        project.progress_stage = None
+        project.progress_detail = None
+        project.stage_started_at = None
         project.status = ProjectStatus.COMPLETED
         if (project.review_status or "DRAFT") == "DRAFT":
             project.review_status = "IN_REVIEW"
@@ -730,6 +705,7 @@ def process_translation_job(project_id: str):
         raise
 
     finally:
+        progress_scope.close()
         if temp_dir:
             shutil.rmtree(
                 temp_dir,

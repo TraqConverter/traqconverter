@@ -31,7 +31,7 @@ import unicodedata
 from pathlib import Path
 from typing import Optional
 
-from app.services import claude_params
+from app.services import claude_params, job_progress
 from app.services.claude_authored_rebuild import is_translator_cert_text
 
 logger = logging.getLogger(__name__)
@@ -1036,6 +1036,12 @@ def _pdf_page_count(pdf_bytes: bytes) -> int:
 
 
 DEFAULT_MAX_TURNS = 6
+# Progress share of the table/form pre-pass; each later turn covers 40% of what is left.
+_PREPASS_SHARE = 0.15
+
+
+def turn_fraction(turn: int) -> float:
+    return _PREPASS_SHARE + (1 - _PREPASS_SHARE) * (1 - 0.6 ** (turn - 1))
 _TURN_MAX_TOKENS = 32000
 
 
@@ -1179,6 +1185,7 @@ def _author_rebuild_docx_multiturn_core(
             reproduce=reproduce,
         )
 
+    job_progress.report(job_progress.REBUILDING, 0.0)
     out_dir = Path(tempfile.mkdtemp(prefix="claude_multiturn_"))
     output_path = str(out_dir / "rebuild.docx")
 
@@ -1211,6 +1218,7 @@ def _author_rebuild_docx_multiturn_core(
         )
 
     source_text = _source_text_for_coverage(pdf_bytes, tables, form_pages)
+    job_progress.report(job_progress.REBUILDING, _PREPASS_SHARE)
 
     image_list_text = (
         _vision_image_list_text
@@ -1288,6 +1296,11 @@ def _author_rebuild_docx_multiturn_core(
 
     try:
         for turn in range(1, max_turns + 1):
+            job_progress.report(
+                job_progress.REBUILDING,
+                turn_fraction(turn),
+                "Rebuilding the layout" if turn == 1 else "Checking the rebuilt layout",
+            )
             logger.info(
                 "Multi-turn rebuild: turn %d/%d (model=%s)",
                 turn, max_turns, chosen_model,
@@ -1548,20 +1561,21 @@ def _author_rebuild_form_page_by_page(
             "cert blocks — the wrapper handles those."
         ).strip()
         try:
-            page_docx = _author_rebuild_docx_multiturn_core(
-                page_pdf,
-                source_lang,
-                target_lang,
-                model=model,
-                max_turns=max_turns,
-                timeout_per_run_seconds=timeout_per_run_seconds,
-                extra_instructions=page_extra,
-                terminology=terminology,
-                instructions=instructions,
-                reproduce=reproduce,
-                _force_doc_type="FORM",
-                _disable_page_by_page=True,
-            )
+            with job_progress.scope((i - 1) / len(pages), i / len(pages), f"Rebuilding page {i} of {len(pages)}"):
+                page_docx = _author_rebuild_docx_multiturn_core(
+                    page_pdf,
+                    source_lang,
+                    target_lang,
+                    model=model,
+                    max_turns=max_turns,
+                    timeout_per_run_seconds=timeout_per_run_seconds,
+                    extra_instructions=page_extra,
+                    terminology=terminology,
+                    instructions=instructions,
+                    reproduce=reproduce,
+                    _force_doc_type="FORM",
+                    _disable_page_by_page=True,
+                )
         except Exception as e:
             raise RuntimeError(
                 f"Form page {i} of {len(pages)} failed to rebuild: {e}"

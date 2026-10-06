@@ -18,6 +18,7 @@ from app.dependencies.tenant import team_ids_for
 from app.models.batch import Batch, BatchTerm
 from app.models.project import ProjectStatus, TranslationProject, is_dtp
 from app.models.user import User
+from app.services import job_progress
 from app.services.learning import capture_template_in_background
 from app.services.project_lifecycle import failure_code
 
@@ -129,7 +130,8 @@ def get_batch(batch_id: UUID, db: Session = Depends(get_db), current_user: User 
             "filename": p.file_name,
             "status": p.status,
             "review_status": p.review_status or "DRAFT",
-            "progress": 100 if p.status == ProjectStatus.COMPLETED else (p.progress_percent or 0),
+            "progress": job_progress.display_percent(p),
+            **job_progress.stage_fields(p),
             "page_count": p.page_count,
             "source_lang": p.source_language,
             "target_lang": p.target_language,
