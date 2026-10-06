@@ -8,6 +8,7 @@ import stripe
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.feature_guard import effective_plan
+from app.dependencies.tenant import can_manage_team
 from app.models.user import User
 from app.models.team import Team
 from app.models.team_member import TeamMember
@@ -41,6 +42,14 @@ def _resolve_user_team(db: Session, user: User):
             db.query(Team).filter(Team.id == membership.team_id).first()
         )
     return None
+
+
+MANAGERS_ONLY = "Only the team owner or an admin can manage the subscription."
+
+
+def _require_manager(db: Session, team: Team, user: User) -> None:
+    if not can_manage_team(db, team, user):
+        raise HTTPException(status_code=403, detail=MANAGERS_ONLY)
 
 
 router = APIRouter(prefix="/subscription", tags=["subscription"])
@@ -112,6 +121,7 @@ def create_checkout_session(
 
     # A second checkout would start a second subscription; plan changes go through the portal.
     if has_active_subscription(db, team):
+        _require_manager(db, team, current_user)
         return JSONResponse(
             status_code=409,
             content={
@@ -170,6 +180,7 @@ def create_portal_session(
     team = _resolve_user_team(db, current_user)
     if not team:
         raise HTTPException(status_code=400, detail="Team not found")
+    _require_manager(db, team, current_user)
 
     customer_id = team_customer_id(db, team)
     if not customer_id:

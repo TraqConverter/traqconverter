@@ -37,6 +37,8 @@ type Wallet = {
   features?: Record<string, boolean>
   // Plan changes, card, invoices and cancelling go through the Stripe portal.
   has_subscription?: boolean
+  // Only the team owner and admins may open the portal or change plan.
+  can_manage_billing?: boolean
 }
 
 type Transaction = {
@@ -170,6 +172,7 @@ export default function BillingPage() {
   const currentPlan = (wallet?.plan_type || "TRIAL").toUpperCase()
   const trialDaysLeft = wallet?.trial_days_left ?? null
   const subscribed = !!wallet?.has_subscription
+  const canManage = wallet?.can_manage_billing ?? true
   // Matches the API: packs need an active paid plan (admins resolve to one).
   const canBuyPacks = isPaidTier(tier)
 
@@ -216,7 +219,7 @@ export default function BillingPage() {
             active={planActive}
             label={`${currentPlan} · ${planActive ? "Active" : onTrial ? "Trial" : "Inactive"}`}
           />
-          {subscribed && (
+          {subscribed && canManage && (
             <button
               type="button"
               onClick={() => openPortal()}
@@ -366,7 +369,9 @@ export default function BillingPage() {
           eyebrow="SUBSCRIPTION"
           title={subscribed ? "Your plan" : "Choose a plan"}
           subtitle={
-            subscribed
+            subscribed && !canManage
+              ? "Ask your team owner or an admin to change the plan."
+              : subscribed
               ? "Change plan, update your card, download invoices or cancel in the billing portal. An upgrade adds the extra pages straight away; a downgrade keeps the pages you already have."
               : "One credit is one page. Cancel anytime. Your wallet updates within seconds of payment."
           }
@@ -386,6 +391,7 @@ export default function BillingPage() {
                 catalog={catalog}
                 isCurrent={tier === p.code}
                 subscribed={subscribed}
+                canManage={canManage}
                 busy={busy === `plan:${p.code}`}
                 disabled={busy !== null}
                 onSubscribe={() =>
@@ -585,6 +591,7 @@ function PlanCard({
   catalog,
   isCurrent,
   subscribed,
+  canManage,
   busy,
   disabled,
   onSubscribe,
@@ -593,13 +600,16 @@ function PlanCard({
   catalog: PlanCatalog
   isCurrent: boolean
   subscribed: boolean
+  canManage: boolean
   busy: boolean
   disabled: boolean
   onSubscribe: () => void
 }) {
   const featured = plan.code === "PRO"
   // Subscribers open the portal from every card, their own plan included; others can't re-buy the current one.
-  const locked = isCurrent && !subscribed
+  const locked = isCurrent && (!subscribed || !canManage)
+  // A plan change goes through the portal, which only the owner and admins can open.
+  const hideAction = subscribed && !canManage && !isCurrent
   const muted = isCurrent
   const label = busy
     ? subscribed
@@ -682,7 +692,7 @@ function PlanCard({
           </li>
         ))}
       </ul>
-      {!plan.available && !isCurrent ? (
+      {hideAction ? null : !plan.available && !isCurrent ? (
         <a
           href={contactHref(catalog, plan)}
           className="w-full py-3 rounded-full text-[14px] font-semibold text-center"
@@ -711,7 +721,7 @@ function PlanCard({
           if (locked || disabled) return
           e.currentTarget.style.background = muted ? "#f3ecdb" : "#0a7870"
         }}
-        title={subscribed ? "Opens the billing portal" : undefined}
+        title={subscribed && !locked ? "Opens the billing portal" : undefined}
       >
         {label}
       </button>

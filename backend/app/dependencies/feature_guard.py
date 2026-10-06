@@ -9,15 +9,12 @@ from app.models.team import Team
 from app.models.team_member import TeamMember
 from app.models.credit import CreditWallet
 from app.dependencies import get_current_user
-from app.core.plan_features import PAID_PLANS, PLAN_FEATURES
+from app.core.plan_features import PAID_PLANS, PLAN_FEATURES, PLANS
+from app.core.roles import STAFF_ROLES, is_staff
 
 logger = logging.getLogger(__name__)
 
-ADMIN_ROLES = ("SUPERUSER", "SUPER_ADMIN", "ADMIN")
-
-
-def _is_admin(user) -> bool:
-    return (getattr(user, "role", None) or "").upper() in ADMIN_ROLES
+_is_admin = is_staff
 
 
 def _resolve_team_id(db: Session, user: User):
@@ -90,7 +87,7 @@ def team_plan(db: Session, team_id) -> str:
         .filter(Team.id == team_id)
         .first()
     )
-    if owner and (owner.role or "").upper() in ADMIN_ROLES:
+    if owner and (owner.role or "").upper() in STAFF_ROLES:
         return "PRO"
     return _wallet_plan(db, team_id)
 
@@ -151,6 +148,29 @@ def require_any_feature(*feature_names: str):
     return _dep
 
 
+FEATURE_LABELS = {
+    "download_translation": "Downloading translations",
+    "team_collaboration": "Team collaboration",
+    "terminology_memory": "Translation memory",
+    "glossaries": "The glossary",
+    "certifications": "Certifications",
+    "template_upload": "Template uploads",
+    "templates": "Templates",
+}
+
+
+def cheapest_plan_with(feature_name: str):
+    """The name of the cheapest paid plan that includes `feature_name`, or None."""
+    return next((p["name"] for p in PLANS if plan_allows(p["code"], feature_name)), None)
+
+
+def upgrade_message(feature_name: str) -> str:
+    label = FEATURE_LABELS.get(feature_name) or feature_name.replace("_", " ").capitalize()
+    plan = cheapest_plan_with(feature_name)
+    upgrade = f"Upgrade to {plan} to unlock it." if plan else "Upgrade your plan to unlock it."
+    return f"{label} isn't available on your current plan. {upgrade}"
+
+
 def require_feature(feature_name: str):
     """FastAPI dependency that 403s if the caller's plan doesn't include
     `feature_name`. Looks up the plan via the wallet so trial expirations
@@ -161,17 +181,11 @@ def require_feature(feature_name: str):
         db: Session = Depends(get_db),
     ):
 
-        if current_user.role in ("ADMIN", "SUPER_ADMIN"):
+        if is_staff(current_user):
             return True
 
         if not plan_allows(effective_plan(db, current_user), feature_name):
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    f"{feature_name.replace('_', ' ').title()} isn't available "
-                    f"on your current plan. Upgrade to Pro to unlock it."
-                ),
-            )
+            raise HTTPException(status_code=403, detail=upgrade_message(feature_name))
         return True
 
     return _dep
