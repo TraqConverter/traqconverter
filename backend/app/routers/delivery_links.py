@@ -327,6 +327,8 @@ def public_delivery_paid(token: str, background_tasks: BackgroundTasks, db: Sess
     if not link.protected:
         raise HTTPException(status_code=404, detail="Link not found", headers=_PUBLIC_HEADERS)
     if delivery_links.is_locked(link) and delivery_links.claim_paid(db, link):
+        delivery_links.notify_creator(db, link, "client_claimed_paid")
+        db.commit()
         background_tasks.add_task(_notify_paid, link.id)
     return JSONResponse(
         content={"paid_claimed": link.paid_claimed_at is not None, "locked": delivery_links.is_locked(link)},

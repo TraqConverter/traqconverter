@@ -61,7 +61,7 @@ from app.services.layout_translator import (
     rebuild_output,
 )
 from app.routers.ws import broadcast_progress
-from app.services import ai_usage, learning
+from app.services import ai_usage, learning, notifications
 from app.services.glossary_service import lang_key, language_name, project_source_language
 from app.services.project_lifecycle import SAME_LANGUAGE_REASON, mark_project_failed
 from app.dependencies.feature_guard import project_has_feature
@@ -715,6 +715,7 @@ def process_translation_job(project_id: str):
         project.status = ProjectStatus.COMPLETED
         if (project.review_status or "DRAFT") == "DRAFT":
             project.review_status = "IN_REVIEW"
+        notifications.translation_done(db, project)
         db.commit()
         safe_broadcast(project_id, 100, "IN_REVIEW")
 

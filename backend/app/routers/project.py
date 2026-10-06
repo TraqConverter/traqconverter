@@ -550,6 +550,20 @@ def _queue_assignment_email(background_tasks: BackgroundTasks, project, assignee
     )
 
 
+def _notify_assignee(db: Session, project, assignee: User, assigner: User) -> None:
+    from app.services import notifications
+
+    who = (assigner.full_name or "").strip() or assigner.email
+    pair = " → ".join(x for x in (project.source_language, project.target_language) if x)
+    pages = f"{project.page_count} page{'s' if project.page_count != 1 else ''}" if project.page_count else ""
+    notifications.notify(
+        db, assignee.id, "assigned",
+        f"{who} assigned you {project.file_name}",
+        ", ".join(x for x in (pair, pages) if x),
+        link=notifications.editor_link(project.id), project_id=project.id, team_id=project.team_id,
+    )
+
+
 @router.patch("/{project_id}/assign")
 def assign_project(
     project_id: UUID,
@@ -609,10 +623,14 @@ def assign_project(
             )
         project.assignee_id = target.id
 
+    newly_assigned = target is not None and target.id != previous_assignee_id and target.id != current_user.id
+    if newly_assigned:
+        _notify_assignee(db, project, target, current_user)
+
     db.commit()
     db.refresh(project)
 
-    if target is not None and target.id != previous_assignee_id and target.id != current_user.id:
+    if newly_assigned:
         _queue_assignment_email(background_tasks, project, target, current_user)
 
     return {
