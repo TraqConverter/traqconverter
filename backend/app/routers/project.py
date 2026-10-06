@@ -163,6 +163,27 @@ def list_translation_models():
 
 
 
+def _template_uuid(value: Optional[str]) -> Optional[UUID]:
+    if not value:
+        return None
+    try:
+        return UUID(value)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid certification_template_id")
+
+
+def _discard_stored(key: Optional[str]) -> None:
+    """Delete an upload no project ended up owning, so a refused document isn't kept."""
+    if not key:
+        return
+    from app.services import s3_service
+
+    try:
+        s3_service.delete_objects_from_s3([key])
+    except Exception:
+        logger.exception("Couldn't delete orphaned upload %s", key)
+
+
 @router.post("/upload")
 async def upload_project(
     file: UploadFile = File(...),
@@ -199,8 +220,10 @@ async def upload_project(
         model, ai_instructions = AUTHORED_ENGINE, None
         use_tm = apply_glossary = request_certification = False
         certification_template_id = None
+    template_uuid = _template_uuid(certification_template_id)
 
     file_path = None
+    stored_key = None
     project = None
 
     try:
@@ -264,23 +287,18 @@ async def upload_project(
 
         file_path, _ = save_file_locally(file, str(team.id))
 
+        # Rejected files never reach storage.
+        page_count = get_page_count(file_path)
+        credits_required = max(1, page_count)
 
-
-
-        s3_key = upload_file_to_s3(Path(file_path))
+        s3_key = stored_key = upload_file_to_s3(Path(file_path))
         logger.info(f"S3 upload successful: {s3_key}")
 
 
 
 
-        page_count = get_page_count(file_path)
-        credits_required = max(1, page_count)
-
-
-
-
         if not user_has_feature(db, current_user, "certifications"):
-            request_certification, certification_template_id = False, None
+            request_certification, template_uuid = False, None
 
         project = TranslationProject(
             user_id=current_user.id,
@@ -301,11 +319,7 @@ async def upload_project(
             use_tm=use_tm,
             apply_glossary=apply_glossary,
             add_certification=request_certification,
-            certification_template_id=(
-                UUID(certification_template_id)
-                if certification_template_id
-                else None
-            ),
+            certification_template_id=template_uuid,
 
             status=ProjectStatus.PENDING,
             progress_percent=0,
@@ -339,6 +353,7 @@ async def upload_project(
 
         enqueue_job(db, project.id, s3_key)
         db.commit()
+        stored_key = None
         db.refresh(project)
 
         project_id = str(project.id)
@@ -350,6 +365,7 @@ async def upload_project(
         db.rollback()
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
+        _discard_stored(stored_key)
         raise
 
     except Exception as e:
@@ -361,6 +377,7 @@ async def upload_project(
 
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
+        _discard_stored(stored_key)
 
         raise HTTPException(status_code=500, detail="Upload failed; nothing was charged")
 
@@ -414,7 +431,11 @@ def list_projects(
     elif assignee == "unassigned":
         base = base.filter(TranslationProject.assignee_id.is_(None))
     elif assignee:
-        base = base.filter(TranslationProject.assignee_id == assignee)
+        try:
+            assignee_id = UUID(assignee)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="assignee must be me, unassigned or a user id")
+        base = base.filter(TranslationProject.assignee_id == assignee_id)
 
     projects = base.limit(50).all()
 
@@ -604,7 +625,10 @@ def assign_project(
         project.assignee_id = None
     else:
 
-        target = db.query(User).filter(User.id == data.assignee_id).first()
+        try:
+            target = db.query(User).filter(User.id == UUID(data.assignee_id)).first()
+        except ValueError:
+            target = None
         if not target:
             raise HTTPException(status_code=404, detail="Assignee not found")
 
