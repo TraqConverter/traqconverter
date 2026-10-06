@@ -84,7 +84,7 @@ export default function LoginPage() {
     }
     try {
       setLoading(true)
-      const res = await api.post("/auth/login", { email, password })
+      const res = await api.post("/auth/login", { email: email.trim(), password })
       const { access_token } = res.data
       if (!access_token) throw new Error("No token returned")
       setToken(access_token, remember)

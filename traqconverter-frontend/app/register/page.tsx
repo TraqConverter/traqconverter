@@ -92,7 +92,7 @@ function RegisterForm() {
       setLoading(true)
       const res = await api.post("/auth/register", {
         full_name: fullName,
-        email,
+        email: email.trim(),
         password,
         invite_token: inviteToken || undefined,
         accept_terms: acceptTerms,

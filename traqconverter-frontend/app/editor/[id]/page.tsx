@@ -486,11 +486,8 @@ export default function EditorPage() {
       setProject((p) => (p ? { ...p, file_name: newName } : p))
       setRenameOpen(false)
     } catch (err: any) {
-      console.error("RENAME ERROR:", err)
-      alert(
-        err?.response?.data?.detail ||
-          "Couldn't rename the project — please try again."
-      )
+      setRenameOpen(false)
+      setError(apiErrorDetail(err, "Couldn't rename the project. Please try again."))
     } finally {
       setRenameBusy(false)
     }
@@ -502,11 +499,8 @@ export default function EditorPage() {
       await api.delete(`/projects/${id}`)
       router.replace("/jobs")
     } catch (err: any) {
-      console.error("DELETE ERROR:", err)
-      alert(
-        err?.response?.data?.detail ||
-          "Couldn't delete the project — please try again."
-      )
+      setDeleteOpen(false)
+      setError(apiErrorDetail(err, "Couldn't delete the project. Please try again."))
       setDeleteBusy(false)
     }
   }
@@ -776,16 +770,16 @@ export default function EditorPage() {
   return (
     <div className="max-w-[1400px] mx-auto pb-12" onClick={() => setShowStatusMenu(false)}>
       {}
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex items-start gap-6">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+        <div className="flex items-start gap-3 sm:gap-6 min-w-0">
           <button
             onClick={() => router.push("/jobs")}
-            className="text-sm mt-2 hover:underline"
+            className="text-sm mt-2 hover:underline shrink-0"
             style={{ color: "#0a7870" }}
           >
             ← Projects
           </button>
-          <div>
+          <div className="min-w-0">
             <div className="text-sm" style={{ color: "#8a8270" }}>
               {isDtp ? (
                 `${languageName(project.target_language)} · editable copy`
@@ -801,7 +795,7 @@ export default function EditorPage() {
             </div>
             <div className="flex items-center gap-2">
               <h1
-                className="text-[30px] font-semibold tracking-tight"
+                className="text-[30px] font-semibold tracking-tight min-w-0 [overflow-wrap:anywhere]"
                 style={{ color: "#1f2a2e" }}
               >
                 {project.file_name}
@@ -1164,7 +1158,7 @@ export default function EditorPage() {
             </div>
 
             <div
-              className="grid"
+              className="grid max-md:grid-cols-1! max-md:h-auto! max-md:auto-rows-[80vh]"
               style={{
                 gridTemplateColumns: chatOpen
                   ? "minmax(0, 0.75fr) minmax(0, 1.6fr)"

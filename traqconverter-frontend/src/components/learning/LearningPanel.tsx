@@ -44,6 +44,7 @@ export default function LearningPanel({ projectId }: { projectId: string }) {
   const [data, setData] = useState<Learning | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
   const templates = useFeature("templates")
   const terms = useFeature("glossaries")
   const ready = templates !== "loading" && terms !== "loading"
@@ -53,8 +54,10 @@ export default function LearningPanel({ projectId }: { projectId: string }) {
     try {
       const res = await api.get(`/projects/${projectId}/learning`)
       setData(res.data)
+      setLoadFailed(false)
     } catch {
-      // Polling keeps the last good state; a transient failure isn't worth a banner.
+      // Polling keeps the last good state; only a panel that never loaded says so.
+      setLoadFailed(true)
     }
   }, [projectId])
 
@@ -117,7 +120,17 @@ export default function LearningPanel({ projectId }: { projectId: string }) {
     )
   }
 
-  if (!data) return null
+  if (!data) {
+    if (!loadFailed) return null
+    return (
+      <div
+        className="rounded-2xl p-4 text-xs"
+        style={{ background: "#ffffff", border: "1px solid #e7ddc5", color: "#6b6558" }}
+      >
+        Learning details couldn&apos;t be loaded. They&apos;ll appear here once the connection is back.
+      </div>
+    )
+  }
 
   const profile = data.doc_profile || {}
   const docLine = [

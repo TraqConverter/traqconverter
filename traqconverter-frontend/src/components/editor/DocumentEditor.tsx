@@ -1838,7 +1838,7 @@ export default function DocumentEditor({
       {chatOpen && (
         <aside
           aria-label="AI assistant"
-          className="rounded-2xl overflow-hidden flex flex-col shrink-0 tq-pop"
+          className="rounded-2xl overflow-hidden flex flex-col shrink-0 tq-pop max-md:fixed max-md:inset-x-3 max-md:top-20 max-md:bottom-3 max-md:z-50 max-md:w-auto! max-md:shadow-xl"
           style={{ width: 360, background: "#ffffff", border: "1px solid #e7ddc5", minHeight: 0 }}
         >
           <div

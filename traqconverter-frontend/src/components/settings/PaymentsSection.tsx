@@ -50,6 +50,7 @@ function StripeCard({ data, onChange }: { data: Payments | null; onChange: (next
     } catch (err) {
       tab?.close()
       setError(apiErrorDetail(err, "Stripe isn't reachable right now. Try again in a minute."))
+      setBusy(null)
     } finally {
       if (action === "dashboard") setBusy(null)
     }
@@ -197,7 +198,10 @@ export default function PaymentsSection() {
           requestAnimationFrame(() => document.getElementById("payments")?.scrollIntoView({ behavior: "smooth" }))
         }
       })
-      .catch(() => setData(null))
+      .catch((err) => {
+        setData(null)
+        setError(apiErrorDetail(err, "Payment settings couldn't be loaded. Refresh the page to try again."))
+      })
   }, [])
 
   const handle = previewHandle(value)
