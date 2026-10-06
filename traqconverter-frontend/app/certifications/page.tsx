@@ -9,7 +9,7 @@ import TemplateCheck from "@/components/certifications/TemplateCheck"
 type Cert = {
   id: string
   file_name: string
-  kind: string
+  kind?: string
   notes: string | null
   file_hash: string
   size_bytes: number
@@ -21,34 +21,16 @@ type Cert = {
   is_template?: boolean
 }
 
-type KindFilter = "all" | "AFFIDAVIT" | "ISO_17100" | "SWORN_DECLARATION" | "OTHER"
+type FileFilter = "all" | "templates" | "other"
 
-const KINDS: { value: Exclude<KindFilter, "all">; label: string }[] = [
-  { value: "AFFIDAVIT", label: "Signed affidavit" },
-  { value: "ISO_17100", label: "ISO 17100 certificate" },
-  { value: "SWORN_DECLARATION", label: "Sworn declaration" },
-  { value: "OTHER", label: "Other supporting doc" },
+const FILTERS: { value: FileFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "templates", label: "Templates" },
+  { value: "other", label: "Other files" },
 ]
 
-const KIND_LABEL: Record<string, string> = {
-  AFFIDAVIT: "Affidavit",
-  ISO_17100: "ISO 17100",
-  SWORN_DECLARATION: "Sworn declaration",
-  OTHER: "Other",
-}
-
-const KIND_BG: Record<string, string> = {
-  AFFIDAVIT: "#cfe6e2",
-  ISO_17100: "#d8ead6",
-  SWORN_DECLARATION: "#f6e3b8",
-  OTHER: "#f3ecdb",
-}
-
-const KIND_FG: Record<string, string> = {
-  AFFIDAVIT: "#0a5e58",
-  ISO_17100: "#2d5a24",
-  SWORN_DECLARATION: "#7a5a10",
-  OTHER: "#6b6558",
+function isTemplate(c: Cert) {
+  return c.is_template ?? c.file_name.toLowerCase().endsWith(".docx")
 }
 
 const ALLOWED_EXT = [".pdf", ".docx", ".jpg", ".jpeg", ".png"]
@@ -85,12 +67,11 @@ export default function CertificationsPage() {
   const [error, setError] = useState<string | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  const [kindFilter, setKindFilter] = useState<KindFilter>("all")
+  const [fileFilter, setFileFilter] = useState<FileFilter>("all")
   const [query, setQuery] = useState("")
 
   const [showUpload, setShowUpload] = useState(false)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
-  const [uploadKind, setUploadKind] = useState<string>("AFFIDAVIT")
   const [uploadNotes, setUploadNotes] = useState("")
   const [dragOver, setDragOver] = useState(false)
   const [gated, setGated] = useState(false)
@@ -125,7 +106,6 @@ export default function CertificationsPage() {
 
   const resetUploadForm = () => {
     setPendingFile(null)
-    setUploadKind("AFFIDAVIT")
     setUploadNotes("")
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
@@ -159,7 +139,6 @@ export default function CertificationsPage() {
       setError(null)
       const fd = new FormData()
       fd.append("file", pendingFile)
-      fd.append("kind", uploadKind)
       if (uploadNotes.trim()) fd.append("notes", uploadNotes.trim())
       const res = await api.post<Cert>("/certifications/upload", fd, {
         headers: { "Content-Type": "multipart/form-data" },
@@ -242,17 +221,13 @@ export default function CertificationsPage() {
   }
 
   const counts = useMemo(() => {
-    const c: Record<string, number> = { all: items.length }
-    for (const k of KINDS) c[k.value] = 0
-    for (const it of items) {
-      c[it.kind] = (c[it.kind] || 0) + 1
-    }
-    return c
+    const templates = items.filter(isTemplate).length
+    return { all: items.length, templates, other: items.length - templates }
   }, [items])
 
   const visible = useMemo(() => {
     let xs = items
-    if (kindFilter !== "all") xs = xs.filter((x) => x.kind === kindFilter)
+    if (fileFilter !== "all") xs = xs.filter((x) => isTemplate(x) === (fileFilter === "templates"))
     if (query.trim()) {
       const q = query.toLowerCase()
       xs = xs.filter(
@@ -263,7 +238,7 @@ export default function CertificationsPage() {
       )
     }
     return xs
-  }, [items, kindFilter, query])
+  }, [items, fileFilter, query])
 
   const checkCert = items.find((x) => x.id === checkId) || null
 
@@ -271,7 +246,7 @@ export default function CertificationsPage() {
     return (
       <ProPaywall
         feature="Certifications"
-        description="Archive signed affidavits, ISO 17100 certificates and sworn declarations alongside their SHA-256 hashes for tamper-evident delivery. Upgrade to Pro to start your library."
+        description="Upload your Word certification with merge fields and it's filled in and attached to every delivery. Each file is stored with a tamper-evident SHA-256 hash. Upgrade to Pro to start your library."
       />
     )
   }
@@ -301,8 +276,9 @@ export default function CertificationsPage() {
             Certifications library
           </h1>
           <p className="text-sm mt-1" style={{ color: "#8a8270" }}>
-            Signed affidavits, ISO 17100 certificates and sworn declarations —
-            archived here with tamper-evident SHA-256 hashes.
+            Your certification templates and supporting files. Upload your Word
+            certification with merge fields and it&apos;s filled in and attached to
+            every delivery. Each file is stored with a tamper-evident SHA-256 hash.
           </p>
         </div>
 
@@ -432,32 +408,7 @@ export default function CertificationsPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-            <div>
-              <div
-                className="text-[11px] font-semibold tracking-[0.14em] mb-2"
-                style={{ color: "#9a9178" }}
-              >
-                DOCUMENT TYPE
-              </div>
-              <div
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl"
-                style={{ background: "#faf5ee", border: "1px solid #e7ddc5" }}
-              >
-                <select
-                  value={uploadKind}
-                  onChange={(e) => setUploadKind(e.target.value)}
-                  className="bg-transparent outline-none text-sm w-full"
-                  style={{ color: "#1f2a2e" }}
-                >
-                  {KINDS.map((k) => (
-                    <option key={k.value} value={k.value}>
-                      {k.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
+          <div className="mb-3">
             <div>
               <div
                 className="text-[11px] font-semibold tracking-[0.14em] mb-2"
@@ -581,9 +532,9 @@ export default function CertificationsPage() {
             className="text-sm max-w-md mb-5 leading-relaxed"
             style={{ color: "#8a8270" }}
           >
-            Drop a signed affidavit, ISO 17100 certificate or sworn declaration
-            here. Each upload is hashed with SHA-256 so you can verify
-            authenticity later.
+            Drop your Word certification template or a supporting file here.
+            Each upload is hashed with SHA-256 so you can verify authenticity
+            later.
           </p>
           <button
             type="button"
@@ -604,19 +555,13 @@ export default function CertificationsPage() {
       {}
       {items.length > 0 && (
         <div className="flex items-center gap-2 flex-wrap">
-          <KindPill
-            label="All"
-            count={counts.all || 0}
-            active={kindFilter === "all"}
-            onClick={() => setKindFilter("all")}
-          />
-          {KINDS.map((k) => (
-            <KindPill
-              key={k.value}
-              label={k.label}
-              count={counts[k.value] || 0}
-              active={kindFilter === k.value}
-              onClick={() => setKindFilter(k.value)}
+          {FILTERS.map((f) => (
+            <FilterPill
+              key={f.value}
+              label={f.label}
+              count={counts[f.value]}
+              active={fileFilter === f.value}
+              onClick={() => setFileFilter(f.value)}
             />
           ))}
         </div>
@@ -629,17 +574,14 @@ export default function CertificationsPage() {
           style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
         >
           <div
-            className="grid items-center text-[11px] font-semibold tracking-[0.14em] px-5 py-3"
+            className="hidden sm:grid sm:grid-cols-[minmax(260px,2fr)_1.4fr_0.8fr_1fr_190px] items-center text-[11px] font-semibold tracking-[0.14em] px-5 py-3"
             style={{
-              gridTemplateColumns:
-                "minmax(260px,2fr) 1fr 1.4fr 0.8fr 1fr 190px",
               background: "#faf5ee",
               borderBottom: "1px solid #f1e8d1",
               color: "#9a9178",
             }}
           >
             <div>DOCUMENT</div>
-            <div>TYPE</div>
             <div>SHA-256</div>
             <div className="text-right">SIZE</div>
             <div className="text-right">UPLOADED</div>
@@ -664,15 +606,13 @@ export default function CertificationsPage() {
             visible.map((c) => (
               <div
                 key={c.id}
-                className="grid items-center px-5 py-4 text-sm group"
+                className="grid grid-cols-[auto_1fr_auto] sm:grid-cols-[minmax(260px,2fr)_1.4fr_0.8fr_1fr_190px] gap-x-3 gap-y-2 sm:gap-x-0 items-center px-5 py-4 text-sm group"
                 style={{
-                  gridTemplateColumns:
-                    "minmax(260px,2fr) 1fr 1.4fr 0.8fr 1fr 190px",
                   borderBottom: "1px solid #f4ecd6",
                   color: "#1f2a2e",
                 }}
               >
-                <div className="flex items-center gap-3 min-w-0">
+                <div className="col-span-3 sm:col-span-1 flex items-center gap-3 min-w-0 sm:pr-3">
                   <div
                     className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
                     style={{ background: "#f3ecdb", color: "#6b6558" }}
@@ -701,49 +641,44 @@ export default function CertificationsPage() {
                       >
                         {c.file_name}
                       </div>
-                      {c.is_default && (
+                    </div>
+                    <div className="flex items-center gap-2 min-w-0 mt-0.5">
+                      {isTemplate(c) && (
                         <span
                           className="shrink-0 text-[10px] font-semibold tracking-[0.06em] px-2 py-0.5 rounded-full"
-                          style={{ background: "#cfe6e2", color: "#0a5e58" }}
+                          style={
+                            c.is_default
+                              ? { background: "#cfe6e2", color: "#0a5e58" }
+                              : { background: "#f3ecdb", color: "#6b6558" }
+                          }
                         >
-                          DEFAULT
+                          {c.is_default ? "DEFAULT TEMPLATE" : "TEMPLATE"}
                         </span>
                       )}
-                    </div>
-                    <div
-                      className="text-xs truncate"
-                      style={{ color: "#8a8270" }}
-                    >
-                      {c.notes ? c.notes : c.uploader_email || "—"}
+                      <div
+                        className="text-xs truncate"
+                        style={{ color: "#8a8270" }}
+                      >
+                        {c.notes ? c.notes : c.uploader_email || "—"}
+                      </div>
                     </div>
                   </div>
                 </div>
-                <div>
-                  <span
-                    className="inline-flex items-center text-[11px] font-semibold tracking-[0.04em] px-2.5 py-1 rounded-full"
-                    style={{
-                      background: KIND_BG[c.kind] || "#f3ecdb",
-                      color: KIND_FG[c.kind] || "#6b6558",
-                    }}
-                  >
-                    {KIND_LABEL[c.kind] || c.kind}
-                  </span>
-                </div>
                 <div
-                  className="font-mono text-[11px] truncate"
+                  className="hidden sm:block font-mono text-[11px] truncate"
                   style={{ color: "#8a8270" }}
                   title={c.file_hash}
                 >
                   {c.file_hash.slice(0, 16)}…{c.file_hash.slice(-8)}
                 </div>
                 <div
-                  className="text-right tabular-nums"
+                  className="sm:text-right tabular-nums"
                   style={{ color: "#4a4638" }}
                 >
                   {formatBytes(c.size_bytes)}
                 </div>
                 <div
-                  className="text-right text-sm"
+                  className="sm:text-right text-sm"
                   style={{ color: "#6b6558" }}
                   title={c.uploaded_at || ""}
                 >
@@ -785,7 +720,7 @@ export default function CertificationsPage() {
                     disabled={busy === `dl:${c.id}`}
                     aria-label="Download"
                     title="Download"
-                    className="opacity-0 group-hover:opacity-100 transition p-1.5 rounded-full"
+                    className="sm:opacity-0 sm:group-hover:opacity-100 transition p-1.5 rounded-full"
                     style={{ color: "#0a7870", background: "transparent" }}
                     onMouseEnter={(e) =>
                       (e.currentTarget.style.background = "#e7f1ef")
@@ -815,7 +750,7 @@ export default function CertificationsPage() {
                     disabled={busy === `del:${c.id}`}
                     aria-label="Delete"
                     title="Delete"
-                    className="opacity-0 group-hover:opacity-100 transition p-1.5 rounded-full"
+                    className="sm:opacity-0 sm:group-hover:opacity-100 transition p-1.5 rounded-full"
                     style={{ color: "#b14a3a", background: "transparent" }}
                     onMouseEnter={(e) =>
                       (e.currentTarget.style.background = "#f9efe9")
@@ -971,7 +906,7 @@ function TemplateHelp() {
   )
 }
 
-function KindPill({
+function FilterPill({
   label,
   count,
   active,

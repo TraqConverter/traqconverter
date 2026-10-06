@@ -28,7 +28,8 @@ router = APIRouter(
 )
 
 
-ALLOWED_KINDS = {"AFFIDAVIT", "ISO_17100", "SWORN_DECLARATION", "OTHER"}
+# Old clients sent a user-chosen kind; still accepted, never required.
+LEGACY_KINDS = {"AFFIDAVIT", "ISO_17100", "SWORN_DECLARATION", "OTHER", "TEMPLATE"}
 BASE_DIR = "uploads/certifications"
 
 
@@ -50,6 +51,17 @@ def _resolve_team(db: Session, user: User) -> Team:
     raise HTTPException(status_code=404, detail="No team found")
 
 
+def _is_docx_name(name: Optional[str]) -> bool:
+    return (name or "").lower().endswith(".docx")
+
+
+def _kind_for(file_name: Optional[str], kind: Optional[str]) -> str:
+    given = (kind or "").strip().upper()
+    if given in LEGACY_KINDS:
+        return given
+    return "TEMPLATE" if _is_docx_name(file_name) else "OTHER"
+
+
 def _serialize(c: Certification, uploader_email: Optional[str] = None) -> dict:
     return {
         "id": str(c.id),
@@ -63,7 +75,7 @@ def _serialize(c: Certification, uploader_email: Optional[str] = None) -> dict:
         "uploaded_by": str(c.uploaded_by) if c.uploaded_by else None,
         "uploader_email": uploader_email,
         "is_default": bool(c.is_default),
-        "is_template": (c.file_name or "").lower().endswith(".docx"),
+        "is_template": _is_docx_name(c.file_name),
     }
 
 
@@ -107,12 +119,12 @@ def list_certifications(
 @router.post("/upload")
 async def upload_certification(
     file: UploadFile = File(...),
-    kind: str = Form("OTHER"),
+    kind: Optional[str] = Form(None),
     notes: Optional[str] = Form(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Upload a certification template / signed affidavit / ISO 17100 cert.
+    """Upload a Word certification template or a supporting file.
 
     Storage strategy: upload to Supabase Storage (S3-compatible) so
     the file survives Railway redeploys. We store the storage KEY in
@@ -129,10 +141,6 @@ async def upload_certification(
 
     validate_file_extension(file.filename)
     validate_file_size(file)
-
-    kind_upper = kind.strip().upper()
-    if kind_upper not in ALLOWED_KINDS:
-        raise HTTPException(status_code=400, detail="Invalid certification kind")
 
     team = _resolve_team(db, current_user)
 
@@ -176,7 +184,7 @@ async def upload_certification(
         uploaded_by=current_user.id,
         file_name=file.filename,
         file_path=s3_key,
-        kind=kind_upper,
+        kind=_kind_for(file.filename, kind),
         notes=(notes or "").strip() or None,
         file_hash=file_hash,
         size_bytes=len(raw),
@@ -216,13 +224,15 @@ def certification_download_url(
     current_user: User = Depends(get_current_user),
 ):
     """A signed storage link the browser navigates to; an XHR can't follow the storage redirect (CORS)."""
-    from app.services.s3_service import generate_presigned_download_url
+    from app.services.s3_service import generate_presigned_download_url, object_exists
 
     _, cert = _team_cert(db, current_user, cert_id)
     if not cert.file_path:
         raise HTTPException(status_code=410, detail="File missing")
     if os.path.isfile(cert.file_path):
         return {"url": None, "file_name": cert.file_name}
+    if not object_exists(cert.file_path):
+        raise HTTPException(status_code=404, detail="This file is no longer available")
     try:
         url = generate_presigned_download_url(cert.file_path, filename=cert.file_name)
     except Exception:
