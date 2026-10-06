@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Optional
 
 import stripe
@@ -68,20 +69,26 @@ def ensure_account(db: Session, team, user, country: Optional[str] = None) -> st
     """The team's connected account id, creating the account the first time."""
     if team.stripe_account_id:
         return team.stripe_account_id
+    # A double click must not open two accounts: hold the team row while creating, then re-check.
+    from app.models.team import Team
+
+    locked = db.query(Team).filter(Team.id == team.id).with_for_update().one()
+    if locked.stripe_account_id:
+        return locked.stripe_account_id
     account = stripe.Account.create(
         country=(country or settings.STRIPE_CONNECT_DEFAULT_COUNTRY).upper(),
         email=user.email,
         controller=CONTROLLER,
-        capabilities={"card_payments": {"requested": True}},
+        capabilities={"card_payments": {"requested": True}, "transfers": {"requested": True}},
         business_profile={"product_description": "Translation services"},
         metadata={"team_id": str(team.id)},
-        # A double click must not open two accounts.
-        idempotency_key=f"connect-account-{team.id}",
+        # Unique per attempt: Stripe replays a reused key's first answer for 24h, errors included.
+        idempotency_key=f"connect-account-{team.id}-{uuid.uuid4().hex}",
     )
-    team.stripe_account_id = account["id"]
-    team.stripe_account_status = status_of(account)
+    locked.stripe_account_id = account["id"]
+    locked.stripe_account_status = status_of(account)
     db.commit()
-    return team.stripe_account_id
+    return locked.stripe_account_id
 
 
 def onboarding_url(account_id: str) -> str:
