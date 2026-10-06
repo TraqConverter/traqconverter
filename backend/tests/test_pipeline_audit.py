@@ -82,6 +82,61 @@ def test_unfinished_projects_do_not_export(client, make_user, make_project, stat
     assert r.status_code == 409
 
 
+def _with_cert_page(data: bytes) -> bytes:
+    from datetime import date
+
+    from app.services import docx_certification
+
+    content = docx_certification.CertContent(
+        lang="en", values={"translator": "Anna Verdi", "document": "Old client's certificate"}, day=date(2026, 1, 5)
+    )
+    return docx_certification.add_certification(data, content)
+
+
+def test_template_capture_and_fill_leave_the_old_certification_page_out(db, storage, make_user, make_project, monkeypatch):
+    import io
+    import json
+
+    from docx import Document
+
+    from app.models.learning import DocumentTemplate
+    from app.services import claude_params, docx_blocks, docx_certification, learning, template_fill
+    from tests.test_learning import KEY, PROFILE, _docx
+
+    owner = make_user()
+    project = make_project(owner)
+    key = "uploads/authored.docx"
+    storage["objects"][key] = _with_cert_page(_docx("CERTIFICATE OF RESIDENCE", "Mr. BIANCHI LUCA"))
+    project.authored_docx_s3_key = key
+    project.doc_key, project.doc_profile, project.target_language = KEY, PROFILE, "English"
+    db.commit()
+
+    learning.capture_template(db, project, owner["user"])
+    stored = storage["objects"][db.query(DocumentTemplate).one().s3_key]
+    assert not docx_certification.has_certification(stored)
+    assert "Anna Verdi" not in " ".join(p.text for p in Document(io.BytesIO(stored)).paragraphs)
+
+    # A template saved before this fix still has the page; the fill drops it before the model sees it.
+    old_template = docx_blocks.tag_blocks(_with_cert_page(_docx("CERTIFICATE OF RESIDENCE", "Mr. BIANCHI LUCA")))
+    seen = []
+
+    def fake(client, **kw):
+        seen.append(kw)
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text=json.dumps({"operations": [], "notes": ""}))],
+            stop_reason="end_turn", usage=None, model=kw["model"],
+        )
+
+    monkeypatch.setattr(claude_params, "create_message", fake)
+    monkeypatch.setattr(claude_params, "api_key", lambda: "k")
+    out, _ = template_fill.fill_from_template(
+        source_data=b"%PDF", file_name="new.pdf", source_text="Sig. BIANCHI LUCA", template_docx=old_template,
+        template_source="Sig. BIANCHI LUCA", source_lang="Italian", target_lang="English",
+    )
+    assert not docx_certification.has_certification(out)
+    assert "Anna Verdi" not in seen[0]["messages"][0]["content"][1]["text"]
+
+
 def _word_file(path):
     from docx import Document
     from docx.oxml import parse_xml

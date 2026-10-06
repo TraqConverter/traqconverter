@@ -311,6 +311,13 @@ def store_template(
     return template, replaced
 
 
+def without_certification(data: bytes) -> bytes:
+    """A template is the translation only; the page certifying the old document mustn't carry over to new ones."""
+    from app.services import docx_certification
+
+    return docx_certification.remove_certification(data) if docx_certification.has_certification(data) else data
+
+
 def capture_template(db: Session, project: TranslationProject, user) -> Optional[DocumentTemplate]:
     """Store the project's current document as the team's template for its kind of document and target language."""
     if not project.doc_key or project.status != ProjectStatus.COMPLETED or is_dtp(project):
@@ -319,6 +326,7 @@ def capture_template(db: Session, project: TranslationProject, user) -> Optional
     from app.services import document_editor
 
     data, version = document_editor.current_document(db, project, user, _initial_builder(db, project, user))
+    data = without_certification(data)
     template, _ = store_template(
         db, project.team_id, project.doc_key, project.target_language, project.doc_profile, data,
         source_text_of(db, project), project_id=project.id, version=version,
