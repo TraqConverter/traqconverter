@@ -263,6 +263,7 @@ from app.routers import review as review_router
 from app.routers import saved_instructions as saved_instructions_router
 from app.routers import delivery_links as delivery_links_router
 from app.routers import stripe_connect as stripe_connect_router
+from app.routers import notifications as notifications_router
 
 app.include_router(settings_router.router)
 app.include_router(stripe.router)
@@ -288,6 +289,7 @@ app.include_router(saved_instructions_router.router)
 app.include_router(delivery_links_router.router)
 app.include_router(delivery_links_router.public_router)
 app.include_router(stripe_connect_router.router)
+app.include_router(notifications_router.router)
 
 logger.info("All routers registered successfully")
 
@@ -304,6 +306,7 @@ from app.services.watchdog import recover_stalled_jobs
 from app.services.learning import process_pending as process_pending_learning
 from app.services.template_upload import purge_expired as purge_template_uploads
 from app.services.delivery_links import purge_expired_files as purge_delivery_files
+from app.services.notifications import purge_old_read as purge_old_notifications
 
 WATCHDOG_INTERVAL_SECONDS = 60
 
@@ -327,6 +330,10 @@ async def _watchdog_loop():
             await asyncio.to_thread(purge_delivery_files)
         except Exception:
             logger.exception("Delivery link cleanup errored")
+        try:
+            await asyncio.to_thread(purge_old_notifications)
+        except Exception:
+            logger.exception("Notification cleanup errored")
         await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)
 
 
