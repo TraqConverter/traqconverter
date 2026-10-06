@@ -93,7 +93,7 @@ export default function AccountSettingsPage() {
       setStamp(res.data)
       setStampFile(null)
       setStampPreview(null)
-      flashSuccess("Stamp uploaded — it'll appear on every translated page.")
+      flashSuccess("Stamp uploaded. New translations get it on every page.")
     } catch (err: any) {
       setError(err?.response?.data?.detail || "Couldn't upload that stamp.")
     } finally {
@@ -459,7 +459,7 @@ export default function AccountSettingsPage() {
         <SectionHeader
           eyebrow="BRANDING"
           title="Company logo / header"
-          subtitle="Shown at the top of the certification page on every exported translation. PNG or JPG, 2MB max."
+          subtitle="Placed at the top of the certification page by default. In the editor you can move, resize or remove it like any picture. PNG or JPG, 2MB max."
         />
 
         <div className="flex flex-wrap items-start gap-6">
@@ -577,7 +577,7 @@ export default function AccountSettingsPage() {
         <SectionHeader
           eyebrow="BRANDING"
           title="Company stamp"
-          subtitle="Overlaid at the bottom of every translated page in the rebuild (never on the embedded original). Pick alignment that suits your translation's layout."
+          subtitle="Added at the bottom of every page of new translations by default. In the editor you can move, resize or remove it before you export (Image → Page stamp)."
         />
 
         <div className="flex flex-wrap items-start gap-6">
@@ -687,7 +687,7 @@ export default function AccountSettingsPage() {
                   className="text-[11px] font-semibold tracking-[0.14em] mb-2"
                   style={{ color: "#9a9178" }}
                 >
-                  ALIGNMENT ON TRANSLATED PAGE
+                  DEFAULT ALIGNMENT
                 </div>
                 <div
                   className="inline-flex p-1 rounded-full"
@@ -729,10 +729,9 @@ export default function AccountSettingsPage() {
             )}
 
             <div className="text-xs mt-3" style={{ color: "#8a8270" }}>
-              Recommended: 300×300 px transparent PNG. The stamp is
-              scaled to ~35mm wide and placed at the bottom of every
-              translated rebuild page. It never appears on the
-              embedded original document pages.
+              Recommended: 300×300 px transparent PNG. It starts 30 mm
+              wide with the alignment above; change both per document
+              in the editor. What the editor shows is what gets exported.
             </div>
           </div>
         </div>
