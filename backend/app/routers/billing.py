@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.feature_guard import effective_plan
+from app.dependencies.tenant import can_manage_team
 from app.services.stripe_billing import has_active_subscription
 
 from app.models.credit import CreditWallet, CreditTransaction
@@ -122,6 +123,8 @@ def get_wallet(
         "trial_days_left": trial_days_left,
         # True: plan changes go through the Stripe portal, not a new checkout.
         "has_subscription": has_active_subscription(db, team),
+        # The Stripe portal and plan changes are for the owner and team admins.
+        "can_manage_billing": can_manage_team(db, team, current_user),
     }
 
 

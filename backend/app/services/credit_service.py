@@ -122,29 +122,10 @@ class CreditService:
         if total_available < amount:
             raise InsufficientCreditsError("Insufficient credits")
 
-        remaining = amount
-
-
-
-
-
-
-
-
-
-        if wallet.subscription_status in ("ACTIVE", "TRIAL"):
-            if wallet.subscription_credits >= remaining:
-                wallet.subscription_credits -= remaining
-                remaining = 0
-            else:
-                remaining -= wallet.subscription_credits
-                wallet.subscription_credits = 0
-
-
-
-
-        if remaining > 0:
-            wallet.purchased_credits -= remaining
+        from_subscription = min(spendable_subscription, amount)
+        from_purchased = amount - from_subscription
+        wallet.subscription_credits -= from_subscription
+        wallet.purchased_credits -= from_purchased
 
 
 
@@ -160,6 +141,8 @@ class CreditService:
             type="USAGE",
             amount=-amount,
             reference_id=reference_id,
+            from_subscription=from_subscription,
+            from_purchased=from_purchased,
         )
 
         db.add(transaction)
@@ -255,7 +238,12 @@ class CreditService:
         if db.query(CreditTransaction).filter(CreditTransaction.reference_id == refund_ref).first():
             return 0
         amount = -usage.amount
-        if wallet.subscription_status in ("ACTIVE", "TRIAL"):
+        if usage.from_subscription is not None and usage.from_purchased is not None:
+            # Each part goes back to the bucket it came from: purchased credits survive a renewal, subscription ones don't.
+            wallet.subscription_credits += usage.from_subscription
+            wallet.purchased_credits += usage.from_purchased
+        elif wallet.subscription_status in ("ACTIVE", "TRIAL"):
+            # Charges from before the split was recorded.
             wallet.subscription_credits += amount
         else:
             wallet.purchased_credits += amount

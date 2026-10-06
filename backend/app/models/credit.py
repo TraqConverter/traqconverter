@@ -53,6 +53,10 @@ class CreditTransaction(Base):
 
     reference_id = Column(String, nullable=True)
 
+    # USAGE rows: how many of the credits came from each bucket, so a refund returns them there. NULL on older rows.
+    from_subscription = Column(Integer, nullable=True)
+    from_purchased = Column(Integer, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

@@ -167,7 +167,8 @@ def test_status_is_refreshed_from_stripe_until_active(client, db, make_user, cal
     assert body["stripe_requirements_due"] == 2
 
     calls["state"].update(charges_enabled=True, requirements={"currently_due": [], "past_due": []})
-    body = client.get("/settings/payments", headers=owner["headers"]).json()
+    # Back from onboarding: asks Stripe straight away, whatever the throttle says.
+    body = client.get("/settings/payments?refresh=1", headers=owner["headers"]).json()
     assert body["stripe_status"] == "active" and body["stripe_charges_enabled"] is True
     db.refresh(owner["team"])
     assert owner["team"].stripe_account_status == "active"
@@ -176,6 +177,33 @@ def test_status_is_refreshed_from_stripe_until_active(client, db, make_user, cal
     before = len(calls["retrieved"])
     assert client.get("/settings/payments", headers=owner["headers"]).json()["stripe_status"] == "active"
     assert len(calls["retrieved"]) == before
+
+
+def test_pending_status_is_asked_of_stripe_at_most_every_five_minutes(client, db, make_user, calls):
+    from datetime import datetime, timedelta
+
+    owner = make_user()
+    member = make_user(team=owner["team"])
+    client.post("/settings/payments/stripe/connect", headers=owner["headers"])
+    calls["state"].update(charges_enabled=False, details_submitted=False)
+
+    before = len(calls["retrieved"])
+    client.get("/settings/payments", headers=owner["headers"])
+    client.get("/settings/payments", headers=owner["headers"])
+    client.get("/settings/payments", headers=member["headers"])
+    # Only an editor's return from onboarding skips the wait.
+    client.get("/settings/payments?refresh=1", headers=member["headers"])
+    assert len(calls["retrieved"]) == before + 1
+
+    team = owner["team"]
+    db.refresh(team)
+    team.stripe_account_checked_at = datetime.utcnow() - timedelta(minutes=6)
+    db.commit()
+    client.get("/settings/payments", headers=member["headers"])
+    assert len(calls["retrieved"]) == before + 2
+
+    client.get("/settings/payments?refresh=1", headers=owner["headers"])
+    assert len(calls["retrieved"]) == before + 3
 
 
 def test_dashboard_and_disconnect(client, db, make_user, calls):

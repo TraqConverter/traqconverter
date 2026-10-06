@@ -87,12 +87,30 @@ def test_portal_returns_a_url_for_the_team_customer(client, db, make_user, monke
 
     monkeypatch.setattr(stripe.billing_portal.Session, "create", create)
     owner = _subscriber(db, make_user)
-    member = make_user(team=owner["team"])
+    admin = make_user(team=owner["team"], role="ADMIN")
 
-    r = client.post("/subscription/portal", headers=member["headers"])
-    assert r.status_code == 200
-    assert r.json() == {"portal_url": "https://billing.stripe.test/p/session"}
+    for who in (owner, admin):
+        r = client.post("/subscription/portal", headers=who["headers"])
+        assert r.status_code == 200
+        assert r.json() == {"portal_url": "https://billing.stripe.test/p/session"}
     assert seen == {"customer": "cus_1", "return_url": "https://app.test/billing", "configuration": "bpc_123"}
+
+
+@pytest.mark.parametrize("role", ["MEMBER", "PM", "REVIEWER"])
+def test_portal_and_plan_change_are_for_the_owner_and_admins(client, db, make_user, monkeypatch, role):
+    import stripe
+
+    monkeypatch.setattr(stripe.billing_portal.Session, "create", lambda **kw: pytest.fail("portal opened for a " + role))
+    owner = _subscriber(db, make_user, plan="PRO")
+    other = make_user(team=owner["team"], role=role)
+
+    r = client.post("/subscription/portal", headers=other["headers"])
+    assert r.status_code == 403
+    assert r.json()["detail"] == "Only the team owner or an admin can manage the subscription."
+    r = client.post("/subscription/create-checkout-session", params={"plan": "BASIC"}, headers=other["headers"])
+    assert r.status_code == 403
+    assert client.get("/billing/wallet", headers=other["headers"]).json()["can_manage_billing"] is False
+    assert client.get("/billing/wallet", headers=owner["headers"]).json()["can_manage_billing"] is True
 
 
 def test_portal_recovers_the_customer_from_a_stored_subscription(client, db, make_user, monkeypatch):
@@ -119,8 +137,8 @@ def test_portal_is_404_without_a_stripe_customer(client, make_user):
 
 def test_checkout_is_409_for_an_active_subscriber(client, db, make_user):
     owner = _subscriber(db, make_user, plan="PRO")
-    member = make_user(team=owner["team"])
-    for who in (owner, member):
+    admin = make_user(team=owner["team"], role="ADMIN")
+    for who in (owner, admin):
         r = client.post("/subscription/create-checkout-session", params={"plan": "BASIC"}, headers=who["headers"])
         assert r.status_code == 409
         assert r.json()["portal"] is True

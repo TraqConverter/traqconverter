@@ -55,6 +55,7 @@ export default function AccountSettingsPage() {
     has_stamp: boolean
     url: string | null
     alignment: "left" | "center" | "right"
+    can_edit?: boolean
   }
   const [stamp, setStamp] = useState<StampInfo | null>(null)
   const [stampFile, setStampFile] = useState<File | null>(null)
@@ -612,7 +613,14 @@ export default function AccountSettingsPage() {
             )}
           </div>
 
-          <div className="flex-1 min-w-[260px]">
+          <div className="flex-1 min-w-[240px]">
+            {stamp && !stamp.can_edit ? (
+              <p className="text-sm" style={{ color: "#6b6558" }}>
+                The team stamp is set by your team owner or an admin.
+                {stamp.has_stamp ? ` It sits ${stamp.alignment === "center" ? "in the centre" : `on the ${stamp.alignment}`} at the bottom of each translated page.` : ""}
+              </p>
+            ) : (
+            <>
             <div className="flex items-center gap-2 flex-wrap">
               <label
                 className="px-4 py-2 rounded-full text-sm font-semibold cursor-pointer transition"
@@ -716,6 +724,8 @@ export default function AccountSettingsPage() {
                   })}
                 </div>
               </div>
+            )}
+            </>
             )}
 
             <div className="text-xs mt-3" style={{ color: "#8a8270" }}>

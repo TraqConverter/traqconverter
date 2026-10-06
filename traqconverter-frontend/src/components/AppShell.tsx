@@ -147,9 +147,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
     const fetchProjectCount = async () => {
       try {
-        const res = await api.get("/projects/")
-        const list = Array.isArray(res.data) ? res.data : []
-        setProjectCount(list.length)
+        const res = await api.get<{ total: number }>("/projects/summary")
+        setProjectCount(typeof res.data?.total === "number" ? res.data.total : null)
       } catch {
         setProjectCount(null)
       }

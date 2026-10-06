@@ -643,7 +643,9 @@ def certifications_enabled(db: Session, user) -> bool:
     from app.core.plan_features import PLAN_FEATURES
     from app.dependencies.feature_guard import effective_plan
 
-    if (user.role or "").upper() in ("ADMIN", "SUPER_ADMIN"):
+    from app.core.roles import is_staff
+
+    if is_staff(user):
         return True
     return bool(PLAN_FEATURES.get(effective_plan(db, user), {}).get("certifications"))
 

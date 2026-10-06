@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.project import TranslationProject, is_dtp
+from app.core.roles import is_staff
 from app.models.user import User
 from app.services.credit_service import (
     CreditService,
@@ -21,11 +22,8 @@ logger = logging.getLogger(__name__)
 
 REGENERATE_LIMIT = int(os.getenv("REGENERATE_LIMIT_PER_PROJECT", "2"))
 REBUILD_LOCK_MINUTES = 30
-STAFF_ROLES = ("SUPERUSER", "SUPER_ADMIN", "ADMIN")
-
-
-def is_staff(user: User) -> bool:
-    return (user.role or "").upper() in STAFF_ROLES
+# Regenerate re-authors the layout from page images, so it needs a PDF or an image source.
+REGENERABLE_KINDS = ("PDF", "IMAGE")
 
 
 def charge(db: Session, project: TranslationProject, user: User, reference: str) -> bool:
@@ -90,6 +88,10 @@ def run_rebuild(project_id: str, instructions: str | None) -> None:
             src_path = tmp_dir / "source.pdf"
             download_file_from_s3(project.file_path, src_path)
             pdf_bytes = src_path.read_bytes()
+            if (project.source_kind or "").upper() == "IMAGE":
+                from app.services.translation_processor import _image_to_pdf
+
+                pdf_bytes = _image_to_pdf(pdf_bytes, project.file_name or "")
             from app.services.learning import source_text_of, team_terminology
             from app.services.translation_memory_service import with_memory
 

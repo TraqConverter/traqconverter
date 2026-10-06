@@ -137,11 +137,10 @@ def test_template_capture_and_fill_leave_the_old_certification_page_out(db, stor
     assert "Anna Verdi" not in seen[0]["messages"][0]["content"][1]["text"]
 
 
-@pytest.mark.parametrize("path", ["rebuild-with-claude", "revise"])
-def test_regenerate_waits_for_the_translation(client, db, make_user, make_project, path):
+def test_regenerate_waits_for_the_translation(client, db, make_user, make_project):
     owner = make_user()
     project = make_project(owner, status=ProjectStatus.PROCESSING)
-    r = client.post(f"/projects/{project.id}/{path}", headers=owner["headers"], json={})
+    r = client.post(f"/projects/{project.id}/rebuild-with-claude", headers=owner["headers"], json={})
     assert r.status_code == 409
     db.refresh(project)
     assert not project.revision_count and project.rebuild_status is None

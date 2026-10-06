@@ -8,6 +8,8 @@ from app.models.translation_segment import TranslationSegment
 from fastapi import Form, BackgroundTasks
 from fastapi import (
     APIRouter,
+    Query,
+    Response,
     UploadFile,
     File,
     Depends,
@@ -27,10 +29,11 @@ from app.services import ai_actions, ai_usage, project_instructions
 from app.services.learning import capture_template_in_background
 from app.services.project_lifecycle import enqueue_job, failure_code, job_charge_reference
 from app.models.project import MODE_DTP, MODE_TRANSLATE, PROJECT_MODES, TranslationProject, ProjectStatus, is_dtp
+from app.core.roles import is_staff
 from app.models.user import User
 from app.models.team import Team
 
-from app.core.file_validation import validate_file_extension, validate_file_size
+from app.core.file_validation import clean_file_name, local_file_name, validate_file_extension, validate_file_size
 from app.core.page_counter import get_page_count
 
 from app.services.storage_service import save_file_locally
@@ -118,17 +121,6 @@ def _watermark_docx(docx_bytes: bytes) -> bytes:
     buf = BytesIO()
     doc.save(buf)
     return buf.getvalue()
-
-
-_PREVIEW_BANNER = (
-    '<p style="color:#b91c1c;font-weight:bold">PREVIEW ONLY - upgrade your plan to download this translation</p>'
-)
-
-_EDITED_HTML_HEADERS = {
-    "Cache-Control": "private, max-age=10",
-    "Content-Security-Policy": "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox",
-    "X-Content-Type-Options": "nosniff",
-}
 
 
 
@@ -303,7 +295,7 @@ async def upload_project(
         project = TranslationProject(
             user_id=current_user.id,
             team_id=team.id,
-            file_name=file.filename,
+            file_name=clean_file_name(local_file_name(file.filename)) or "Untitled document",
             file_path=s3_key,
             page_count=page_count,
             credits_used=credits_required,
@@ -333,10 +325,7 @@ async def upload_project(
 
 
 
-        is_staff = (current_user.role or "").upper() in (
-            "SUPERUSER", "SUPER_ADMIN", "ADMIN",
-        )
-        if is_staff:
+        if is_staff(current_user):
             new_balance = -1
         else:
             try:
@@ -396,53 +385,126 @@ async def upload_project(
 
 
 
-@router.get("/")
-def list_projects(
-    assignee: str | None = None,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """List projects scoped to the user's team.
+PROJECT_STATUS_FILTERS = ("all", "active", "review", "delivered", "failed")
+MAX_PROJECT_PAGE = 200
 
-    The current_user can see anything they own OR are assigned to. Optional
-    `assignee` query param filters the result to a specific team member's
-    work, or `me` for the current user's assigned-to-them queue.
-    """
+
+def _projects_scope(db: Session, user: User, assignee: str | None, q: str | None):
+    """The caller's team projects, filtered by assignee and a search over file name, languages and batch name."""
+    from sqlalchemy import or_
+
+    from app.models.batch import Batch
     from app.models.team_member import TeamMember
-    from app.models.team import Team
 
-
-    team = db.query(Team).filter(Team.owner_id == current_user.id).first()
+    team = db.query(Team).filter(Team.owner_id == user.id).first()
     if not team:
-        membership = (
-            db.query(TeamMember).filter(TeamMember.user_id == current_user.id).first()
-        )
+        membership = db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
         if membership:
             team = db.query(Team).filter(Team.id == membership.team_id).first()
 
-    base = db.query(TranslationProject).order_by(TranslationProject.created_at.desc())
+    base = db.query(TranslationProject)
     if team:
         base = base.filter(TranslationProject.team_id == team.id)
     else:
-        base = base.filter(TranslationProject.user_id == current_user.id)
+        base = base.filter(TranslationProject.user_id == user.id)
 
     if assignee == "me":
-        base = base.filter(TranslationProject.assignee_id == current_user.id)
+        base = base.filter(TranslationProject.assignee_id == user.id)
     elif assignee == "unassigned":
         base = base.filter(TranslationProject.assignee_id.is_(None))
-    elif assignee:
+    elif assignee and assignee != "all":
         try:
             assignee_id = UUID(assignee)
         except ValueError:
             raise HTTPException(status_code=400, detail="assignee must be me, unassigned or a user id")
         base = base.filter(TranslationProject.assignee_id == assignee_id)
 
-    projects = base.limit(50).all()
+    term = (q or "").strip()[:200]
+    if term:
+        like = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        batch_hit = (
+            db.query(Batch.id)
+            .filter(Batch.id == TranslationProject.batch_id, Batch.name.ilike(like, escape="\\"))
+            .exists()
+        )
+        base = base.filter(or_(
+            TranslationProject.file_name.ilike(like, escape="\\"),
+            TranslationProject.source_language.ilike(like, escape="\\"),
+            TranslationProject.target_language.ilike(like, escape="\\"),
+            batch_hit,
+        ))
+    return base
 
 
+def _status_condition(tab: str):
+    """The Jobs page tabs as SQL. Delivered is a finished project not waiting on review."""
+    from sqlalchemy import and_, func
+
+    review = func.upper(func.coalesce(TranslationProject.review_status, "")) == "IN_REVIEW"
+    if tab == "active":
+        return TranslationProject.status.in_([ProjectStatus.PENDING, ProjectStatus.PROCESSING])
+    if tab == "review":
+        return and_(TranslationProject.status == ProjectStatus.COMPLETED, review)
+    if tab == "delivered":
+        return and_(TranslationProject.status == ProjectStatus.COMPLETED, ~review)
+    if tab == "failed":
+        return TranslationProject.status == ProjectStatus.FAILED
+    return None
 
 
+def _word_counts(db: Session, project_ids: list) -> dict[str, int]:
+    """Source words per project, counted in the database instead of loading every segment."""
+    from sqlalchemy import case, func
 
+    if not project_ids:
+        return {}
+    text_ = func.btrim(TranslationSegment.source_text)
+    words = case(
+        (func.coalesce(text_, "") == "", 0),
+        else_=func.coalesce(func.array_length(func.regexp_split_to_array(text_, r"\s+"), 1), 0),
+    )
+    rows = (
+        db.query(TranslationSegment.project_id, func.coalesce(func.sum(words), 0))
+        .filter(TranslationSegment.project_id.in_(project_ids))
+        .group_by(TranslationSegment.project_id)
+        .all()
+    )
+    return {str(pid): int(n) for pid, n in rows}
+
+
+@router.get("/")
+def list_projects(
+    response: Response,
+    assignee: str | None = None,
+    status_filter: str = Query("all", alias="status"),
+    q: str | None = None,
+    limit: int = Query(50, ge=1, le=MAX_PROJECT_PAGE),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """One page of the team's projects, newest first; the X-Total-Count header has the number matching the filters.
+
+    `assignee` is me, unassigned or a user id; `status` one of PROJECT_STATUS_FILTERS; `q` searches file name,
+    languages and batch name.
+    """
+    tab = (status_filter or "all").lower()
+    if tab not in PROJECT_STATUS_FILTERS:
+        raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(PROJECT_STATUS_FILTERS)}")
+
+    base = _projects_scope(db, current_user, assignee, q)
+    condition = _status_condition(tab)
+    if condition is not None:
+        base = base.filter(condition)
+
+    total = base.order_by(None).count()
+    response.headers["X-Total-Count"] = str(total)
+    projects = (
+        base.order_by(TranslationProject.created_at.desc(), TranslationProject.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
     related_ids = {p.assignee_id for p in projects if p.assignee_id}
     related_ids |= {p.user_id for p in projects if p.user_id}
@@ -451,26 +513,7 @@ def list_projects(
         for u in db.query(User).filter(User.id.in_(related_ids)).all():
             users_by_id[str(u.id)] = u
 
-
-
-
-
-    word_counts: dict[str, int] = {}
-    if projects:
-        project_ids = [p.id for p in projects]
-        rows = (
-            db.query(
-                TranslationSegment.project_id,
-                TranslationSegment.source_text,
-            )
-            .filter(TranslationSegment.project_id.in_(project_ids))
-            .all()
-        )
-        for pid, src in rows:
-            key = str(pid)
-            word_counts[key] = word_counts.get(key, 0) + len(
-                (src or "").split()
-            )
+    word_counts = _word_counts(db, [p.id for p in projects])
 
     from app.models.batch import Batch
 
@@ -533,6 +576,57 @@ def list_projects(
 
 
 
+
+
+@router.get("/summary")
+def projects_summary(
+    assignee: str | None = None,
+    q: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """True totals for the Jobs tabs, the Dashboard KPIs and the sidebar count, whatever page the list is on."""
+    from sqlalchemy import case, func, or_
+
+    base = _projects_scope(db, current_user, assignee, q)
+
+    def count(cond):
+        return func.coalesce(func.sum(case((cond, 1), else_=0)), 0)
+
+    active, review, delivered, failed = (_status_condition(t) for t in ("active", "review", "delivered", "failed"))
+    # The Dashboard's "active" work: still translating or waiting on review.
+    open_ = or_(active, review)
+    row = base.with_entities(
+        func.count(TranslationProject.id),
+        count(active),
+        count(review),
+        count(delivered),
+        count(failed),
+        count(open_),
+        func.coalesce(func.sum(case((open_, TranslationProject.page_count), else_=0)), 0),
+        count(open_ & (TranslationProject.page_count > 0)),
+        func.coalesce(func.sum(TranslationProject.credits_used), 0),
+    ).order_by(None).one()
+    pairs = (
+        base.filter(open_)
+        .with_entities(TranslationProject.source_language, TranslationProject.target_language)
+        .filter(TranslationProject.source_language != "", TranslationProject.target_language != "")
+        .distinct()
+        .order_by(None)
+        .count()
+    )
+    total, n_active, n_review, n_delivered, n_failed, n_open, open_pages, open_with_pages, credits = (int(x) for x in row)
+    return {
+        "total": total,
+        "counts": {"active": n_active, "review": n_review, "delivered": n_delivered, "failed": n_failed},
+        "open": {
+            "projects": n_open,
+            "pages": open_pages,
+            "projects_with_pages": open_with_pages,
+            "language_pairs": pairs,
+        },
+        "credits_used": credits,
+    }
 
 
 class _AssignPayload(BaseModel):
@@ -752,6 +846,8 @@ def get_project_status(
         "source_language": project.source_language,
         "target_language": project.target_language,
         "mode": project.mode or MODE_TRANSLATE,
+        # PDF, IMAGE or DOCX once the worker has looked at the file; Regenerate only works for PDF and IMAGE.
+        "source_kind": project.source_kind,
         "ai_instructions": project.ai_instructions,
         "stats": {
             "total_segments": total,
@@ -768,77 +864,6 @@ def get_project_status(
         "revision_count": project.revision_count or 0,
         "free_revisions_left": ai_actions.regenerations_left(project),
     }
-
-
-
-
-
-@router.get("/{project_id}/segments")
-def get_project_segments(
-    project_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-
-    get_user_project_or_404(db, project_id, current_user)
-
-
-    segments = (
-        db.query(TranslationSegment)
-        .filter(TranslationSegment.project_id == project_id)
-        .order_by(TranslationSegment.segment_index)
-        .all()
-    )
-
-    return [
-        {
-            "id": str(s.id),
-            "segment_index": s.segment_index,
-            "source_text": s.source_text,
-            "translated_text": s.translated_text or "",
-            "approved": bool(s.approved),
-            "tm_pct": s.tm_pct,
-        }
-        for s in segments
-    ]
-
-
-
-
-
-
-class _ApprovePayload(BaseModel):
-    approved: bool
-
-
-@router.patch("/{project_id}/segments/{segment_id}/approve")
-def approve_segment(
-    project_id: UUID,
-    segment_id: UUID,
-    data: _ApprovePayload,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-
-
-    get_user_project_or_404(db, project_id, current_user)
-
-    seg = (
-        db.query(TranslationSegment)
-        .filter(
-            TranslationSegment.id == segment_id,
-            TranslationSegment.project_id == project_id,
-        )
-        .first()
-    )
-    if not seg:
-        raise HTTPException(status_code=404, detail="Segment not found")
-
-    seg.approved = bool(data.approved)
-    db.commit()
-    db.refresh(seg)
-    return {"id": str(seg.id), "approved": seg.approved}
-
 
 
 
@@ -1048,20 +1073,18 @@ def update_project(
     project = get_user_project_or_404(db, project_id, current_user)
 
     if data.file_name is not None:
-        new_name = data.file_name.strip()
+        new_name = clean_file_name(data.file_name)
         if not new_name:
             raise HTTPException(
                 status_code=400, detail="file_name can't be empty"
             )
-
-
 
         original_ext = ""
         if project.file_name and "." in project.file_name:
             original_ext = "." + project.file_name.rsplit(".", 1)[-1]
         if original_ext and not new_name.lower().endswith(original_ext.lower()):
             new_name = new_name + original_ext
-        project.file_name = new_name[:255]
+        project.file_name = clean_file_name(new_name)
 
     if data.certification_template_id is not None:
         refuse_dtp_certification(project)
@@ -1285,350 +1308,6 @@ def preview_source(
     )
 
 
-@router.get("/{project_id}/preview/rebuild")
-def preview_rebuild(
-    project_id: UUID,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """Build a fresh DOCX rebuild on demand, convert to PDF via
-    LibreOffice, and stream inline. Browser native PDF viewer
-    renders within seconds — no Office Online round-trip.
-
-    Source of truth for the DOCX (in order of preference):
-      1. edited_html  — user's WYSIWYG edits, converted to DOCX.
-      2. authored_docx_s3_key — Claude-authored DOCX from worker.
-      3. segment-driven _build_layout_docx_live fallback.
-    """
-    from app.services.export_service import _convert_docx_to_pdf
-
-    project = _project_preview_team_check(db, project_id, user)
-
-
-    project._export_user_email = user.email or ""
-    project._export_user_logo_key = getattr(user, "logo_s3_key", None)
-
-    segments = (
-        db.query(TranslationSegment)
-        .filter(TranslationSegment.project_id == project.id)
-        .order_by(TranslationSegment.segment_index)
-        .all()
-    )
-    if not segments and not getattr(project, "authored_docx_s3_key", None):
-        raise HTTPException(status_code=404, detail="No segments yet")
-
-    docx_bytes = _resolve_rebuild_docx_bytes(
-        project, segments, preview_only=True
-    )
-    if not _can_download(db, user):
-        docx_bytes = _watermark_docx(docx_bytes)
-
-    pdf_bytes = _convert_docx_to_pdf(docx_bytes)
-    if not pdf_bytes:
-
-
-        return _FastResponse(
-            content=docx_bytes,
-            media_type=(
-                "application/vnd.openxmlformats-officedocument"
-                ".wordprocessingml.document"
-            ),
-            headers={"Content-Disposition": "inline"},
-        )
-
-    return _FastResponse(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={
-            "Content-Disposition": "inline",
-            "Cache-Control": "private, max-age=60",
-        },
-    )
-
-
-
-
-
-
-
-
-
-
-
-@router.get("/{project_id}/preview/rebuild-html")
-def preview_rebuild_html(
-    project_id: UUID,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    project = _project_preview_team_check(db, project_id, user)
-
-
-    project._export_user_email = user.email or ""
-    project._export_user_logo_key = getattr(user, "logo_s3_key", None)
-
-
-
-    banner = "" if _can_download(db, user) else _PREVIEW_BANNER
-    edited_html = getattr(project, "edited_html", None)
-    if edited_html and edited_html.strip():
-        return _FastResponse(
-            content=banner + _sanitize_edited_html(edited_html),
-            media_type="text/html; charset=utf-8",
-            headers=_EDITED_HTML_HEADERS,
-        )
-
-
-
-
-
-
-
-
-    segments = (
-        db.query(TranslationSegment)
-        .filter(TranslationSegment.project_id == project.id)
-        .order_by(TranslationSegment.segment_index)
-        .all()
-    )
-    if not segments and not getattr(project, "authored_docx_s3_key", None):
-        raise HTTPException(status_code=404, detail="No segments yet")
-
-    docx_bytes = _resolve_rebuild_docx_bytes(
-        project, segments, preview_only=True
-    )
-
-
-
-
-
-    try:
-        import mammoth  # type: ignore
-        from io import BytesIO as _BIO
-
-        result = mammoth.convert_to_html(_BIO(docx_bytes))
-        body_html = result.value or ""
-    except Exception:
-        logger.exception("mammoth HTML conversion failed")
-        raise HTTPException(status_code=500, detail="Couldn't render HTML preview")
-
-    return _FastResponse(
-        content=banner + _sanitize_edited_html(body_html),
-        media_type="text/html; charset=utf-8",
-        headers={**_EDITED_HTML_HEADERS, "Cache-Control": "private, max-age=60"},
-    )
-
-
-
-
-
-
-
-
-
-@router.get("/{project_id}/preview/rebuild-docx")
-def preview_rebuild_docx(
-    project_id: UUID,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """Stream the rebuilt translation DOCX bytes as-is so the
-    frontend can render them client-side with docx-preview. This
-    is the high-fidelity preview path — mammoth's HTML conversion
-    drops Word formatting that docx-preview preserves.
-
-    Source of truth (in order):
-      1. edited_html → converted back to DOCX so docx-preview sees
-         a consistent format. (We can't render HTML through
-         docx-preview directly.)
-      2. authored_docx_s3_key → Claude-authored DOCX.
-      3. segment-driven _build_layout_docx_live fallback.
-    """
-    project = _project_preview_team_check(db, project_id, user)
-
-    project._export_user_email = user.email or ""
-    project._export_user_logo_key = getattr(user, "logo_s3_key", None)
-
-    segments = (
-        db.query(TranslationSegment)
-        .filter(TranslationSegment.project_id == project.id)
-        .order_by(TranslationSegment.segment_index)
-        .all()
-    )
-    if not segments and not getattr(project, "authored_docx_s3_key", None):
-        raise HTTPException(status_code=404, detail="No segments yet")
-
-    docx_bytes = _resolve_rebuild_docx_bytes(
-        project, segments, preview_only=True
-    )
-    if not _can_download(db, user):
-        docx_bytes = _watermark_docx(docx_bytes)
-
-    return _FastResponse(
-        content=docx_bytes,
-        media_type=(
-            "application/vnd.openxmlformats-officedocument"
-            ".wordprocessingml.document"
-        ),
-        headers={
-            "Cache-Control": "private, max-age=30",
-
-
-        },
-    )
-
-
-
-
-
-
-
-
-
-@router.post(
-    "/{project_id}/suggest-glossary",
-    dependencies=[
-        Depends(require_feature("glossaries")),
-        Depends(user_rate_limit("suggest_glossary", max_requests=10, per_seconds=3600)),
-    ],
-)
-def suggest_glossary(
-    project_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Ask Claude to extract recurring terms from the project's
-    translated segments. Returns a list of proposed glossary entries
-    so the user can review + save them on the Glossary page.
-    """
-    import json as _json
-    import re as _re
-    from app.services.ai_translation_service import (
-        _call_model,
-        humanize_lang,
-    )
-
-    project = get_user_project_or_404(db, project_id, current_user)
-    if is_dtp(project):
-        raise HTTPException(status_code=409, detail="An editable copy has no translated terms to suggest")
-    segments = (
-        db.query(TranslationSegment)
-        .filter(TranslationSegment.project_id == project.id)
-        .order_by(TranslationSegment.segment_index)
-        .all()
-    )
-    pairs = [
-        {"source": s.source_text or "", "target": s.translated_text or ""}
-        for s in segments
-        if (s.source_text and s.translated_text)
-    ]
-    if not pairs:
-        return {"proposals": [], "reason": "No translated segments yet"}
-
-    src_name = humanize_lang(project.source_language)
-    tgt_name = humanize_lang(project.target_language)
-
-    system_prompt = (
-        f"You are a translation memory expert. Given a list of "
-        f"{src_name} → {tgt_name} segment pairs, extract a list of "
-        f"GLOSSARY TERMS that should be enforced project-wide. "
-        f"Focus on:\n"
-        f"- Proper nouns (organisations, agencies, departments)\n"
-        f"- Technical / legal / domain terms with a specific "
-        f"translation\n"
-        f"- Recurring phrases that should always use the same wording\n"
-        f"- Brand names and product names\n\n"
-        f"DO NOT propose:\n"
-        f"- Common verbs, adjectives, articles, prepositions\n"
-        f"- Generic everyday vocabulary\n"
-        f"- Single-segment one-offs\n\n"
-        f"Return STRICT JSON ONLY in this shape — no preamble, no "
-        f"markdown fences:\n"
-        f'{{"proposals": [{{"source_term": "...", '
-        f'"target_term": "...", "frequency": <int>, '
-        f'"context": "<short snippet showing one use>"}}]}}\n'
-        f"Cap at 20 most-valuable proposals. Skip the list entirely "
-        f"if no good terms are found."
-    )
-
-
-    sample_size = 80
-    sample = pairs[:sample_size]
-    user_payload = "\n\n".join(
-        f"[{i+1}] SRC: {p['source']}\n    TGT: {p['target']}"
-        for i, p in enumerate(sample)
-    )
-
-    try:
-        with ai_usage.ai_context(action="glossary_suggest", project_id=project.id, team_id=project.team_id, user_id=current_user.id):
-            raw = _call_model(
-                model_key=getattr(project, "model", None),
-                system=system_prompt,
-                user=user_payload,
-                max_tokens=4096,
-            )
-    except Exception:
-        logger.exception("Glossary extraction failed for project %s", project.id)
-        raise HTTPException(status_code=502, detail="Glossary extraction failed")
-
-
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = _re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned)
-    try:
-        parsed = _json.loads(cleaned)
-        proposals = parsed.get("proposals") or []
-    except Exception:
-        logger.warning("Glossary suggestion: couldn't parse JSON")
-        proposals = []
-
-
-    cleaned_proposals = []
-    seen_pairs: set[tuple[str, str]] = set()
-    for p in proposals:
-        if not isinstance(p, dict):
-            continue
-        s = (p.get("source_term") or "").strip()
-        t = (p.get("target_term") or "").strip()
-        if not s or not t:
-            continue
-        key = (s.lower(), t.lower())
-        if key in seen_pairs:
-            continue
-        seen_pairs.add(key)
-        cleaned_proposals.append(
-            {
-                "source_term": s,
-                "target_term": t,
-                "frequency": int(p.get("frequency") or 1),
-                "context": (p.get("context") or "")[:200],
-            }
-        )
-
-    return {
-        "proposals": cleaned_proposals,
-        "source_language": project.source_language,
-        "target_language": project.target_language,
-    }
-
-
-
-
-
-
-
-
-class _ReviseProjectPayload(BaseModel):
-    instructions: Optional[str] = None
-    model: Optional[str] = None
-
-
-
-
-
-
-
-
 class _EditedHtmlPayload(BaseModel):
     html: str
 
@@ -1684,119 +1363,6 @@ def _project_for_regenerate(db: Session, project_id: UUID, user: User) -> Transl
 
 
 @router.post(
-    "/{project_id}/revise",
-    dependencies=[Depends(user_rate_limit("revise", max_requests=10, per_seconds=3600))],
-)
-def revise_project(
-    project_id: UUID,
-    data: _ReviseProjectPayload,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Queue an AI revision: segment text is improved, and PDFs get a fresh layout rebuild when instructions are given."""
-    project = _project_for_regenerate(db, project_id, current_user)
-    has_segments = (
-        db.query(TranslationSegment.id)
-        .filter(TranslationSegment.project_id == project.id)
-        .first()
-    )
-    if not has_segments:
-        raise HTTPException(status_code=404, detail="No segments to revise")
-    _validate_model_key(data.model)
-
-    ai_actions.use_regeneration(project)
-    ai_actions.claim_rebuild(project)
-    db.commit()
-
-    background_tasks.add_task(
-        ai_usage.bind(_revise_background, action="revise", project_id=project.id, team_id=project.team_id, user_id=current_user.id),
-        str(project.id),
-        (data.model or "").strip() or project.model,
-        (data.instructions or "").strip(),
-    )
-    return {
-        "rebuild_status": "rebuild_in_progress",
-        "revision_count": project.revision_count,
-        "regenerations_left": ai_actions.regenerations_left(project),
-        "charged": False,
-    }
-
-
-def _revise_background(project_id: str, model_key: str | None, instructions: str) -> None:
-    from app.database import SessionLocal
-    from app.services.ai_translation_service import _call_model, humanize_lang
-
-    db = SessionLocal()
-    try:
-        project = db.query(TranslationProject).filter(TranslationProject.id == project_id).first()
-        if not project:
-            return
-        src_name = humanize_lang(project.source_language)
-        tgt_name = humanize_lang(project.target_language)
-        system_prompt = (
-            f"You are a senior translation reviewer. Given a {src_name} "
-            f"source segment and an existing {tgt_name} translation, "
-            f"produce an IMPROVED {tgt_name} translation. Preserve names, "
-            f"numbers, dates, IDs exactly. Fix grammar, terminology, and "
-            f"awkward phrasings. Do not change correct translations."
-        )
-        saved = project_instructions.prompt_block(project.ai_instructions)
-        if saved:
-            system_prompt += "\n\n" + saved
-        if instructions:
-            system_prompt += "\n\nUSER INSTRUCTIONS (follow strictly):\n" + instructions
-        system_prompt += "\n\nReturn ONLY the revised translation — no preamble, no commentary, no quotes."
-
-        segments = (
-            db.query(TranslationSegment)
-            .filter(TranslationSegment.project_id == project.id)
-            .order_by(TranslationSegment.segment_index)
-            .all()
-        )
-        # An editable copy's segments are the source text; only its layout is redone.
-        for seg in [] if is_dtp(project) else segments:
-            if not (seg.translated_text and seg.translated_text.strip()):
-                continue
-            try:
-                improved = _call_model(
-                    model_key=model_key,
-                    system=system_prompt,
-                    user=(
-                        f"SOURCE ({src_name}):\n{seg.source_text}\n\n"
-                        f"EXISTING TRANSLATION ({tgt_name}):\n{seg.translated_text}"
-                    ),
-                    max_tokens=1024,
-                )
-            except Exception as e:
-                logger.warning("Revise failed on segment %s: %s", seg.id, e)
-                continue
-            improved = (improved or "").strip()
-            if improved and improved != seg.translated_text:
-                seg.translated_text = improved
-                seg.approved = False
-        needs_rebuild = bool(instructions) and (project.source_kind or "").upper() == "PDF"
-        if not needs_rebuild:
-            project.rebuild_status = "done"
-        db.commit()
-    except Exception:
-        db.rollback()
-        logger.exception("Segment revision failed for project %s", project_id)
-        needs_rebuild = False
-        project = db.query(TranslationProject).filter(TranslationProject.id == project_id).first()
-        if project:
-            project.rebuild_status = "failed"
-            project.rebuild_error = "The revision failed; it didn't count toward your regenerate limit"
-            ai_actions.return_regeneration(project)
-            db.commit()
-    finally:
-        db.close()
-
-    if needs_rebuild:
-        ai_actions.run_rebuild(project_id, instructions)
-
-
-@router.post(
     "/{project_id}/rebuild-with-claude",
     dependencies=[Depends(user_rate_limit("rebuild", max_requests=10, per_seconds=3600))],
 )
@@ -1808,8 +1374,8 @@ def rebuild_with_claude(
 ):
     """Queue a fresh Claude-authored layout rebuild; poll GET /projects/{id} for rebuild_status."""
     project = _project_for_regenerate(db, project_id, current_user)
-    if (project.source_kind or "").upper() != "PDF":
-        raise HTTPException(status_code=400, detail="Regenerating only works for PDF source projects")
+    if (project.source_kind or "").upper() not in ai_actions.REGENERABLE_KINDS:
+        raise HTTPException(status_code=400, detail="Regenerating only works for PDF and image source projects")
 
     ai_actions.use_regeneration(project)
     ai_actions.claim_rebuild(project)

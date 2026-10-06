@@ -46,6 +46,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.core.file_validation import local_file_name
 from app.models.project import TranslationProject, ProjectStatus, is_dtp
 from app.models.translation_segment import TranslationSegment
 from app.database import SessionLocal
@@ -261,11 +262,6 @@ def _stop_if_already_in_target(db, project) -> bool:
     safe_broadcast(str(project.id), project.progress_percent or 0, project.status.value)
     return True
 
-
-def local_file_name(file_name: str | None) -> str:
-    """The project's file name made safe to join to a temp dir: no folders, no absolute paths, no '..'."""
-    name = Path((file_name or "").replace("\\", "/")).name.strip()
-    return name if name and name not in (".", "..") else "source" + Path(file_name or "").suffix.lower()
 
 
 def _image_to_pdf(data: bytes, file_name: str) -> bytes:

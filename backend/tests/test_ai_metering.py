@@ -306,11 +306,9 @@ def test_allowance_scales_with_pages_and_hides_other_tenants(client, doc_project
 
 @pytest.fixture()
 def no_background_ai(monkeypatch):
-    import app.routers.project as project_router
     from app.services import ai_actions
 
     calls = []
-    monkeypatch.setattr(project_router, "_revise_background", lambda *a: calls.append(("revise", a)))
     monkeypatch.setattr(ai_actions, "run_rebuild", lambda *a: calls.append(("rebuild", a)))
     return calls
 
@@ -320,21 +318,20 @@ def _finish_rebuild(db, project):
     db.commit()
 
 
-def test_regenerate_and_revise_share_a_hard_limit_of_two(client, db, make_user, make_project, no_background_ai):
+def test_regenerate_has_a_hard_limit_of_two(client, db, make_user, make_project, no_background_ai):
     owner = make_user(credits=5)
     project = make_project(owner, pages=2)
 
     r = client.post(f"/projects/{project.id}/rebuild-with-claude", headers=owner["headers"])
     assert r.status_code == 200 and r.json()["charged"] is False and r.json()["regenerations_left"] == 1
     _finish_rebuild(db, project)
-    r = client.post(f"/projects/{project.id}/revise", headers=owner["headers"], json={"instructions": "More formal"})
+    r = client.post(f"/projects/{project.id}/rebuild-with-claude", headers=owner["headers"])
     assert r.status_code == 200, r.text
     _finish_rebuild(db, project)
 
-    for url, body in ((f"/projects/{project.id}/rebuild-with-claude", None), (f"/projects/{project.id}/revise", {})):
-        r = client.post(url, headers=owner["headers"], json=body)
-        assert r.status_code == 403
-        assert r.json()["detail"] == "Regenerate is limited to 2 per document"
+    r = client.post(f"/projects/{project.id}/rebuild-with-claude", headers=owner["headers"])
+    assert r.status_code == 403
+    assert r.json()["detail"] == "Regenerate is limited to 2 per document"
 
     assert _wallet(db, owner).subscription_credits == 5
     assert len(no_background_ai) == 2

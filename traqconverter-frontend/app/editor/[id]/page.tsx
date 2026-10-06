@@ -17,20 +17,13 @@ import ExportMenu, { type ExportKind } from "@/components/editor/ExportMenu"
 import ShareWithClient from "@/components/editor/ShareWithClient"
 import { blocking, useReview, type CheckItem, type SourceRef } from "@/components/editor/useReview"
 
-type Segment = {
-  id: string
-  segment_index: number
-  source_text: string
-  translated_text: string
-  approved: boolean
-  tm_pct: number | null
-}
-
 type Assignee = {
   id: string
   email: string
   full_name: string | null
 }
+
+const REGENERABLE_KINDS = ["PDF", "IMAGE"]
 
 type ProjectInfo = {
   id: string
@@ -41,6 +34,7 @@ type ProjectInfo = {
   source_language: string
   target_language: string
   mode?: "translate" | "dtp"
+  source_kind?: string | null
   ai_instructions?: string | null
 
   model?: string | null
@@ -205,35 +199,9 @@ export default function EditorPage() {
   }
 
   const [compareActionBusy, setCompareActionBusy] = useState<
-    null | "revise" | "rerun"
+    null | "rerun"
   >(null)
   const [showRerunPicker, setShowRerunPicker] = useState(false)
-  const [translationModels, setTranslationModels] = useState<
-    { id: string; label: string; provider: string }[]
-  >([])
-
-  useEffect(() => {
-
-    api
-      .get("/projects/translation-models")
-      .then((res) => setTranslationModels(res.data?.models || []))
-      .catch(() => setTranslationModels([]))
-  }, [])
-
-  const [revisionModal, setRevisionModal] = useState<{
-    open: boolean
-    instructions: string
-    model: string
-  }>({ open: false, instructions: "", model: "" })
-
-  const openRevisionModal = () => {
-    setRevisionModal({
-      open: true,
-      instructions: "",
-      model:
-        project?.model || translationModels[0]?.id || "claude-sonnet-4-6",
-    })
-  }
 
   const markRebuildRunning = (revisionCount?: number) => {
     setProject((p) =>
@@ -246,26 +214,6 @@ export default function EditorPage() {
           }
         : p,
     )
-  }
-
-  const submitRevision = async () => {
-    try {
-      setCompareActionBusy("revise")
-      setError(null)
-      setRevisionModal((m) => ({ ...m, open: false }))
-      const res = await api.post(`/projects/${id}/revise`, {
-        instructions: revisionModal.instructions.trim() || null,
-        model: revisionModal.model || null,
-      })
-      markRebuildRunning(res.data?.revision_count)
-      setNotice(
-        "Revision started. The preview updates here when it finishes, usually in 1-5 minutes.",
-      )
-    } catch (err: unknown) {
-      setError(apiErrorDetail(err, "Revision request failed."))
-    } finally {
-      setCompareActionBusy(null)
-    }
   }
 
   const startRegenerate = () => setRegenerateOpen(true)
@@ -304,135 +252,6 @@ export default function EditorPage() {
       setError(apiErrorDetail(err, "Couldn't start regenerating."))
     } finally {
       setCompareActionBusy(null)
-    }
-  }
-
-  const requestRevision = openRevisionModal
-
-  const [glossaryDraft, setGlossaryDraft] = useState<{
-    open: boolean
-    sourceTerm: string
-    targetTerm: string
-    notes: string
-    busy: boolean
-  }>({ open: false, sourceTerm: "", targetTerm: "", notes: "", busy: false })
-
-  const openGlossaryFromSegment = (seg: Segment) => {
-    setGlossaryDraft({
-      open: true,
-      sourceTerm: seg.source_text || "",
-      targetTerm: seg.translated_text || "",
-      notes: "",
-      busy: false,
-    })
-  }
-
-  const saveGlossaryDraft = async () => {
-    const src = glossaryDraft.sourceTerm.trim()
-    const tgt = glossaryDraft.targetTerm.trim()
-    if (!src || !tgt) {
-      setError("Source term and target term are both required.")
-      return
-    }
-    try {
-      setGlossaryDraft((g) => ({ ...g, busy: true }))
-      await api.post("/glossary", {
-        source_language: project?.source_language || "auto",
-        target_language: project?.target_language || "en-GB",
-        source_term: src,
-        target_term: tgt,
-        notes: glossaryDraft.notes.trim() || null,
-      })
-      setGlossaryDraft({
-        open: false,
-        sourceTerm: "",
-        targetTerm: "",
-        notes: "",
-        busy: false,
-      })
-    } catch (err: any) {
-      setError(
-        err?.response?.data?.detail ||
-          "Couldn't add that term to the glossary.",
-      )
-      setGlossaryDraft((g) => ({ ...g, busy: false }))
-    }
-  }
-
-  const [glossarySuggestions, setGlossarySuggestions] = useState<{
-    open: boolean
-    loading: boolean
-    proposals: { source_term: string; target_term: string; frequency: number; context: string }[]
-    saving: Set<number>
-  }>({
-    open: false,
-    loading: false,
-    proposals: [],
-    saving: new Set<number>(),
-  })
-
-  const suggestGlossary = async () => {
-    try {
-      setGlossarySuggestions({
-        open: true,
-        loading: true,
-        proposals: [],
-        saving: new Set(),
-      })
-      const res = await api.post(`/projects/${id}/suggest-glossary`)
-      setGlossarySuggestions({
-        open: true,
-        loading: false,
-        proposals: res.data?.proposals || [],
-        saving: new Set(),
-      })
-    } catch (err: any) {
-      setError(
-        err?.response?.data?.detail ||
-          "Couldn't get glossary suggestions.",
-      )
-      setGlossarySuggestions({
-        open: false,
-        loading: false,
-        proposals: [],
-        saving: new Set(),
-      })
-    }
-  }
-
-  const acceptGlossarySuggestion = async (
-    idx: number,
-    p: { source_term: string; target_term: string },
-  ) => {
-    setGlossarySuggestions((s) => ({
-      ...s,
-      saving: new Set(s.saving).add(idx),
-    }))
-    try {
-      await api.post("/glossary", {
-        source_language: project?.source_language || "auto",
-        target_language: project?.target_language || "en-GB",
-        source_term: p.source_term,
-        target_term: p.target_term,
-        notes: null,
-      })
-
-      setGlossarySuggestions((s) => ({
-        ...s,
-        proposals: s.proposals.filter((_, i) => i !== idx),
-        saving: new Set(
-          [...s.saving].filter((i) => i !== idx),
-        ),
-      }))
-    } catch (err: any) {
-      setError(
-        err?.response?.data?.detail || "Couldn't add that term.",
-      )
-      setGlossarySuggestions((s) => {
-        const nset = new Set(s.saving)
-        nset.delete(idx)
-        return { ...s, saving: nset }
-      })
     }
   }
 
@@ -765,6 +584,8 @@ export default function EditorPage() {
   const stStyle = statusStyle(project.review_status)
   // An editable copy is never certified.
   const isDtp = project.mode === "dtp"
+  // The server only regenerates from page images; a Word source would always be refused.
+  const canRegenerate = REGENERABLE_KINDS.includes((project.source_kind || "").toUpperCase())
   const reviewStatuses = isDtp ? REVIEW_STATUSES.filter((s) => s.value !== "CERTIFIED") : REVIEW_STATUSES
 
   return (
@@ -1138,6 +959,7 @@ export default function EditorPage() {
                 className="flex items-center gap-2 relative"
                 onClick={(e) => e.stopPropagation()}
               >
+                {canRegenerate && (
                 <button
                   type="button"
                   onClick={() => startRegenerate()}
@@ -1154,6 +976,7 @@ export default function EditorPage() {
                 >
                   {rebuildRunning ? "Regenerating…" : "↻ Regenerate"}
                 </button>
+                )}
               </div>
             </div>
 
@@ -1272,446 +1095,6 @@ export default function EditorPage() {
             )}
           </div>
       </aside>
-
-      {}
-      {glossarySuggestions.open && (
-        <div
-          onClick={() =>
-            setGlossarySuggestions((s) => ({ ...s, open: false }))
-          }
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(31,42,46,0.45)",
-            backdropFilter: "blur(2px)",
-            zIndex: 100,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="rounded-2xl p-6 w-full max-w-2xl"
-            style={{
-              background: "#ffffff",
-              border: "1px solid #e7ddc5",
-              boxShadow: "0 24px 60px rgba(30,30,20,0.18)",
-              maxHeight: "80vh",
-              overflowY: "auto",
-            }}
-          >
-            <div
-              className="text-[11px] font-semibold tracking-[0.18em] mb-1"
-              style={{ color: "#9a9178" }}
-            >
-              AI GLOSSARY SUGGESTIONS
-            </div>
-            <h3
-              className="text-[18px] font-semibold tracking-tight mb-4"
-              style={{ color: "#1f2a2e" }}
-            >
-              Recurring terms found in this project
-            </h3>
-            {glossarySuggestions.loading && (
-              <div className="text-sm" style={{ color: "#8a8270" }}>
-                Scanning translated segments for recurring terms…
-              </div>
-            )}
-            {!glossarySuggestions.loading &&
-              glossarySuggestions.proposals.length === 0 && (
-                <div className="text-sm" style={{ color: "#8a8270" }}>
-                  No recurring terms surfaced. The AI looks for proper
-                  nouns, technical terms, and recurring phrases — short
-                  or very simple projects often have nothing worth
-                  pinning.
-                </div>
-              )}
-            <div className="space-y-2 mt-2">
-              {glossarySuggestions.proposals.map((p, idx) => {
-                const saving = glossarySuggestions.saving.has(idx)
-                return (
-                  <div
-                    key={idx}
-                    className="rounded-xl p-3 flex items-center gap-3"
-                    style={{
-                      background: "#faf5ee",
-                      border: "1px solid #e7ddc5",
-                    }}
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <span
-                          className="font-mono text-[13px] font-semibold"
-                          style={{ color: "#1f2a2e" }}
-                        >
-                          {p.source_term}
-                        </span>
-                        <span style={{ color: "#cfc6ad" }}>→</span>
-                        <span
-                          className="font-mono text-[13px] font-semibold"
-                          style={{ color: "#0a7870" }}
-                        >
-                          {p.target_term}
-                        </span>
-                        <span
-                          className="text-[10px] tabular-nums px-1.5 py-0.5 rounded-full"
-                          style={{
-                            background: "#cfe6e2",
-                            color: "#0a5e58",
-                          }}
-                        >
-                          ×{p.frequency}
-                        </span>
-                      </div>
-                      {p.context && (
-                        <div
-                          className="text-[11px] truncate"
-                          style={{ color: "#8a8270" }}
-                          title={p.context}
-                        >
-                          {p.context}
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => acceptGlossarySuggestion(idx, p)}
-                      disabled={saving}
-                      className="px-3 py-1.5 rounded-full text-[12px] font-semibold transition shrink-0"
-                      style={{
-                        background: saving ? "#9bc9c5" : "#0a7870",
-                        color: "#fff",
-                        cursor: saving ? "not-allowed" : "pointer",
-                      }}
-                    >
-                      {saving ? "Saving…" : "Add"}
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
-            <div className="flex items-center justify-end mt-5">
-              <button
-                type="button"
-                onClick={() =>
-                  setGlossarySuggestions((s) => ({ ...s, open: false }))
-                }
-                className="px-4 py-2 rounded-full text-sm font-semibold"
-                style={{
-                  background: "#ffffff",
-                  color: "#1f2a2e",
-                  border: "1px solid #e7ddc5",
-                }}
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {}
-      {}
-      {revisionModal.open && (
-        <div
-          onClick={() =>
-            setRevisionModal((m) => ({ ...m, open: false }))
-          }
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(31,42,46,0.45)",
-            backdropFilter: "blur(2px)",
-            zIndex: 100,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: 520,
-              maxWidth: "92vw",
-              background: "#fbf6ea",
-              borderRadius: 18,
-              boxShadow: "0 18px 40px rgba(0,0,0,0.25)",
-              padding: 24,
-              border: "1px solid #e7ddc5",
-            }}
-          >
-            <div
-              className="text-[11px] font-semibold tracking-[0.16em]"
-              style={{ color: "#8a8270", marginBottom: 6 }}
-            >
-              REQUEST REVISION
-            </div>
-            <div
-              className="text-[16px] font-semibold"
-              style={{ color: "#1f2a2e", marginBottom: 16 }}
-            >
-              Have an AI reviewer improve the whole translation
-            </div>
-            <div style={{ marginBottom: 14 }}>
-              <label
-                className="text-[11px] font-semibold tracking-[0.08em]"
-                style={{ color: "#6b6558", display: "block", marginBottom: 6 }}
-              >
-                AI ENGINE
-              </label>
-              <select
-                value={revisionModal.model}
-                onChange={(e) =>
-                  setRevisionModal((m) => ({ ...m, model: e.target.value }))
-                }
-                className="w-full text-[13px] px-3 py-2 rounded-lg outline-none"
-                style={{
-                  background: "#ffffff",
-                  border: "1px solid #e7ddc5",
-                  color: "#1f2a2e",
-                }}
-              >
-                {translationModels.length === 0 ? (
-                  <option value="">Default</option>
-                ) : (
-                  translationModels.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label} {m.provider ? `· ${m.provider}` : ""}
-                    </option>
-                  ))
-                )}
-              </select>
-            </div>
-            <div style={{ marginBottom: 16 }}>
-              <label
-                className="text-[11px] font-semibold tracking-[0.08em]"
-                style={{ color: "#6b6558", display: "block", marginBottom: 6 }}
-              >
-                INSTRUCTIONS (OPTIONAL)
-              </label>
-              <textarea
-                value={revisionModal.instructions}
-                onChange={(e) =>
-                  setRevisionModal((m) => ({
-                    ...m,
-                    instructions: e.target.value,
-                  }))
-                }
-                rows={4}
-                placeholder="e.g. 'use more formal language', 'prefer Municipality over City', 'British spelling'…"
-                className="w-full text-[13px] px-3 py-2 rounded-lg outline-none resize-none"
-                style={{
-                  background: "#ffffff",
-                  border: "1px solid #e7ddc5",
-                  color: "#1f2a2e",
-                  fontFamily: "inherit",
-                }}
-              />
-            </div>
-            <div
-              className="text-[12px] rounded-lg px-3 py-2"
-              style={{ background: "#f3ecdb", color: "#4a4638", marginBottom: 16 }}
-            >
-              {revisionCostText(project.free_revisions_left)}
-            </div>
-            <div
-              style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}
-            >
-              <button
-                type="button"
-                onClick={() =>
-                  setRevisionModal((m) => ({ ...m, open: false }))
-                }
-                className="text-[13px] font-semibold px-4 py-2 rounded-full transition"
-                style={{
-                  background: "#ffffff",
-                  color: "#1f2a2e",
-                  border: "1px solid #e7ddc5",
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={submitRevision}
-                className="text-[13px] font-semibold px-4 py-2 rounded-full transition"
-                style={{
-                  background: "#0a7870",
-                  color: "#ffffff",
-                  border: "1px solid #0a7870",
-                }}
-              >
-                Run revision
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {glossaryDraft.open && (
-        <div
-          onClick={() =>
-            !glossaryDraft.busy &&
-            setGlossaryDraft((g) => ({ ...g, open: false }))
-          }
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(31,42,46,0.45)",
-            backdropFilter: "blur(2px)",
-            zIndex: 100,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="rounded-2xl p-6 w-full max-w-lg"
-            style={{
-              background: "#ffffff",
-              border: "1px solid #e7ddc5",
-              boxShadow: "0 24px 60px rgba(30,30,20,0.18)",
-            }}
-          >
-            <div
-              className="text-[11px] font-semibold tracking-[0.18em] mb-1"
-              style={{ color: "#9a9178" }}
-            >
-              ADD TO GLOSSARY
-            </div>
-            <h3
-              className="text-[18px] font-semibold tracking-tight mb-4"
-              style={{ color: "#1f2a2e" }}
-            >
-              Pin this term across the project
-            </h3>
-            <div className="space-y-3">
-              <div>
-                <div
-                  className="text-[11px] font-semibold tracking-[0.12em] mb-1.5"
-                  style={{ color: "#9a9178" }}
-                >
-                  SOURCE TERM
-                </div>
-                <input
-                  value={glossaryDraft.sourceTerm}
-                  onChange={(e) =>
-                    setGlossaryDraft((g) => ({
-                      ...g,
-                      sourceTerm: e.target.value,
-                    }))
-                  }
-                  className="w-full text-sm outline-none px-3 py-2.5 rounded-xl"
-                  style={{
-                    background: "#faf5ee",
-                    border: "1px solid #e7ddc5",
-                    color: "#1f2a2e",
-                  }}
-                />
-              </div>
-              <div>
-                <div
-                  className="text-[11px] font-semibold tracking-[0.12em] mb-1.5"
-                  style={{ color: "#9a9178" }}
-                >
-                  TARGET TERM
-                </div>
-                <input
-                  value={glossaryDraft.targetTerm}
-                  onChange={(e) =>
-                    setGlossaryDraft((g) => ({
-                      ...g,
-                      targetTerm: e.target.value,
-                    }))
-                  }
-                  className="w-full text-sm outline-none px-3 py-2.5 rounded-xl"
-                  style={{
-                    background: "#faf5ee",
-                    border: "1px solid #e7ddc5",
-                    color: "#1f2a2e",
-                  }}
-                />
-              </div>
-              <div>
-                <div
-                  className="text-[11px] font-semibold tracking-[0.12em] mb-1.5"
-                  style={{ color: "#9a9178" }}
-                >
-                  NOTES (OPTIONAL)
-                </div>
-                <input
-                  value={glossaryDraft.notes}
-                  onChange={(e) =>
-                    setGlossaryDraft((g) => ({
-                      ...g,
-                      notes: e.target.value,
-                    }))
-                  }
-                  placeholder="When to use this term…"
-                  className="w-full text-sm outline-none px-3 py-2.5 rounded-xl"
-                  style={{
-                    background: "#faf5ee",
-                    border: "1px solid #e7ddc5",
-                    color: "#1f2a2e",
-                  }}
-                />
-              </div>
-            </div>
-            <p className="text-xs mt-3" style={{ color: "#8a8270" }}>
-              The glossary is team-scoped. Once saved, every project on
-              your team enforces this mapping during translation.
-            </p>
-            <div className="flex items-center justify-end gap-2 mt-5">
-              <button
-                type="button"
-                onClick={() =>
-                  setGlossaryDraft((g) => ({ ...g, open: false }))
-                }
-                disabled={glossaryDraft.busy}
-                className="px-4 py-2 rounded-full text-sm font-semibold"
-                style={{
-                  background: "#ffffff",
-                  color: "#1f2a2e",
-                  border: "1px solid #e7ddc5",
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={saveGlossaryDraft}
-                disabled={
-                  glossaryDraft.busy ||
-                  !glossaryDraft.sourceTerm.trim() ||
-                  !glossaryDraft.targetTerm.trim()
-                }
-                className="px-4 py-2 rounded-full text-sm font-semibold"
-                style={{
-                  background:
-                    glossaryDraft.busy ||
-                    !glossaryDraft.sourceTerm.trim() ||
-                    !glossaryDraft.targetTerm.trim()
-                      ? "#9bc9c5"
-                      : "#0a7870",
-                  color: "#fff",
-                  cursor:
-                    glossaryDraft.busy ||
-                    !glossaryDraft.sourceTerm.trim() ||
-                    !glossaryDraft.targetTerm.trim()
-                      ? "not-allowed"
-                      : "pointer",
-                }}
-              >
-                {glossaryDraft.busy ? "Saving…" : "Add term"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {}
       {renameOpen && (

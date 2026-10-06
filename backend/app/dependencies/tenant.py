@@ -14,6 +14,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.roles import TEAM_MANAGER_ROLES, is_staff
 from app.models.user import User
 from app.models.team import Team
 from app.models.team_member import TeamMember
@@ -32,6 +33,20 @@ def team_ids_for(db: Session, user: User) -> set:
     for (tid,) in memberships:
         ids.add(tid)
     return ids
+
+
+def can_manage_team(db: Session, team: Team, user: User) -> bool:
+    """Billing, payments and the stamp: the team owner or a team ADMIN."""
+    if team is None:
+        return False
+    if team.owner_id == user.id:
+        return True
+    member = (
+        db.query(TeamMember)
+        .filter(TeamMember.team_id == team.id, TeamMember.user_id == user.id)
+        .first()
+    )
+    return bool(member and (member.role or "").upper() in TEAM_MANAGER_ROLES)
 
 
 def get_user_project_or_404(
@@ -68,7 +83,7 @@ def assert_project_access(
 
 def can_manage_project(db: Session, project: TranslationProject, user: User) -> bool:
     """Destructive actions: the uploader, the team owner, or a team ADMIN/PM."""
-    if project.user_id == user.id or (user.role or "").upper() in ("SUPERUSER", "SUPER_ADMIN", "ADMIN"):
+    if project.user_id == user.id or is_staff(user):
         return True
     team = db.query(Team).filter(Team.id == project.team_id).first()
     if team and team.owner_id == user.id:
