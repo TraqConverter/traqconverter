@@ -73,6 +73,15 @@ def test_a_failed_vision_page_falls_back_instead_of_dropping_the_page(tmp_path, 
     assert [(s.text, s.layout["page"]) for s in segs] == [("Pagina 2", 1)]
 
 
+@pytest.mark.parametrize("status", [ProjectStatus.PENDING, ProjectStatus.PROCESSING, ProjectStatus.FAILED])
+@pytest.mark.parametrize("path", ["export", "export/pdf", "export/delivery.pdf"])
+def test_unfinished_projects_do_not_export(client, make_user, make_project, status, path):
+    owner = make_user()
+    project = make_project(owner, status=status)
+    r = client.get(f"/projects/{project.id}/{path}", headers=owner["headers"])
+    assert r.status_code == 409
+
+
 def _word_file(path):
     from docx import Document
     from docx.oxml import parse_xml

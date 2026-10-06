@@ -9,7 +9,7 @@ from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
 from app.dependencies.tenant import get_user_project_or_404
 from app.models.translation_segment import TranslationSegment
-from app.models.project import TranslationProject, is_dtp
+from app.models.project import ProjectStatus, TranslationProject, is_dtp
 from app.models.user import User
 from app.services import dtp_export
 
@@ -19,6 +19,14 @@ from app.services.learning import capture_template_in_background
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["Export"])
+
+
+def _finished_project(db: Session, project_id: UUID, user: User) -> TranslationProject:
+    project = get_user_project_or_404(db, project_id, user)
+    # Without a finished translation the export would be a certification page certifying nothing.
+    if project.status != ProjectStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="The translation isn't finished yet")
+    return project
 
 
 def render_export(db: Session, project: TranslationProject, user: User, fmt: str):
@@ -51,7 +59,7 @@ def export_docx_route(
 ):
 
 
-    project = get_user_project_or_404(db, project_id, current_user)
+    project = _finished_project(db, project_id, current_user)
 
     try:
         file_buffer = render_export(db, project, current_user, "docx")
@@ -84,7 +92,7 @@ def export_pdf_route(
 ):
 
 
-    project = get_user_project_or_404(db, project_id, current_user)
+    project = _finished_project(db, project_id, current_user)
 
     try:
         file_buffer = render_export(db, project, current_user, "pdf")
@@ -117,7 +125,7 @@ def export_delivery_pdf_route(
     from app.services.delivery_pdf import DeliveryError, build_delivery_pdf, delivery_filename
     from app.services.s3_service import _attachment
 
-    project = get_user_project_or_404(db, project_id, current_user)
+    project = _finished_project(db, project_id, current_user)
 
     try:
         data = build_delivery_pdf(db, project, current_user, include_original=include_original, order=order)
