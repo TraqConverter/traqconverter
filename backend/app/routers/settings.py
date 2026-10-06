@@ -333,9 +333,15 @@ def connect_stripe(
     try:
         account_id = stripe_connect.ensure_account(db, team, current_user, country or None)
         url = stripe_connect.onboarding_url(account_id)
-    except Exception:
+    except Exception as exc:
         db.rollback()
         logger.exception("Stripe Connect onboarding failed (team=%s)", team.id)
+        # Stripe refuses connected accounts until the platform owner finishes the Connect questionnaire.
+        if "platform profile" in str(exc).lower():
+            raise HTTPException(
+                status_code=503,
+                detail="Card payments aren't available yet: the platform's Stripe setup isn't finished. Use the PayPal option for now.",
+            )
         raise HTTPException(status_code=502, detail="Stripe isn't reachable right now. Try again in a minute.")
     return {"url": url}
 
