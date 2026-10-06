@@ -855,8 +855,13 @@ def _extract_docx(file_path: str) -> list[ExtractedSegment]:
 
 
     for tbl_idx, table in enumerate(doc.tables):
+        # row.cells repeats a merged cell once per grid column it spans.
+        seen_cells: set = set()
         for row_idx, row in enumerate(table.rows):
             for col_idx, cell in enumerate(row.cells):
+                if cell._tc in seen_cells:
+                    continue
+                seen_cells.add(cell._tc)
                 for cp_idx, cp in enumerate(cell.paragraphs):
                     text = cp.text.strip()
                     if not text:
@@ -1766,7 +1771,8 @@ def _rebuild_docx(
 
     def _replace_paragraph_text(paragraph, new_text: str) -> None:
         """Keep the first run's formatting; drop any extra runs; set new text."""
-        runs = paragraph.runs
+        # paragraph.text includes hyperlink text but paragraph.runs doesn't; leaving those runs duplicated it.
+        runs = list(paragraph.runs) + [r for link in paragraph.hyperlinks for r in link.runs]
         if not runs:
             paragraph.add_run(new_text)
             return

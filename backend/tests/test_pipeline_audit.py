@@ -73,6 +73,42 @@ def test_a_failed_vision_page_falls_back_instead_of_dropping_the_page(tmp_path, 
     assert [(s.text, s.layout["page"]) for s in segs] == [("Pagina 2", 1)]
 
 
+def _word_file(path):
+    from docx import Document
+    from docx.oxml import parse_xml
+
+    doc = Document()
+    p = doc.add_paragraph("Visit ")
+    p._p.append(parse_xml(
+        '<w:hyperlink xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" w:anchor="x">'
+        "<w:r><w:t>our website</w:t></w:r></w:hyperlink>"
+    ))
+    table = doc.add_table(rows=2, cols=2)
+    merged = table.cell(0, 0).merge(table.cell(0, 1))
+    merged.text = "Merged label"
+    table.cell(1, 0).text = "Left"
+    table.cell(1, 1).text = "Right"
+    doc.save(path)
+    return path
+
+
+def test_word_extraction_and_rebuild_keep_links_and_merged_cells_single(tmp_path):
+    from docx import Document
+
+    from app.services import layout_translator as lt
+
+    src = _word_file(tmp_path / "in.docx")
+    kind, segs = lt.extract_segments(str(src))
+    assert kind == "DOCX"
+    assert [s.text for s in segs] == ["Visit our website", "Merged label", "Left", "Right"]
+
+    out = tmp_path / "out.docx"
+    lt._rebuild_docx(str(src), str(out), [(f"T:{s.text}", s.layout) for s in segs])
+    rebuilt = Document(str(out))
+    assert rebuilt.paragraphs[0].text == "T:Visit our website"
+    assert rebuilt.tables[0].cell(0, 0).text == "T:Merged label"
+
+
 def _ocr_reply(monkeypatch, body):
     import json
 
