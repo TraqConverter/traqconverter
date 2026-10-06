@@ -491,7 +491,9 @@ def _build_layout_docx_live(segments, project, preview_only: bool = False):
 
 
 
-        stamp_path, stamp_alignment = _resolve_team_stamp(project, tmp_dir)
+        stamp_path, stamp_alignment = (
+            (None, "right") if getattr(project, "_page_stamp_in_footer", False) else _resolve_team_stamp(project, tmp_dir)
+        )
         if stamp_path:
             project_meta["stamp_path"] = stamp_path
             project_meta["stamp_alignment"] = stamp_alignment

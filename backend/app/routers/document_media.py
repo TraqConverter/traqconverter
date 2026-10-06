@@ -19,8 +19,8 @@ from app.models.certification import Certification
 from app.models.document_version import DocumentVersion
 from app.models.project import TranslationProject, is_dtp
 from app.models.user import User
-from app.routers.document import _initial_builder, _locked_project, _require_version
-from app.services import cert_locale, cert_page, docx_certification, docx_images, document_editor
+from app.routers.document import StampUnavailable, _initial_builder, _locked_project, _require_version, team_stamp
+from app.services import cert_locale, cert_page, docx_certification, docx_images, docx_page_stamp, document_editor
 from app.services.docx_blocks import DocxEditError
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,31 @@ class _Resize(BaseModel):
 class _Align(BaseModel):
     version: int
     align: Align
+
+
+class _Duplicate(BaseModel):
+    version: int
+    target_block_id: str = Field(pattern=BLOCK_ID)
+
+
+class _PagePlacement(BaseModel):
+    block_id: str = Field(pattern=BLOCK_ID)
+    x_emu: int = Field(ge=-21_600_000, le=21_600_000)
+    y_emu: int = Field(ge=-21_600_000, le=21_600_000)
+
+
+class _CopyToPages(BaseModel):
+    version: int
+    targets: list[_PagePlacement] = Field(min_length=1, max_length=500)
+
+
+class _PageStamp(BaseModel):
+    version: int
+    enabled: Optional[bool] = None
+    align: Optional[Align] = None
+    width_cm: Optional[float] = Field(
+        default=None, ge=docx_page_stamp.MIN_WIDTH_CM, le=docx_page_stamp.MAX_WIDTH_CM
+    )
 
 
 # A team template's id, "standard" for the built-in page, or left out for the project's saved pick.
@@ -281,6 +306,96 @@ def align_image(
 ):
     change = lambda data, _p: docx_images.align_image(data, image_id, payload.align)
     return {"version": _edit(db, project_id, user, payload.version, "Aligned an image", change)}
+
+
+@router.post("/{project_id}/document/images/{image_id}/duplicate")
+def duplicate_image(
+    project_id: UUID,
+    payload: _Duplicate,
+    image_id: str = PathParam(pattern=IMAGE_ID),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """A copy at the target paragraph sharing the same picture file; floating offsets are kept."""
+    made = {}
+
+    def change(data, _p):
+        out, made["id"] = docx_images.duplicate_image(data, image_id, payload.target_block_id)
+        return out
+
+    new_version = _edit(db, project_id, user, payload.version, "Copied an image", change)
+    return {"version": new_version, "image_id": made["id"]}
+
+
+@router.post("/{project_id}/document/images/{image_id}/copy-to-pages")
+def copy_image_to_pages(
+    project_id: UUID,
+    payload: _CopyToPages,
+    image_id: str = PathParam(pattern=IMAGE_ID),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """One copy per page, each hung from that page's first paragraph at the given offsets: one version, one undo."""
+    made = {"ids": []}
+
+    def change(data, _p):
+        placements = [(t.block_id, t.x_emu, t.y_emu) for t in payload.targets]
+        out, made["ids"] = docx_images.copy_to_blocks(data, image_id, placements)
+        return out
+
+    note = "Copied an image to every page"
+    new_version = _edit(db, project_id, user, payload.version, note, change)
+    return {"version": new_version, "image_ids": made["ids"]}
+
+
+def _page_stamp_state(db: Session, project: TranslationProject, data: bytes, version: int) -> dict:
+    from app.models.team import Team
+
+    team = db.query(Team).filter(Team.id == project.team_id).first()
+    return {
+        "version": version,
+        "available": bool(team and team.stamp_s3_key) and not is_dtp(project),
+        **docx_page_stamp.state(data),
+    }
+
+
+@router.get("/{project_id}/document/page-stamp")
+def get_page_stamp(project_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """`managed` is false for documents from before the editable stamp; their export adds it the old way."""
+    project = get_user_project_or_404(db, project_id, user)
+    data, version = document_editor.current_document(db, project, user, _initial_builder(db, project, user))
+    return _page_stamp_state(db, project, data, version)
+
+
+@router.put("/{project_id}/document/page-stamp")
+def update_page_stamp(
+    project_id: UUID,
+    payload: _PageStamp,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    project = get_user_project_or_404(db, project_id, user)
+    if is_dtp(project):
+        raise HTTPException(status_code=409, detail="An editable copy has no page stamp")
+    image = None
+    if payload.enabled:
+        try:
+            image, _ = team_stamp(db, project)
+        except StampUnavailable:
+            raise HTTPException(status_code=502, detail="Couldn't load your stamp from storage")
+        if image is None:
+            raise HTTPException(status_code=404, detail="No stamp saved in Settings")
+
+    def change(data, _p):
+        return docx_page_stamp.update(
+            data, enabled=payload.enabled, align=payload.align, width_cm=payload.width_cm, image=image
+        )
+
+    note = {True: "Turned the page stamp on", False: "Turned the page stamp off"}.get(payload.enabled, "Changed the page stamp")
+    _edit(db, project_id, user, payload.version, note, change)
+    project = get_user_project_or_404(db, project_id, user)
+    data, version = document_editor.current_document(db, project, user, _initial_builder(db, project, user))
+    return _page_stamp_state(db, project, data, version)
 
 
 @router.delete("/{project_id}/document/images/{image_id}")

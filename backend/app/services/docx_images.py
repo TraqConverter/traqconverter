@@ -1,6 +1,7 @@
 """Pictures in the editable DOCX: insert, move, float, resize and delete, addressed by a stable image id."""
 from __future__ import annotations
 
+import copy
 import hashlib
 import io
 import posixpath
@@ -173,19 +174,45 @@ def _prune_unused_media(doc: _Doc, part: str = DOCUMENT) -> None:
             continue
         target = _media_path(part, rel.get("Target") or "")
         rels.remove(rel)
-        still_used = any(_media_path(part, r.get("Target") or "") == target for r in rels)
-        if not still_used:
+        if not _media_referenced(doc, target):
             doc.files.pop(target, None)
 
 
+def _media_referenced(doc: _Doc, target: str) -> bool:
+    """Whether any part's relationships still point at the file (the page stamp's footer shares body media)."""
+    names = {n for n in (*doc.files, *doc.trees) if n.endswith(".rels") and "/_rels/" in "/" + n}
+    for name in names:
+        folder = posixpath.dirname(posixpath.dirname(name))
+        part = posixpath.join(folder, posixpath.basename(name)[: -len(".rels")])
+        tree = doc.trees.get(name)
+        if tree is None:
+            tree = etree.fromstring(doc.files[name], blocks._PARSER)
+        for r in tree:
+            if (r.get("TargetMode") or "") != "External" and _media_path(part, r.get("Target") or "") == target:
+                return True
+    return False
+
+
 def _next_docpr_id(doc: _Doc) -> int:
+    # Footers hold pictures too (the page stamp); Word wants drawing ids unique across all parts.
     ids = [0]
-    for el in doc.trees[DOCUMENT].iter(wp("docPr")):
-        try:
-            ids.append(int(el.get("id", "0")))
-        except ValueError:
-            pass
+    for name, tree in doc.trees.items():
+        if not blocks.PART_RE.match(name):
+            continue
+        for el in tree.iter(wp("docPr")):
+            try:
+                ids.append(int(el.get("id", "0")))
+            except ValueError:
+                pass
     return max(ids) + 1
+
+
+def _new_image_id(doc: _Doc) -> str:
+    taken = {el.get("name") for el in doc.trees[DOCUMENT].iter(wp("docPr"))}
+    image_id = "img_" + secrets.token_hex(4)
+    while image_id in taken:
+        image_id = "img_" + secrets.token_hex(4)
+    return image_id
 
 
 def _graphic(rid: str, image_id: str, cx: int, cy: int):
@@ -382,6 +409,10 @@ def _rebuild_frame(doc: _Doc, drawing, frame, *, floating: bool, x: int = 0, y: 
         if floating
         else _build_inline(image_id, docpr_id, cx, cy, graphic)
     )
+    # Keeps the role (certification logo or stamp) a picture was given.
+    for attr in ("descr", "title"):
+        if docpr.get(attr):
+            new.find(wp("docPr")).set(attr, docpr.get(attr))
     drawing.replace(frame, new)
     return new
 
@@ -414,7 +445,7 @@ def insert_image(
     rid = add_image_part(doc, image)
     cx = int(_clamp_width(width_cm or DEFAULT_WIDTH_CM) * EMU_PER_CM)
     cy = max(1, int(cx * image.height_px / max(1, image.width_px)))
-    image_id = "img_" + secrets.token_hex(4)
+    image_id = _new_image_id(doc)
     frame = _build_inline(image_id, _next_docpr_id(doc), cx, cy, _graphic(rid, image_id, cx, cy))
     _place_inline(doc, _new_run(frame), block_id, position, align)
     return _finish(doc), image_id
@@ -484,6 +515,112 @@ def delete_image(data: bytes, image_id: str) -> bytes:
     _detach(doc, run)
     _prune_unused_media(doc)
     return _finish(doc)
+
+
+_NUDGE_EMU = int(0.5 * EMU_PER_CM)
+
+
+def _paragraph_of(el):
+    while el is not None and el.tag != w("p"):
+        el = el.getparent()
+    return el
+
+
+def _align_of(p) -> str:
+    jc = p.find(f"{w('pPr')}/{w('jc')}") if p is not None else None
+    val = jc.get(w("val")) if jc is not None else None
+    return {"start": "left", "end": "right"}.get(val, val if val in ALIGNS else "left")
+
+
+def _set_offsets(frame, x: int, y: int) -> None:
+    for tag, rel, value in (("positionH", "column", x), ("positionV", "paragraph", y)):
+        pos = frame.find(wp(tag))
+        for child in list(pos):
+            pos.remove(child)
+        pos.set("relativeFrom", rel)
+        etree.SubElement(pos, wp("posOffset")).text = str(max(-_MAX_OFFSET_EMU, min(_MAX_OFFSET_EMU, int(value))))
+
+
+def _nudge(frame) -> None:
+    for tag in ("positionH", "positionV"):
+        off = frame.find(f"{wp(tag)}/{wp('posOffset')}")
+        if off is not None:
+            off.text = str(min(_MAX_OFFSET_EMU, int(off.text or 0) + _NUDGE_EMU))
+
+
+def _clone(doc: _Doc, image_id: str, target, x: int | None = None, y: int | None = None) -> str:
+    """Copy a picture next to `target`; the copy reuses the same media relationship."""
+    _, frame, run = _find_image(doc, image_id)
+    source_p = _paragraph_of(run)
+    new_id = _new_image_id(doc)
+    new_frame = copy.deepcopy(frame)
+    for attr in list(new_frame.attrib):
+        if attr.startswith(f"{{{blocks.WP14_NS}}}"):
+            del new_frame.attrib[attr]
+    docpr = new_frame.find(wp("docPr"))
+    docpr.set("name", new_id)
+    docpr.set("id", str(_next_docpr_id(doc)))
+    for attr in ("descr", "title"):
+        docpr.attrib.pop(attr, None)
+    for cnv in new_frame.iter(f"{{{PIC_NS}}}cNvPr"):
+        cnv.set("name", f"{new_id}.png")
+    new_run = etree.Element(w("r"))
+    rpr = run.find(w("rPr"))
+    if rpr is not None:
+        new_run.append(copy.deepcopy(rpr))
+    drawing = etree.SubElement(new_run, w("drawing"))
+    drawing.append(new_frame)
+    if x is not None and y is not None:
+        if new_frame.tag != wp("anchor"):
+            new_frame = _rebuild_frame(doc, drawing, new_frame, floating=True, x=x, y=y)
+        else:
+            _set_offsets(new_frame, x, y)
+        target.insert(_insertion_index(target), new_run)
+    elif new_frame.tag == wp("anchor"):
+        if target is source_p:
+            _nudge(new_frame)
+        target.insert(_insertion_index(target), new_run)
+    else:
+        p = _image_paragraph(_align_of(source_p))
+        p.append(new_run)
+        target.addnext(p)
+    return new_id
+
+
+def duplicate_image(data: bytes, image_id: str, target_block_id: str) -> tuple[bytes, str]:
+    """Copy at a paragraph: a floating picture keeps its offsets there, an inline one goes in a paragraph after it."""
+    doc = _Doc.load(data)
+    target = _block_paragraph(doc, target_block_id)
+    new_id = _clone(doc, image_id, target)
+    return _finish(doc), new_id
+
+
+def _embed_targets(doc: _Doc, el) -> set[str]:
+    rels = {r.get("Id"): r.get("Target") for r in doc.rels(DOCUMENT)}
+    return {rels.get(b.get(f"{{{R_NS}}}embed")) for b in el.iter(a("blip"))} - {None}
+
+
+def copy_to_blocks(data: bytes, image_id: str, placements: list[tuple[str, int, int]]) -> tuple[bytes, list[str]]:
+    """One floating copy per (block, x, y), skipping the certification page and paragraphs already showing the picture."""
+    from app.services.docx_certification import _marker_units
+
+    doc = _Doc.load(data)
+    _, _, run = _find_image(doc, image_id)
+    media = _embed_targets(doc, run)
+    # Holding the elements keeps lxml's proxies (and so their identity) stable.
+    cert = {p for unit in _marker_units(doc) for p in unit.iter(w("p"))}
+    new_ids, seen = [], set()
+    for block_id, x, y in placements:
+        if block_id in seen:
+            continue
+        seen.add(block_id)
+        target = _block_paragraph(doc, block_id)
+        if target in cert or _embed_targets(doc, target) & media:
+            continue
+        new_ids.append(_clone(doc, image_id, target, x, y))
+    if not new_ids:
+        return data, []
+    return _finish(doc), new_ids
 
 
 def list_images(data: bytes) -> list[dict]:
