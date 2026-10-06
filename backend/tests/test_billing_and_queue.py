@@ -87,11 +87,9 @@ def test_idempotency_key_is_scoped_to_user(client, db, make_user, tmp_path):
 
 @pytest.fixture()
 def no_background_ai(monkeypatch):
-    import app.routers.project as project_router
     from app.services import ai_actions
 
     calls = []
-    monkeypatch.setattr(project_router, "_revise_background", lambda *a: calls.append(("revise", a)))
     monkeypatch.setattr(ai_actions, "run_rebuild", lambda *a: calls.append(("rebuild", a)))
     return calls
 
@@ -111,15 +109,6 @@ def test_rerun_charges_and_requeues(client, db, make_user, make_project):
     assert _wallet(db, owner).subscription_credits == 6
     assert len(_jobs(db, project.id)) == 1
     assert client.post(f"/projects/{project.id}/rerun", headers=owner["headers"], json={}).status_code == 409
-
-
-def test_preview_html_never_starts_a_rebuild(client, db, make_user, make_project, monkeypatch):
-    import app.services.claude_authored_rebuild as rebuild
-
-    monkeypatch.setattr(rebuild, "author_rebuild_docx", lambda *a, **k: pytest.fail("preview triggered a Claude rebuild"))
-    owner = make_user()
-    project = make_project(owner)
-    client.get(f"/projects/{project.id}/preview/rebuild-html", headers=owner["headers"])
 
 
 def _queued_project(client, db, make_user, tmp_path, credits=10, pages=3):

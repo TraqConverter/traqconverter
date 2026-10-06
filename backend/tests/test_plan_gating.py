@@ -227,15 +227,6 @@ def test_editor_edits_follow_the_plan(client, db, gated_project, plan, queued, m
     assert db.query(TranslationMemory).count() == memory
 
 
-@pytest.mark.parametrize("plan,memory", [("TRIAL", 0), ("BASIC", 0), ("PRO", 1)])
-def test_segment_save_follows_the_plan(client, db, gated_project, plan, memory):
-    owner, project = gated_project(plan)
-    seg = db.query(TranslationSegment).filter(TranslationSegment.project_id == project.id).first()
-    r = client.patch(f"/segments/{seg.id}", headers=owner["headers"], json={"translated_text": MEMORY})
-    assert r.status_code == 200, r.text
-    assert db.query(TranslationMemory).count() == memory
-
-
 def test_queued_edits_of_a_trial_team_are_dropped_without_a_model_call(db, gated_project):
     _, project = gated_project("TRIAL")
     db.add(PendingLearning(project_id=project.id, block_id="b1", before_text="THE REGISTRY OFFICER",

@@ -202,19 +202,6 @@ def test_regenerate_combines_saved_and_new_instructions(db, storage, make_user, 
     assert project.rebuild_status == "done"
 
 
-def test_revise_prompt_includes_saved_instructions(db, make_user, make_project, monkeypatch):
-    from app.routers import project as project_router
-    from app.services import ai_translation_service as ats
-
-    project = make_project(make_user(), source_kind="DOCX")
-    project.ai_instructions = INSTR
-    db.commit()
-    systems = []
-    monkeypatch.setattr(ats, "_call_model", lambda **kw: systems.append(kw["system"]) or "improved")
-    project_router._revise_background(str(project.id), None, "")
-    assert systems and all(INSTR in s for s in systems)
-
-
 def test_processor_passes_instructions_to_template_fill(db, doc_project, make_project, monkeypatch):  # noqa: F811
     from app.services import learning
     from app.services import translation_processor as tp

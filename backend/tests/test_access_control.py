@@ -1,7 +1,6 @@
 import pytest
 
 from app.models.project import TranslationProject
-from app.models.segment_comment import SegmentComment
 from app.models.translation_segment import TranslationSegment
 
 
@@ -19,14 +18,12 @@ def _segment(db, project):
 
 @pytest.mark.parametrize("method,path", [
     ("get", "/projects/{pid}"),
-    ("get", "/projects/{pid}/segments"),
     ("get", "/projects/{pid}/download"),
     ("get", "/projects/{pid}/rebuild-url"),
-    ("get", "/projects/{pid}/preview/rebuild-docx"),
+    ("get", "/projects/{pid}/preview/source"),
     ("get", "/projects/{pid}/export"),
     ("patch", "/projects/{pid}"),
     ("delete", "/projects/{pid}"),
-    ("post", "/projects/{pid}/revise"),
     ("post", "/projects/{pid}/rerun"),
     ("post", "/projects/{pid}/rebuild-with-claude"),
 ])
@@ -37,33 +34,39 @@ def test_other_tenant_gets_404(client, two_tenants, method, path):
     assert r.status_code == 404, (path, r.status_code, r.text)
 
 
-def test_segment_edit_blocked_for_other_tenant(client, db, two_tenants):
-    _, bob, project = two_tenants
+@pytest.mark.parametrize("method,path", [
+    ("post", "/segments/{sid}/retranslate"),
+    ("patch", "/segments/{sid}"),
+    ("get", "/segments/project/{pid}"),
+    ("get", "/segments/{sid}/comments"),
+    ("get", "/projects/{pid}/segments"),
+    ("patch", "/projects/{pid}/segments/{sid}/approve"),
+    ("post", "/projects/{pid}/revise"),
+    ("post", "/projects/{pid}/suggest-glossary"),
+    ("get", "/projects/{pid}/preview/rebuild"),
+    ("get", "/projects/{pid}/preview/rebuild-html"),
+    ("get", "/projects/{pid}/preview/rebuild-docx"),
+    ("post", "/projects/{pid}/build-rebuild-docx"),
+])
+def test_unused_ai_and_segment_routes_are_gone(client, db, two_tenants, monkeypatch, method, path):
+    from app.services import ai_translation_service, claude_params
+
+    def no_model(*a, **k):
+        pytest.fail("a removed route reached the model")
+
+    monkeypatch.setattr(ai_translation_service, "_call_model", no_model)
+    monkeypatch.setattr(claude_params, "create_message", no_model)
+    alice, _, project = two_tenants
     seg = _segment(db, project)
-    r = client.patch(f"/segments/{seg.id}", headers=bob["headers"], json={"translated_text": "pwned"})
-    assert r.status_code == 404
-    db.refresh(seg)
-    assert seg.translated_text != "pwned"
-
-
-def test_comments_are_tenant_scoped(client, db, two_tenants):
-    alice, bob, project = two_tenants
-    seg = _segment(db, project)
-    assert client.post(f"/segments/{seg.id}/comments", headers=alice["headers"], json={"text": "check"}).status_code == 200
-    comment = db.query(SegmentComment).first()
-
-    assert client.get(f"/segments/{seg.id}/comments", headers=bob["headers"]).status_code == 404
-    assert client.post(f"/segments/{seg.id}/comments", headers=bob["headers"], json={"text": "x"}).status_code == 404
-    assert client.patch(f"/segments/{comment.id}/resolve", headers=bob["headers"]).status_code == 404
-    assert client.patch(f"/segments/comments/{comment.id}/reopen", headers=bob["headers"]).status_code == 404
-    assert client.delete(f"/segments/comments/{comment.id}", headers=bob["headers"]).status_code == 404
-    assert client.get(f"/segments/{seg.id}/comments", headers=alice["headers"]).json()[0]["text"] == "check"
+    kwargs = {"json": {}} if method in ("post", "patch") else {}
+    r = getattr(client, method)(path.format(pid=project.id, sid=seg.id), headers=alice["headers"], **kwargs)
+    assert r.status_code in (404, 405), (path, r.status_code)
 
 
 def test_query_string_token_is_not_accepted(client, two_tenants):
     alice, _, project = two_tenants
     token = alice["headers"]["Authorization"].split()[1]
-    r = client.get(f"/projects/{project.id}/preview/rebuild-docx?access_token={token}")
+    r = client.get(f"/projects/{project.id}/preview/source?access_token={token}")
     assert r.status_code == 401
 
 
@@ -89,7 +92,6 @@ def test_trial_cannot_fetch_full_output(client, make_user, make_project):
     project = make_project(trial)
     for path in ("/projects/{pid}/rebuild-url", "/projects/{pid}/download", "/projects/{pid}/export"):
         assert client.get(path.format(pid=project.id), headers=trial["headers"]).status_code == 403, path
-    assert client.post(f"/projects/{project.id}/build-rebuild-docx", headers=trial["headers"]).status_code == 403
 
 
 def test_edited_html_is_sanitized(client, db, make_user, make_project):
