@@ -279,6 +279,26 @@ def test_scan_runs_one_vision_call_per_page_and_surfaces_uncertain_readings(clie
     assert f.kinds().count("vision") == 1
 
 
+def test_dense_scan_page_lists_every_paragraph_to_the_vision_pass(client, review_project, fake):
+    listed = []
+
+    def vision(kwargs):
+        listing = kwargs["messages"][0]["content"][1]["text"]
+        rows = [line.split(": ", 1)[0] for line in listing.split("\n") if line.startswith("_b")]
+        listed.append(rows)
+        return {"paragraphs": [{"id": b, "found": True, "x0": 10, "y0": 10, "x1": 400, "y1": 60, "reading": "high", "reason": ""} for b in rows], "elements": []}
+
+    fake(vision=vision)
+    translation = [f"Row {i} of the register, entry number {i}" for i in range(170)]
+    owner, project = review_project(translation=translation, source="scan", boxes=False)
+    data, _ = _doc(client, owner, project)
+    client.get(f"/projects/{project.id}/source/map", headers=owner["headers"])
+    view = client.get(f"/projects/{project.id}/source/map", headers=owner["headers"]).json()
+    assert all(len(rows) <= source_map.MAX_PARAS_PER_CALL for rows in listed)
+    assert {b for rows in listed for b in rows} == set(_ids_by_text(data).values())
+    assert set(view["blocks"]) == set(_ids_by_text(data).values())
+
+
 def test_new_paragraph_after_edit_is_mapped_incrementally(client, db, review_project, fake):
     calls = []
 
