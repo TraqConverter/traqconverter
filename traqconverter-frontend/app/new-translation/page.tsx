@@ -382,21 +382,27 @@ export default function NewProjectPage() {
               </div>
 
               <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handlePickFile()
+                {/* A native label opens the picker without scripted clicks, which some browsers block. */}
+                <label
+                  htmlFor="new-project-files"
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault()
+                      handlePickFile()
+                    }
                   }}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium text-white transition disabled:opacity-60"
-                  style={{ background: "#0a7870" }}
+                  aria-disabled={loading}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium text-white transition cursor-pointer select-none"
+                  style={{ background: "#0a7870", pointerEvents: loading ? "none" : undefined, opacity: loading ? 0.6 : 1 }}
                   onMouseEnter={(e) => (e.currentTarget.style.background = "#0a645d")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "#0a7870")}
                 >
                   <IconUploadWhite />
                   {file ? "Add more files" : "Browse files"}
-                </button>
+                </label>
               </div>
 
               <div className="flex items-center gap-5 mt-8 text-xs" style={{ color: "#8a8270" }}>
@@ -406,6 +412,7 @@ export default function NewProjectPage() {
 
             <input
               ref={fileInputRef}
+              id="new-project-files"
               type="file"
               multiple
               className="hidden"
