@@ -227,10 +227,56 @@ def claim_paid(db: Session, link: DeliveryLink) -> bool:
     return updated == 1
 
 
-def record_download(db: Session, link: DeliveryLink) -> None:
-    link.download_count = (link.download_count or 0) + 1
-    link.last_downloaded_at = datetime.utcnow()
+def record_download(db: Session, link: DeliveryLink) -> bool:
+    """Count a download; True only for the link's first one."""
+    from sqlalchemy import func, update
+
+    count = db.execute(
+        update(DeliveryLink)
+        .where(DeliveryLink.id == link.id)
+        .values(
+            download_count=func.coalesce(DeliveryLink.download_count, 0) + 1,
+            last_downloaded_at=datetime.utcnow(),
+        )
+        .returning(DeliveryLink.download_count)
+    ).scalar()
+    first = count == 1
+    if first:
+        notify_creator(db, link, "client_downloaded")
     db.commit()
+    db.refresh(link)
+    return first
+
+
+_CREATOR_TEXT = {
+    "client_paid": ("Your client paid {amount} for {file} — unlocked", "Paid by card; the clean file is theirs now"),
+    "client_claimed_paid": (
+        "Your client says they've paid {amount} for {file}",
+        "Check PayPal, then unlock it in Share with client",
+    ),
+    "client_downloaded": ("Your client downloaded {file}", "First download of the link you shared"),
+}
+
+
+def notify_creator(db: Session, link: DeliveryLink, kind: str) -> None:
+    """In-app notice to the link's creator (team owner if they've left). File name and amount only, no client details."""
+    from app.models.project import TranslationProject
+    from app.services import notifications, paypal
+
+    try:
+        recipient = notification_recipient(db, link)
+        if recipient is None:
+            return
+        title, body = _CREATOR_TEXT[kind]
+        amount = paypal.display_amount(link.amount_cents or 0, link.currency or "EUR")
+        team_id = db.query(TranslationProject.team_id).filter(TranslationProject.id == link.project_id).scalar()
+        notifications.notify(
+            db, recipient.id, kind,
+            title.format(amount=amount, file=link.file_name), body,
+            link=notifications.editor_link(link.project_id), project_id=link.project_id, team_id=team_id,
+        )
+    except Exception:
+        logger.exception("Couldn't notify the creator of link %s (%s)", link.id, kind)
 
 
 def purge_expired_files(now: Optional[datetime] = None) -> int:

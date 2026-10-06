@@ -68,6 +68,9 @@ def mark_project_failed(db: Session, project: TranslationProject, reason: str) -
         refunded = CreditService.refund_usage(db, reference)
     if refunded:
         logger.info("Refunded %d credits for failed project %s", refunded, project.id)
+    from app.services import notifications
+
+    notifications.translation_failed(db, project)
     return refunded
 
 
