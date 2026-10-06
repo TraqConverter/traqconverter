@@ -337,7 +337,7 @@ def connect_stripe(
         db.rollback()
         logger.exception("Stripe Connect onboarding failed (team=%s)", team.id)
         # Stripe refuses connected accounts until the platform owner finishes the Connect questionnaire.
-        if "platform profile" in str(exc).lower():
+        if "to use connect" in str(exc).lower():
             raise HTTPException(
                 status_code=503,
                 detail="Card payments aren't available yet: the platform's Stripe setup isn't finished. Use the PayPal option for now.",
