@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
+import { snapshotFile, UNREADABLE_FILE } from "@/lib/fileSnapshot"
 import { api } from "@/lib/api"
 import { useFeature } from "@/lib/plan"
 import { LangSelect, SOURCE_LANGUAGES, TARGET_LANGUAGES } from "@/components/LangSelect"
@@ -164,9 +165,16 @@ export default function NewProjectPage() {
 
   const handlePickFile = () => fileInputRef.current?.click()
 
-  const addFiles = (list: FileList | File[] | null | undefined) => {
-    const incoming = Array.from(list || [])
-    if (!incoming.length || loading) return
+  const addFiles = async (list: FileList | File[] | null | undefined) => {
+    const picked = Array.from(list || [])
+    if (!picked.length || loading) return
+    let incoming: File[]
+    try {
+      incoming = await Promise.all(picked.map(snapshotFile))
+    } catch {
+      setUploadError(UNREADABLE_FILE)
+      return
+    }
     const known = new Set(files.map(fileKey))
     const next = [...files, ...incoming.filter((f) => !known.has(fileKey(f)))]
     setFiles(next)

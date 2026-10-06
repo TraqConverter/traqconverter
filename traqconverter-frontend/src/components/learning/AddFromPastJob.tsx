@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { api } from "@/lib/api"
 import { LangSelect, TARGET_LANGUAGES } from "@/components/LangSelect"
+import { snapshotFile, UNREADABLE_FILE } from "@/lib/fileSnapshot"
 
 const MAX_BYTES = 20 * 1024 * 1024
 const ORIGINAL_EXT = /\.(pdf|jpe?g|png)$/i
@@ -96,11 +97,16 @@ export default function AddFromPastJob({ onClose, onSaved }: { onClose: () => vo
     }
   }, [step, analysis, profile])
 
-  const pick = (f: File | null, ext: RegExp, kind: string, set: (f: File | null) => void) => {
+  const pick = async (f: File | null, ext: RegExp, kind: string, set: (f: File | null) => void) => {
     if (!f) return
     const problem = fileProblem(f, ext, kind)
     setError(problem)
-    if (!problem) set(f)
+    if (problem) return
+    try {
+      set(await snapshotFile(f))
+    } catch {
+      setError(UNREADABLE_FILE)
+    }
   }
 
   const analyse = async () => {

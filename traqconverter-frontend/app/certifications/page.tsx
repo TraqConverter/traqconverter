@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { api, apiErrorDetail } from "@/lib/api"
+import { snapshotFile, UNREADABLE_FILE } from "@/lib/fileSnapshot"
 import ProPaywall from "@/components/ProPaywall"
 import { useFeature } from "@/lib/plan"
 import TemplateCheck from "@/components/certifications/TemplateCheck"
@@ -121,11 +122,18 @@ export default function CertificationsPage() {
     return null
   }
 
-  const onPickFile = (file: File) => {
+  const onPickFile = async (picked: File) => {
     setError(null)
-    const msg = validateFile(file)
+    const msg = validateFile(picked)
     if (msg) {
       setError(msg)
+      return
+    }
+    let file: File
+    try {
+      file = await snapshotFile(picked)
+    } catch {
+      setError(UNREADABLE_FILE)
       return
     }
     setPendingFile(file)
