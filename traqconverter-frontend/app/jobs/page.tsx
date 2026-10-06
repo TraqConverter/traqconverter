@@ -129,7 +129,15 @@ type Entry =
   | { kind: "doc"; project: Project }
   | { kind: "group"; id: string; name: string; docs: Project[]; all: Project[] }
 
-const POLL_MS = 5000
+// Only while a project on screen is queued or translating.
+const POLL_MS = 8000
+const PAGE_SIZE = 50
+const SEARCH_DEBOUNCE_MS = 300
+
+type Summary = {
+  total: number
+  counts: { active: number; review: number; delivered: number; failed: number }
+}
 
 const ROW_GRID =
   "md:grid-cols-[minmax(0,2fr)_128px_112px_minmax(0,1fr)_72px] xl:grid-cols-[minmax(0,2.4fr)_128px_112px_minmax(0,1.2fr)_minmax(0,1.1fr)_56px_84px_72px]"
@@ -201,6 +209,20 @@ function Jobs() {
     setSeenQ(qParam)
     setQuery(qParam)
   }
+  // The server searches; wait for a pause in typing before asking it.
+  const [search, setSearch] = useState(qParam.trim())
+  useEffect(() => {
+    const t = window.setTimeout(() => setSearch(query.trim()), SEARCH_DEBOUNCE_MS)
+    return () => window.clearTimeout(t)
+  }, [query])
+  // A new filter or search starts again from the first page.
+  const filterKey = `${tab}|${assignee}|${search}`
+  const [paging, setPaging] = useState({ key: filterKey, page: 0 })
+  if (paging.key !== filterKey) setPaging({ key: filterKey, page: 0 })
+  const page = paging.key === filterKey ? paging.page : 0
+  const setPage = (next: number) => setPaging({ key: filterKey, page: next })
+  const [total, setTotal] = useState<number | null>(null)
+  const [summary, setSummary] = useState<Summary | null>(null)
   const [assigningId, setAssigningId] = useState<string | null>(null)
   const [assignBusy, setAssignBusy] = useState<string | null>(null)
 
@@ -257,6 +279,8 @@ function Jobs() {
       await api.delete(`/projects/${deletingId}`)
       setProjects((ps) => ps.filter((p) => p.id !== deletingId))
       closeDelete()
+      fetchJobs()
+      fetchCounts()
     } catch (err: any) {
       setError(
         err?.response?.data?.detail ||
@@ -272,9 +296,26 @@ function Jobs() {
     const seq = ++fetchSeq.current
     try {
       const res = await api.get("/projects/", {
-        params: assignee === "all" ? undefined : { assignee },
+        params: {
+          ...(assignee === "all" ? {} : { assignee }),
+          ...(tab === "all" ? {} : { status: tab }),
+          ...(search ? { q: search } : {}),
+          limit: PAGE_SIZE,
+          offset: page * PAGE_SIZE,
+        },
       })
-      if (seq === fetchSeq.current) setProjects(res.data || [])
+      if (seq === fetchSeq.current) {
+        const rows: Project[] = res.data || []
+        const header = Number(res.headers?.["x-total-count"])
+        const count = Number.isFinite(header) ? header : null
+        // Deleting the last project on the last page leaves nothing here; step back to a page that has some.
+        if (!rows.length && page > 0 && count) {
+          setPaging((p) => ({ ...p, page: Math.ceil(count / PAGE_SIZE) - 1 }))
+          return
+        }
+        setProjects(rows)
+        setTotal(count)
+      }
     } catch (err: any) {
       if (seq === fetchSeq.current)
         setError(
@@ -284,7 +325,21 @@ function Jobs() {
     } finally {
       if (seq === fetchSeq.current) setLoading(false)
     }
-  }, [assignee])
+  }, [assignee, tab, search, page])
+
+  const fetchCounts = useCallback(async () => {
+    try {
+      const res = await api.get<Summary>("/projects/summary", {
+        params: {
+          ...(assignee === "all" ? {} : { assignee }),
+          ...(search ? { q: search } : {}),
+        },
+      })
+      setSummary(res.data)
+    } catch {
+      setSummary(null)
+    }
+  }, [assignee, search])
 
   const fetchSummaries = useCallback(async () => {
     try {
@@ -310,6 +365,10 @@ function Jobs() {
   }, [fetchJobs])
 
   useEffect(() => {
+    fetchCounts()
+  }, [fetchCounts])
+
+  useEffect(() => {
     fetchSummaries()
     api
       .get("/members")
@@ -331,12 +390,14 @@ function Jobs() {
   useEffect(() => {
     if (!anyActive) return
     const t = window.setInterval(() => {
+      if (document.hidden) return
       fetchJobs()
+      fetchCounts()
       fetchSummaries()
       for (const id of Object.keys(details)) loadDetail(id)
     }, POLL_MS)
     return () => window.clearInterval(t)
-  }, [anyActive, details, fetchJobs, fetchSummaries, loadDetail])
+  }, [anyActive, details, fetchJobs, fetchCounts, fetchSummaries, loadDetail])
 
   useEffect(() => {
     if (!assigningId) return
@@ -374,7 +435,10 @@ function Jobs() {
       )
       setAssigningId(null)
       // The project may no longer match the assignee filter.
-      if (assignee !== "all") fetchJobs()
+      if (assignee !== "all") {
+        fetchJobs()
+        fetchCounts()
+      }
     } catch (err: any) {
       setError(
         err?.response?.data?.detail ||
@@ -385,16 +449,11 @@ function Jobs() {
     }
   }
 
-  const counts = useMemo(() => {
-    const c = { all: projects.length, active: 0, review: 0, delivered: 0 }
-    for (const p of projects) {
-      const s = effectiveStatus(p)
-      if (s === "PROCESSING" || s === "PENDING") c.active++
-      else if (s === "IN_REVIEW") c.review++
-      else if (s === "COMPLETED" || s === "CERTIFIED") c.delivered++
-    }
-    return c
-  }, [projects])
+  // Totals over every matching project, not just this page.
+  const counts = summary
+    ? { all: summary.total, ...summary.counts }
+    : undefined
+  const pageCount = total ? Math.ceil(total / PAGE_SIZE) : 0
 
   const entries = useMemo<Entry[]>(() => {
     const q = query.trim().toLowerCase()
@@ -416,7 +475,7 @@ function Jobs() {
     for (const p of projects) {
       if (p.batch) byBatch.set(p.batch.id, [...(byBatch.get(p.batch.id) || []), p])
     }
-    // GET /projects/ is capped, so a batch can have documents only its detail knows about.
+    // GET /projects/ is paged, so a batch can have documents only its detail knows about.
     // Batch details carry no assignee, so they can't fill in a list filtered by assignee.
     for (const d of assignee === "all" ? Object.values(details) : []) {
       const ref = { id: d.id, name: d.name }
@@ -468,6 +527,7 @@ function Jobs() {
 
   const refreshBatch = (id: string) => {
     fetchJobs()
+    fetchCounts()
     fetchSummaries()
     loadDetail(id)
   }
@@ -809,10 +869,10 @@ function Jobs() {
               className="inline-flex items-center gap-1 p-1 rounded-full"
               style={{ background: "#f3ecdb", border: "1px solid #e7ddc5" }}
             >
-              <TabButton label="All" count={counts.all} active={tab === "all"} onClick={() => setTab("all")} />
-              <TabButton label="In progress" count={counts.active} active={tab === "active"} onClick={() => setTab("active")} />
-              <TabButton label="Awaiting review" count={counts.review} active={tab === "review"} onClick={() => setTab("review")} />
-              <TabButton label="Delivered" count={counts.delivered} active={tab === "delivered"} onClick={() => setTab("delivered")} />
+              <TabButton label="All" count={counts?.all} active={tab === "all"} onClick={() => setTab("all")} />
+              <TabButton label="In progress" count={counts?.active} active={tab === "active"} onClick={() => setTab("active")} />
+              <TabButton label="Awaiting review" count={counts?.review} active={tab === "review"} onClick={() => setTab("review")} />
+              <TabButton label="Delivered" count={counts?.delivered} active={tab === "delivered"} onClick={() => setTab("delivered")} />
             </div>
           </div>
           <div className="max-w-full overflow-x-auto">
@@ -906,6 +966,19 @@ function Jobs() {
           })
         )}
       </div>
+
+      {!loading && total !== null && total > 0 && (
+        <Pager
+          page={page}
+          pageCount={pageCount}
+          total={total}
+          shown={projects.length}
+          onPage={(next) => {
+            setPage(next)
+            window.scrollTo({ top: 0 })
+          }}
+        />
+      )}
 
       {}
       {renamingId && (
@@ -1074,6 +1147,55 @@ function ModalOverlay({
     >
       {children}
     </div>
+  )
+}
+
+function Pager({
+  page,
+  pageCount,
+  total,
+  shown,
+  onPage,
+}: {
+  page: number
+  pageCount: number
+  total: number
+  shown: number
+  onPage: (page: number) => void
+}) {
+  const from = page * PAGE_SIZE + 1
+  const to = page * PAGE_SIZE + shown
+  const button = (label: string, target: number, enabled: boolean) => (
+    <button
+      type="button"
+      onClick={() => onPage(target)}
+      disabled={!enabled}
+      className="px-4 py-2 rounded-full text-sm font-semibold transition"
+      style={{
+        background: "#ffffff",
+        color: enabled ? "#1f2a2e" : "#cfc6ad",
+        border: "1px solid #e7ddc5",
+        cursor: enabled ? "pointer" : "not-allowed",
+      }}
+    >
+      {label}
+    </button>
+  )
+  return (
+    <nav aria-label="Project pages" className="flex items-center justify-between flex-wrap gap-3">
+      <div className="text-sm tabular-nums" style={{ color: "#6b6558" }}>
+        {shown > 0 ? `${from}–${to} of ${total.toLocaleString()} projects` : `${total.toLocaleString()} projects`}
+      </div>
+      {pageCount > 1 && (
+        <div className="flex items-center gap-2">
+          {button("Previous", page - 1, page > 0)}
+          <span className="text-sm tabular-nums" style={{ color: "#8a8270" }}>
+            Page {page + 1} of {pageCount}
+          </span>
+          {button("Next", page + 1, page + 1 < pageCount)}
+        </div>
+      )}
+    </nav>
   )
 }
 

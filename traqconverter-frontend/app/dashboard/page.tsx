@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
@@ -63,6 +63,13 @@ function initialsFor(u: ProjectUser | null | undefined): string | null {
 }
 
 type Tab = "all" | "assigned" | "review"
+
+type ProjectSummary = {
+  total: number
+  counts: { active: number; review: number; delivered: number; failed: number }
+  open: { projects: number; pages: number; projects_with_pages: number; language_pairs: number }
+  credits_used: number
+}
 
 const STATUS_STYLES: Record<
   string,
@@ -159,86 +166,55 @@ export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([])
   const [tab, setTab] = useState<Tab>("all")
   const [name, setName] = useState<string>("")
-  const [meId, setMeId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const [summary, setSummary] = useState<ProjectSummary | null>(null)
+
   useEffect(() => {
-    fetchData()
+    api
+      .get<ProjectSummary>("/projects/summary")
+      .then((res) => setSummary(res.data))
+      .catch(() => setSummary(null))
   }, [])
 
-  const fetchData = async () => {
-    try {
-      setError(null)
-      const res = await api.get("/projects/")
-      setProjects((res.data || []) as Project[])
-    } catch (err: any) {
-      console.error("DASHBOARD ERROR:", err)
-      setError(
-        err?.response?.data?.detail ||
-          "Couldn't load your projects — try refreshing in a moment."
-      )
-      setProjects([])
-    } finally {
-      setLoading(false)
+  // Each tab asks the server, so it covers every project rather than only the newest page.
+  useEffect(() => {
+    let cancelled = false
+    const params =
+      tab === "assigned" ? { assignee: "me" } : tab === "review" ? { status: "review" } : undefined
+    api
+      .get("/projects/", { params })
+      .then((res) => {
+        if (cancelled) return
+        setError(null)
+        setProjects((res.data || []) as Project[])
+      })
+      .catch((err: any) => {
+        if (cancelled) return
+        setError(
+          err?.response?.data?.detail ||
+            "Couldn't load your projects — try refreshing in a moment."
+        )
+        setProjects([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
     }
+  }, [tab])
+
+  const kpis = {
+    active: summary?.open.projects ?? 0,
+    pagesInFlight: summary?.open.pages ?? 0,
+    activePagesCount: summary?.open.projects_with_pages ?? 0,
+    delivered: summary?.counts.delivered ?? 0,
+    creditsUsed: summary?.credits_used ?? 0,
+    languagePairs: summary?.open.language_pairs ?? 0,
   }
 
-  const kpis = useMemo(() => {
-    const isActive = (p: Project) => {
-
-      const s = effectiveStatus(p)
-      return s === "PENDING" || s === "PROCESSING" || s === "IN_REVIEW"
-    }
-
-    const active = projects.filter(isActive).length
-
-    const activePagesArray = projects
-      .filter(isActive)
-      .map((p: any) => p.page_count || 0)
-
-    const pagesInFlight = activePagesArray.reduce(
-      (sum: number, n: number) => sum + n,
-      0
-    )
-
-    const activePagesCount = activePagesArray.filter((n: number) => n > 0).length
-
-    const delivered = projects.filter((p) => {
-      const s = effectiveStatus(p)
-      return s === "COMPLETED" || s === "CERTIFIED"
-    }).length
-
-    const creditsUsed = projects.reduce(
-      (sum, p: any) => sum + (p.credits_used || 0),
-      0
-    )
-
-    const pairs = new Set<string>()
-    for (const p of projects.filter(isActive)) {
-      const src = p.source_language || (p as any).source_lang
-      const tgt = p.target_language || (p as any).target_lang
-      if (src && tgt) pairs.add(`${src}→${tgt}`)
-    }
-
-    return {
-      active,
-      pagesInFlight,
-      activePagesCount,
-      delivered,
-      creditsUsed,
-      languagePairs: pairs.size,
-    }
-  }, [projects])
-
-  const filtered = useMemo(() => {
-    if (tab === "assigned") {
-      return meId ? projects.filter((p) => p.assignee?.id === meId) : []
-    }
-    if (tab === "review") {
-      return projects.filter((p) => effectiveStatus(p) === "IN_REVIEW")
-    }
-    return projects
-  }, [projects, tab, meId])
+  const filtered = projects
 
   useEffect(() => {
     let cancelled = false
@@ -246,7 +222,6 @@ export default function DashboardPage() {
       .get("/auth/me")
       .then((res) => {
         if (cancelled) return
-        if (res.data?.id) setMeId(String(res.data.id))
         const fullName: string | null = res.data?.full_name
         const email: string | null = res.data?.email
         if (fullName && fullName.trim()) setName(fullName.split(" ")[0])

@@ -156,7 +156,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Document-Version"],
+    expose_headers=["X-Document-Version", "Content-Disposition", "X-Total-Count"],
 )
 
 
@@ -176,7 +176,7 @@ async def security_headers(request: Request, call_next):
 
 
     path = request.url.path
-    is_preview = "/preview/source" in path or "/preview/rebuild" in path
+    is_preview = "/preview/source" in path
     if is_preview:
         response.headers["Content-Security-Policy"] = (
             "frame-ancestors 'self' "
@@ -251,8 +251,6 @@ from app.routers import document
 from app.routers import document_media
 from app.routers import settings as settings_router
 from app.routers import billing
-from app.routers import segments
-from app.routers import segment_comments
 from app.routers import export
 from app.routers import glossary
 from app.routers import translation_memory
@@ -276,8 +274,6 @@ app.include_router(document.router)
 app.include_router(document_media.router)
 app.include_router(project.router)
 app.include_router(billing.router)
-app.include_router(segments.router)
-app.include_router(segment_comments.router)
 app.include_router(export.router)
 app.include_router(glossary.router)
 app.include_router(translation_memory.router)
