@@ -806,15 +806,19 @@ def run_vision(project_id, block_ids: list[str]) -> None:
                     by_page.setdefault(pg, []).append(p)
         error = None
         for page in sorted(by_page)[:MAX_VISION_PAGES]:
-            try:
-                result = vision_page(project, page, by_page[page])
-            except Exception as e:
-                logger.exception("Source map vision pass failed (project=%s page=%s)", project_id, page)
-                error = str(e)[:200]
-                continue
-            run = {k: result[k] for k in ("seconds", "input_tokens", "output_tokens", "model")}
-            run["page"] = page
-            _finish(db, project, result["blocks"], result["elements"] if full else None, set(), run, None, page=page)
+            # One call lists at most MAX_PARAS_PER_CALL paragraphs; the rest of a dense page goes in further calls.
+            wanted_here = by_page[page]
+            for start in range(0, len(wanted_here), MAX_PARAS_PER_CALL):
+                try:
+                    result = vision_page(project, page, wanted_here[start:start + MAX_PARAS_PER_CALL])
+                except Exception as e:
+                    logger.exception("Source map vision pass failed (project=%s page=%s)", project_id, page)
+                    error = str(e)[:200]
+                    continue
+                run = {k: result[k] for k in ("seconds", "input_tokens", "output_tokens", "model")}
+                run["page"] = page
+                elements = result["elements"] if full and start == 0 else None
+                _finish(db, project, result["blocks"], elements, set(), run, None, page=page)
         _finish(db, project, {}, None, wanted, None, error, done=True)
     except Exception:
         db.rollback()

@@ -154,7 +154,7 @@ def classify_document(data: bytes, file_name: str, text_hint: str = "") -> Optio
         **claude_params.request_params(model, max_tokens=400),
     )
     claude_params.log_usage("doc_profile", resp)
-    if resp.stop_reason == "refusal":
+    if resp.stop_reason in ("refusal", "max_tokens"):
         return None
     raw = next((b.text for b in resp.content if b.type == "text"), "")
     profile = {k: str(v or "").strip() for k, v in json.loads(raw).items()}
@@ -311,6 +311,13 @@ def store_template(
     return template, replaced
 
 
+def without_certification(data: bytes) -> bytes:
+    """A template is the translation only; the page certifying the old document mustn't carry over to new ones."""
+    from app.services import docx_certification
+
+    return docx_certification.remove_certification(data) if docx_certification.has_certification(data) else data
+
+
 def capture_template(db: Session, project: TranslationProject, user) -> Optional[DocumentTemplate]:
     """Store the project's current document as the team's template for its kind of document and target language."""
     if not project.doc_key or project.status != ProjectStatus.COMPLETED or is_dtp(project):
@@ -319,6 +326,7 @@ def capture_template(db: Session, project: TranslationProject, user) -> Optional
     from app.services import document_editor
 
     data, version = document_editor.current_document(db, project, user, _initial_builder(db, project, user))
+    data = without_certification(data)
     template, _ = store_template(
         db, project.team_id, project.doc_key, project.target_language, project.doc_profile, data,
         source_text_of(db, project), project_id=project.id, version=version,
@@ -519,7 +527,8 @@ def extract_terms(project: TranslationProject, source_text: str, pairs: list[tup
             **claude_params.request_params(model, max_tokens=2000),
         )
     claude_params.log_usage("learn_terms", resp)
-    if resp.stop_reason == "refusal":
+    # A cut-off reply is unreadable JSON; raising would retry the same paid call every 10 minutes for 2 days.
+    if resp.stop_reason in ("refusal", "max_tokens"):
         return []
     raw = next((b.text for b in resp.content if b.type == "text"), "")
     return list(json.loads(raw).get("terms") or [])

@@ -155,7 +155,10 @@ def fill_from_template(
     started = time.monotonic()
     client = anthropic.Anthropic(api_key=key)
     model = claude_params.rebuild_model(model)
-    template_docx = docx_blocks.tag_blocks(template_docx)
+    from app.services.learning import without_certification
+
+    # Templates saved before capture dropped the page still carry it.
+    template_docx = docx_blocks.tag_blocks(without_certification(template_docx))
     template_text = docx_text(template_docx)
     system = _SYSTEM.format(
         source_lang=source_lang or "the source language",

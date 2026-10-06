@@ -48,8 +48,12 @@ class _ChatPayload(BaseModel):
 
 def _initial_builder(db: Session, project: TranslationProject, user: User):
     def build() -> bytes:
+        from app.models.project import ProjectStatus
         from app.routers.project import _resolve_rebuild_docx_bytes
 
+        # Mid-run segments and keys are half-replaced; a snapshot of them would outlive the run.
+        if project.status != ProjectStatus.COMPLETED:
+            raise HTTPException(status_code=409, detail="The translation isn't ready yet")
         segments = (
             db.query(TranslationSegment)
             .filter(TranslationSegment.project_id == project.id)

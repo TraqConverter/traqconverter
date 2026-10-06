@@ -452,7 +452,9 @@ def build_full_export_docx(
         source_added = False
         try:
             from app.services.s3_service import download_file_from_s3
-            source_path = work_dir / (project.file_name or "source")
+            from app.services.translation_processor import local_file_name
+
+            source_path = work_dir / local_file_name(project.file_name)
             try:
                 download_file_from_s3(project.file_path, source_path)
             except Exception:

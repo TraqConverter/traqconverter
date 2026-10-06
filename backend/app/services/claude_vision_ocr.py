@@ -437,8 +437,12 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
         logger.warning("Claude OCR: bad JSON response: %s", e)
         return None
 
-    declared_w = int(data.get("width") or src_w)
-    declared_h = int(data.get("height") or src_h)
+    if not isinstance(data, dict):
+        logger.warning("Claude OCR: response JSON is not an object")
+        return None
+    # Bboxes are in the frame the model saw, which is the downscaled one when the page was large.
+    declared_w = int(data.get("width") or sent_w)
+    declared_h = int(data.get("height") or sent_h)
     sx = src_w / max(1, declared_w)
     sy = src_h / max(1, declared_h)
 
@@ -449,6 +453,8 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
     out: list[dict[str, Any]] = []
     dropped_junk = 0
     for el in raw_elements:
+        if not isinstance(el, dict):
+            continue
         text = (el.get("text") or "").strip()
         if not text:
             continue

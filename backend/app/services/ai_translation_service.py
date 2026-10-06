@@ -521,7 +521,8 @@ ABSOLUTE RULES — these are non-negotiable for legal and identity documents:
     raw = [chunk.strip("\n").strip() for chunk in output.split(DELIM)]
     translations = [chunk for chunk in raw if chunk]
 
-    if len(translations) != len(texts):
+    # One line per segment only lines up when no segment spans lines; otherwise a dropped segment shifts the rest.
+    if len(translations) != len(texts) and not any("\n" in t.strip() for t in texts):
         fallback = [
             re.sub(r"^\d+\.\s*", "", line.strip())
             for line in output.split("\n")
