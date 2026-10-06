@@ -460,6 +460,24 @@ def test_checks_are_cached_per_version_and_recomputed_on_edit_or_refresh(client,
     assert len(runs) == 3
 
 
+def test_checks_cache_survives_a_version_number_reused_after_undo(client, review_project, fake, monkeypatch):
+    fake()
+    runs = []
+    real = review_checks.compute
+    monkeypatch.setattr(review_checks, "compute", lambda *a, **k: runs.append(1) or real(*a, **k))
+    owner, project = review_project(plan="BASIC")
+    url = f"/projects/{project.id}/document"
+    data, v = _doc(client, owner, project)
+    bid = _ids_by_text(data)["The Registrar"]
+    client.post(f"{url}/edits", headers=owner["headers"], json={"version": v, "edits": [{"block_id": bid, "text": "The Registrar."}]})
+    _checks(client, owner, project)
+    client.post(f"{url}/undo", headers=owner["headers"], json={})
+    r = client.post(f"{url}/edits", headers=owner["headers"], json={"version": v, "edits": [{"block_id": bid, "text": "Registrar"}]})
+    assert r.json()["version"] == v + 1
+    _checks(client, owner, project)
+    assert len(runs) == 2
+
+
 def test_dismiss_marks_item_and_can_be_restored(client, review_project, fake, make_user):
     fake()
     translation = list(GOOD_TRANSLATION)
