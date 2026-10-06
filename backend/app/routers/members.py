@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import Optional
@@ -188,7 +189,7 @@ def invite_member(
     if current_user.email and current_user.email.lower() == email:
         raise HTTPException(status_code=400, detail="You're already on this team")
 
-    existing_user = db.query(User).filter(User.email == email).first()
+    existing_user = db.query(User).filter(func.lower(User.email) == email).first()
     if existing_user:
 
         already = (
