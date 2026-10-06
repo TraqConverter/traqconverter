@@ -111,10 +111,10 @@ def build(entries: Iterable, srclang: str = "*all*") -> bytes:
     etree.SubElement(
         root,
         "header",
-        creationtool="TraqConverter",
+        creationtool="OnlineDocTranslator",
         creationtoolversion="1.0",
         segtype="sentence",
-        attrib={"o-tmf": "TraqConverter"},
+        attrib={"o-tmf": "OnlineDocTranslator"},
         adminlang="en",
         srclang=srclang or "*all*",
         datatype="plaintext",

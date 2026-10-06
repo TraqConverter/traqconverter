@@ -130,7 +130,7 @@ def render_invite_email(
     from html import escape
 
     # Names and team names are user-typed; unescaped they'd put markup in an email sent from our domain.
-    subject = f"{inviter_name or inviter_email} invited you to {team_name or 'your team'} on TraqConverter"
+    subject = f"{inviter_name or inviter_email} invited you to {team_name or 'your team'} on OnlineDocTranslator"
     safe_role = escape((role or "Member").capitalize())
     safe_team = escape(team_name or "your team")
     safe_inviter = escape(inviter_name or inviter_email)
@@ -148,15 +148,14 @@ def render_invite_email(
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e7ddc5;border-radius:18px;padding:36px 32px;max-width:560px;">
         <tr><td>
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px;">
-            <div style="width:36px;height:36px;border-radius:10px;background:#0a7870;color:#fff;font-weight:700;font-size:16px;display:inline-block;text-align:center;line-height:36px;">T</div>
-            <span style="font-weight:600;font-size:16px;color:#1f2a2e;margin-left:10px;">TraqConverter</span>
+          <div style="margin-bottom:24px;">
+            <img src="https://www.onlinedoctranslator.ai/brand/logo-horizontal-1200x300.png" width="216" height="54" alt="OnlineDocTranslator" style="display:block;border:0;outline:none;text-decoration:none;width:216px;height:54px;">
           </div>
           <h1 style="font-size:24px;font-weight:700;letter-spacing:-0.02em;color:#1f2a2e;margin:0 0 14px;">
             You've been invited to join <span style="color:#0a7870;">{safe_team}</span>
           </h1>
           <p style="font-size:15px;line-height:1.55;color:#4a4638;margin:0 0 18px;">
-            <strong>{safe_inviter}</strong> has invited you to join their team on TraqConverter as a <strong>{safe_role}</strong>. You'll get access to all team projects, translation memory, glossary, and certifications.
+            <strong>{safe_inviter}</strong> has invited you to join their team on OnlineDocTranslator as a <strong>{safe_role}</strong>. You'll get access to all team projects, translation memory, glossary, and certifications.
           </p>
           <div style="margin:28px 0;">
             <a href="{register_url}" style="display:inline-block;background:#0a7870;color:#ffffff;padding:13px 26px;border-radius:999px;font-weight:600;font-size:14px;text-decoration:none;">
@@ -171,12 +170,12 @@ def render_invite_email(
           </p>
           <hr style="border:none;border-top:1px solid #f1e8d1;margin:20px 0;">
           <p style="font-size:12px;color:#8a8270;line-height:1.5;margin:0;">
-            Already have a TraqConverter account with this email? Just sign in — your invite will be accepted automatically and the team's projects will appear in your dashboard.
+            Already have a OnlineDocTranslator account with this email? Just sign in — your invite will be accepted automatically and the team's projects will appear in your dashboard.
           </p>
         </td></tr>
       </table>
       <p style="font-size:11px;color:#9a9178;margin-top:18px;">
-        Sent by TraqConverter · onlinedoctranslator.ai
+        Sent by OnlineDocTranslator · onlinedoctranslator.ai
       </p>
     </td></tr>
   </table>
@@ -190,7 +189,7 @@ def render_password_reset_email(*, name: str | None, link: str) -> tuple[str, st
     """Return (subject, html) for a password-reset email."""
     from html import escape
 
-    subject = "Reset your TraqConverter password"
+    subject = "Reset your OnlineDocTranslator password"
     greeting = f"Hi {escape(name)}," if name else "Hi,"
     safe_link = escape(link, quote=True)
 
@@ -206,15 +205,14 @@ def render_password_reset_email(*, name: str | None, link: str) -> tuple[str, st
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e7ddc5;border-radius:18px;padding:36px 32px;max-width:560px;">
         <tr><td>
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px;">
-            <div style="width:36px;height:36px;border-radius:10px;background:#0a7870;color:#fff;font-weight:700;font-size:16px;display:inline-block;text-align:center;line-height:36px;">T</div>
-            <span style="font-weight:600;font-size:16px;color:#1f2a2e;margin-left:10px;">TraqConverter</span>
+          <div style="margin-bottom:24px;">
+            <img src="https://www.onlinedoctranslator.ai/brand/logo-horizontal-1200x300.png" width="216" height="54" alt="OnlineDocTranslator" style="display:block;border:0;outline:none;text-decoration:none;width:216px;height:54px;">
           </div>
           <h1 style="font-size:24px;font-weight:700;letter-spacing:-0.02em;color:#1f2a2e;margin:0 0 14px;">
             Reset your password
           </h1>
           <p style="font-size:15px;line-height:1.55;color:#4a4638;margin:0 0 18px;">
-            {greeting} we got a request to reset the password for your TraqConverter account. Use the button below to choose a new one.
+            {greeting} we got a request to reset the password for your OnlineDocTranslator account. Use the button below to choose a new one.
           </p>
           <div style="margin:28px 0;">
             <a href="{safe_link}" style="display:inline-block;background:#0a7870;color:#ffffff;padding:13px 26px;border-radius:999px;font-weight:600;font-size:14px;text-decoration:none;">
@@ -237,7 +235,7 @@ def render_password_reset_email(*, name: str | None, link: str) -> tuple[str, st
         </td></tr>
       </table>
       <p style="font-size:11px;color:#9a9178;margin-top:18px;">
-        Sent by TraqConverter · onlinedoctranslator.ai
+        Sent by OnlineDocTranslator · onlinedoctranslator.ai
       </p>
     </td></tr>
   </table>
@@ -303,9 +301,8 @@ def render_assignment_email(
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e7ddc5;border-radius:18px;padding:36px 32px;max-width:560px;">
         <tr><td>
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px;">
-            <div style="width:36px;height:36px;border-radius:10px;background:#0a7870;color:#fff;font-weight:700;font-size:16px;display:inline-block;text-align:center;line-height:36px;">T</div>
-            <span style="font-weight:600;font-size:16px;color:#1f2a2e;margin-left:10px;">TraqConverter</span>
+          <div style="margin-bottom:24px;">
+            <img src="https://www.onlinedoctranslator.ai/brand/logo-horizontal-1200x300.png" width="216" height="54" alt="OnlineDocTranslator" style="display:block;border:0;outline:none;text-decoration:none;width:216px;height:54px;">
           </div>
           <h1 style="font-size:24px;font-weight:700;letter-spacing:-0.02em;color:#1f2a2e;margin:0 0 14px;">
             You have a new translation
@@ -329,12 +326,12 @@ def render_assignment_email(
           </p>
           <hr style="border:none;border-top:1px solid #f1e8d1;margin:20px 0;">
           <p style="font-size:12px;color:#8a8270;line-height:1.5;margin:0;">
-            You're getting this because a teammate assigned you a project on TraqConverter.
+            You're getting this because a teammate assigned you a project on OnlineDocTranslator.
           </p>
         </td></tr>
       </table>
       <p style="font-size:11px;color:#9a9178;margin-top:18px;">
-        Sent by TraqConverter · onlinedoctranslator.ai
+        Sent by OnlineDocTranslator · onlinedoctranslator.ai
       </p>
     </td></tr>
   </table>
@@ -342,7 +339,7 @@ def render_assignment_email(
 </html>
 """
     text = "\n".join(
-        [f"{assigner} assigned you a translation on TraqConverter.", ""]
+        [f"{assigner} assigned you a translation on OnlineDocTranslator.", ""]
         + [f"{label}: {value}" for label, value in rows]
         + ["", f"Open project: {link}"]
     )

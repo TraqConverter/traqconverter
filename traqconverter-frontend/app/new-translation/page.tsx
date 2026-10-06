@@ -307,7 +307,7 @@ export default function NewProjectPage() {
       {}
       <div className="mb-3">
         <div className="text-sm" style={{ color: "#8a8270" }}>
-          <span>TraqConverter</span>
+          <span>OnlineDocTranslator</span>
           <span className="mx-2">›</span>
           <span>Projects</span>
           <span className="mx-2">›</span>

@@ -265,7 +265,7 @@ export default function DashboardPage() {
       {}
       <div className="mb-8">
         <div className="text-sm mb-2" style={{ color: "#8a8270" }}>
-          <span>TraqConverter</span>
+          <span>OnlineDocTranslator</span>
           <span className="mx-2">›</span>
           <span>Workspace</span>
         </div>

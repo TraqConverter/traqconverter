@@ -19,7 +19,7 @@ load_dotenv(dotenv_path=env_path)
 configure_logging()
 
 logger = logging.getLogger(__name__)
-logger.info("Starting TraqConverter API")
+logger.info("Starting OnlineDocTranslator API")
 
 
 
@@ -135,7 +135,7 @@ except Exception as _e:
 
 
 
-app = FastAPI()
+app = FastAPI(title="OnlineDocTranslator API")
 
 from app.services import ai_usage as _ai_usage
 

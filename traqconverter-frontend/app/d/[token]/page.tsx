@@ -3,6 +3,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react"
 import { useParams } from "next/navigation"
 import { apiBaseUrl } from "@/lib/api"
+import { BrandMark } from "@/components/brand/Logo"
 
 type Info = {
   valid: boolean
@@ -411,8 +412,9 @@ export default function DeliveryPage() {
           </div>
         )}
       </div>
-      <div className="text-[11px] mt-6" style={{ color: "#b5ab93" }}>
-        Delivered with TraqConverter
+      <div className="text-[11px] mt-6 flex items-center gap-2" style={{ color: "#b5ab93" }}>
+        <BrandMark size={16} />
+        Delivered with OnlineDocTranslator
       </div>
     </main>
   )

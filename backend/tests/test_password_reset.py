@@ -49,7 +49,7 @@ def test_known_and_unknown_emails_get_the_same_answer(client, make_user, mail):
     assert known.json() == unknown.json() == {"message": GENERIC}
     assert len(mail) == 1
     assert mail[0]["to"] == "known@traqtest.io"
-    assert mail[0]["subject"] == "Reset your TraqConverter password"
+    assert mail[0]["subject"] == "Reset your OnlineDocTranslator password"
     assert "http://localhost:3000/reset-password?token=" in mail[0]["html"]
     assert "expires in 60 minutes" in mail[0]["html"]
     assert "If you didn't ask for this, you can ignore this email." in mail[0]["html"]

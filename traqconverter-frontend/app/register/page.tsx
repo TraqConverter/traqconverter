@@ -8,6 +8,7 @@ import { api, apiErrorDetail } from "@/lib/api"
 import { setToken } from "@/lib/auth"
 import { pagesLabel, usePlans } from "@/lib/plans"
 import { loginUrl, safeNextPath } from "@/lib/routes"
+import { BrandMark, BrandName } from "@/components/brand/Logo"
 
 function IconUser() {
   return (
@@ -118,9 +119,9 @@ function RegisterForm() {
       >
         <div>
           <div className="flex items-center gap-3 mb-12">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-lg" style={{ background: "#0a7870" }}>T</div>
+            <BrandMark size={40} />
             <div className="leading-tight">
-              <div className="font-semibold text-[17px]">TraqConverter</div>
+              <div className="font-semibold text-[17px]"><BrandName /></div>
               <div className="text-[10px] tracking-[0.18em]" style={{ color: "#8a8270" }}>WORKSPACE</div>
             </div>
           </div>
@@ -148,17 +149,17 @@ function RegisterForm() {
           style={{ background: "#ffffff", border: "1px solid #e7ddc5", boxShadow: "0 1px 2px rgba(30,30,20,0.04)" }}
         >
           <div className="md:hidden flex items-center gap-3 mb-8">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-lg" style={{ background: "#0a7870" }}>T</div>
+            <BrandMark size={40} />
             <div className="leading-tight">
-              <div className="font-semibold text-[17px]">TraqConverter</div>
+              <div className="font-semibold text-[17px]"><BrandName /></div>
               <div className="text-[10px] tracking-[0.18em]" style={{ color: "#8a8270" }}>WORKSPACE</div>
             </div>
           </div>
           <h1 className="text-[26px] font-semibold tracking-tight mb-1" style={{ color: "#1f2a2e" }}>Create your account</h1>
           <p className="text-sm mb-6" style={{ color: "#8a8270" }}>
             {inviteToken
-              ? `You've been invited to join ${invitedTeam || "a team"} on TraqConverter.`
-              : "Get started with your TraqConverter workspace."}
+              ? `You've been invited to join ${invitedTeam || "a team"} on OnlineDocTranslator.`
+              : "Get started with your OnlineDocTranslator workspace."}
           </p>
 
           {error && (

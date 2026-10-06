@@ -19,7 +19,7 @@ from app.core.plan_features import CREDIT_PACKS, PLANS, price_lookup_key  # noqa
 
 PORTAL_METADATA_KEY = "traq_portal"
 PORTAL_METADATA_VALUE = "subscription"
-PORTAL_HEADLINE = "TraqConverter subscription"
+PORTAL_HEADLINE = "OnlineDocTranslator subscription"
 SITE_URL = "https://www.onlinedoctranslator.ai"
 CURRENCY = "eur"
 PLANNED = "(to be created)"
@@ -100,10 +100,10 @@ def _plan_price(stripe, plan, env, dry_run, say):
         product_id = _get(product, "id")
     elif dry_run:
         product_id = PLANNED
-        say(f"  {code}: would create product 'TraqConverter {plan['name']}'")
+        say(f"  {code}: would create product 'OnlineDocTranslator {plan['name']}'")
     else:
         product_id = _get(stripe.Product.create(
-            name=f"TraqConverter {plan['name']}",
+            name=f"OnlineDocTranslator {plan['name']}",
             metadata={"plan_code": code},
         ), "id")
         say(f"  {code}: created product {product_id}")

@@ -1,0 +1,29 @@
+// Inline copy of public/brand/logo-mark.svg, so the mark stays crisp at any size without an extra request.
+export function BrandMark({ size = 40, className }: { size?: number; className?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true" focusable="false" className={className} style={{ flexShrink: 0 }}>
+      <rect width="64" height="64" rx="14" fill="#0a7870" />
+      <rect x="8" y="8" width="28" height="36" rx="4" fill="#f3ecdb" />
+      <path d="M11.5 26 17 12.5 22.5 26M13.6 21.2h6.8" fill="none" stroke="#0a7870" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M30 21h12.5L55 33.5V52a4 4 0 0 1-4 4H30a4 4 0 0 1-4-4V25a4 4 0 0 1 4-4z"
+        fill="#ffffff"
+        stroke="#0a7870"
+        strokeWidth="3.5"
+        strokeLinejoin="round"
+        paintOrder="stroke"
+      />
+      <path d="M42.5 21v8.5a4 4 0 0 0 4 4H55z" fill="#f3ecdb" />
+      <rect x="31" y="38" width="18" height="4" rx="2" fill="#0a7870" />
+      <rect x="31" y="46" width="12" height="4" rx="2" fill="#0a7870" />
+    </svg>
+  )
+}
+
+export function BrandName() {
+  return (
+    <>
+      Online<span style={{ color: "#0a7870" }}>Doc</span>Translator
+    </>
+  )
+}

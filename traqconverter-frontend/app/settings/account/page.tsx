@@ -267,7 +267,7 @@ export default function AccountSettingsPage() {
   }
 
   const handleSignOut = async () => {
-    if (!confirm("Sign out of TraqConverter?")) return
+    if (!confirm("Sign out of OnlineDocTranslator?")) return
     // Same as the sidebar: revoke the token server-side and drop the cached plan.
     try {
       await api.post("/auth/logout")
@@ -328,7 +328,7 @@ export default function AccountSettingsPage() {
     <div className="space-y-8 pb-16 max-w-3xl">
       {}
       <div className="text-[12px] tracking-wide" style={{ color: "#9a9178" }}>
-        TraqConverter <span style={{ color: "#cfc6ad" }}>›</span> Account{" "}
+        OnlineDocTranslator <span style={{ color: "#cfc6ad" }}>›</span> Account{" "}
         <span style={{ color: "#cfc6ad" }}>›</span>{" "}
         <span style={{ color: "#1f2a2e" }}>Settings</span>
       </div>

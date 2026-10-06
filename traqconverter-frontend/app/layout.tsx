@@ -15,9 +15,34 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 })
 
+const DESCRIPTION =
+  "AI first drafts of certified translations for professional translators: layout rebuilt, signatures and stamps noted, your certification page added."
+const OG_IMAGE = {
+  url: "/brand/og-image-1200x630.png",
+  width: 1200,
+  height: 630,
+  alt: "OnlineDocTranslator: certified translations, layout and all. Ready for your signature.",
+}
+
 export const metadata: Metadata = {
-  title: "TraqConverter",
-  description: "AI first drafts of certified translations for professional translators: layout rebuilt, signatures and stamps noted, your certification page added.",
+  metadataBase: new URL("https://www.onlinedoctranslator.ai"),
+  title: "OnlineDocTranslator",
+  description: DESCRIPTION,
+  applicationName: "OnlineDocTranslator",
+  openGraph: {
+    type: "website",
+    siteName: "OnlineDocTranslator",
+    title: "OnlineDocTranslator",
+    description: DESCRIPTION,
+    url: "/",
+    images: [OG_IMAGE],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "OnlineDocTranslator",
+    description: DESCRIPTION,
+    images: [OG_IMAGE],
+  },
 }
 
 export default function RootLayout({

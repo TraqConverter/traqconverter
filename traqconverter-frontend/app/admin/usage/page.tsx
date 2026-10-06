@@ -105,7 +105,7 @@ export default function AdminUsagePage() {
           Not available
         </div>
         <div className="text-sm" style={{ color: "#8a8270" }}>
-          This page is for TraqConverter staff.
+          This page is for OnlineDocTranslator staff.
         </div>
       </div>
     )
@@ -117,7 +117,7 @@ export default function AdminUsagePage() {
   return (
     <div className="space-y-6 pb-16">
       <div className="text-[12px] tracking-wide" style={{ color: "#9a9178" }}>
-        TraqConverter <span style={{ color: "#cfc6ad" }}>›</span> Admin{" "}
+        OnlineDocTranslator <span style={{ color: "#cfc6ad" }}>›</span> Admin{" "}
         <span style={{ color: "#cfc6ad" }}>›</span> <span style={{ color: "#1f2a2e" }}>AI usage</span>
       </div>
 

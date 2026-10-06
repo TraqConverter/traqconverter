@@ -217,7 +217,7 @@ export default function MembersPage() {
     <div className="space-y-6 pb-16">
       {}
       <div className="text-[12px] tracking-wide" style={{ color: "#9a9178" }}>
-        TraqConverter <span style={{ color: "#cfc6ad" }}>›</span> Account{" "}
+        OnlineDocTranslator <span style={{ color: "#cfc6ad" }}>›</span> Account{" "}
         <span style={{ color: "#cfc6ad" }}>›</span>{" "}
         <span style={{ color: "#1f2a2e" }}>Members</span>
       </div>
@@ -396,7 +396,7 @@ export default function MembersPage() {
             </button>
           </div>
           <p className="text-xs mt-4" style={{ color: "#8a8270" }}>
-            If they already have a TraqConverter account, they&apos;ll be added
+            If they already have a OnlineDocTranslator account, they&apos;ll be added
             instantly. Otherwise we email them an invite link and keep the
             invite pending until they sign up or accept it.
           </p>

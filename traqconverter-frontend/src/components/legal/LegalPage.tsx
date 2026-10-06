@@ -3,6 +3,7 @@ import type { ReactNode } from "react"
 
 import CompanyLine from "@/components/legal/CompanyLine"
 import { LEGAL_LINKS } from "@/lib/company"
+import { BrandMark, BrandName } from "@/components/brand/Logo"
 
 const CREAM = "#faf5ee"
 const CREAM_DARK = "#f3ecdb"
@@ -36,14 +37,9 @@ export default function LegalPage({
     <div style={{ background: CREAM, color: TEXT, minHeight: "100vh" }} className="flex flex-col">
       <header style={{ background: CREAM, borderBottom: `1px solid ${BORDER}` }}>
         <div className="max-w-[1200px] mx-auto flex items-center justify-between gap-3" style={{ padding: "14px 24px" }}>
-          <Link href="/" className="flex items-center gap-3">
-            <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white"
-              style={{ background: TEAL, fontSize: 18 }}
-            >
-              T
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 600, color: TEXT }}>TraqConverter</div>
+          <Link href="/" className="flex items-center gap-3" aria-label="OnlineDocTranslator home">
+            <BrandMark size={36} />
+            <div style={{ fontSize: 16, fontWeight: 600, color: TEXT }}><BrandName /></div>
           </Link>
           <div className="flex items-center gap-1 sm:gap-3 whitespace-nowrap">
             <Link

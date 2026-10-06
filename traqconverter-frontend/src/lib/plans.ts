@@ -114,7 +114,7 @@ export function pagesLabel(n: number): string {
 }
 
 export function contactHref(catalog: PlanCatalog, plan: Plan): string {
-  return `mailto:${catalog.contact_email}?subject=${encodeURIComponent(`TraqConverter ${plan.name} plan`)}`
+  return `mailto:${catalog.contact_email}?subject=${encodeURIComponent(`OnlineDocTranslator ${plan.name} plan`)}`
 }
 
 // The bullets a plan card shows: its allowance, then what it adds over the plan below it.

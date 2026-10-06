@@ -266,7 +266,7 @@ export default function CertificationsPage() {
     <div className="space-y-6 pb-16">
       {}
       <div className="text-[12px] tracking-wide" style={{ color: "#9a9178" }}>
-        TraqConverter <span style={{ color: "#cfc6ad" }}>›</span> Assets{" "}
+        OnlineDocTranslator <span style={{ color: "#cfc6ad" }}>›</span> Assets{" "}
         <span style={{ color: "#cfc6ad" }}>›</span>{" "}
         <span style={{ color: "#1f2a2e" }}>Certifications</span>
       </div>

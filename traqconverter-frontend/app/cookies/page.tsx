@@ -4,15 +4,15 @@ import Link from "next/link"
 import LegalPage, { TableScroll } from "@/components/legal/LegalPage"
 
 export const metadata: Metadata = {
-  title: "Cookie Policy · TraqConverter",
-  description: "What TraqConverter stores in your browser, and why.",
+  title: "Cookie Policy · OnlineDocTranslator",
+  description: "What OnlineDocTranslator stores in your browser, and why.",
 }
 
 export default function CookiesPage() {
   return (
     <LegalPage
       title="Cookie Policy"
-      intro="TraqConverter sets no cookies and runs no analytics or advertising trackers. It stores only what it needs to keep you signed in and remember a setting you chose."
+      intro="OnlineDocTranslator sets no cookies and runs no analytics or advertising trackers. It stores only what it needs to keep you signed in and remember a setting you chose."
     >
       <h2 id="what">1. What we store in your browser</h2>
       <p>
@@ -75,7 +75,7 @@ export default function CookiesPage() {
       <h2 id="control">4. How to remove them</h2>
       <p>
         Signing out deletes the sign-in items. You can also clear all of them in your browser settings by deleting
-        the site data for TraqConverter. If you do, you&apos;ll need to sign in again.
+        the site data for OnlineDocTranslator. If you do, you&apos;ll need to sign in again.
       </p>
 
       <h2 id="changes">5. Changes</h2>

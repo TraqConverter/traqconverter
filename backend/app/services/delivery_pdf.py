@@ -136,7 +136,7 @@ def merge(translation: bytes, original, lang: str, order: str, title: str) -> by
             out.insert_pdf(tr)
             _add_separator(out, lang)
             out.insert_pdf(original)
-    out.set_metadata({"title": title, "creator": "TraqConverter", "producer": "TraqConverter"})
+    out.set_metadata({"title": title, "creator": "OnlineDocTranslator", "producer": "OnlineDocTranslator"})
     data = out.tobytes(garbage=3, deflate=True)
     out.close()
     return data

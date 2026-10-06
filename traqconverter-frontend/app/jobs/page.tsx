@@ -768,7 +768,7 @@ function Jobs() {
   return (
     <div className="space-y-6 pb-16">
       <div className="text-[12px] tracking-wide" style={{ color: "#9a9178" }}>
-        TraqConverter <span style={{ color: "#cfc6ad" }}>›</span>{" "}
+        OnlineDocTranslator <span style={{ color: "#cfc6ad" }}>›</span>{" "}
         <span style={{ color: "#1f2a2e" }}>Projects</span>
       </div>
 
