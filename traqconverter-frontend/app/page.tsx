@@ -31,19 +31,26 @@ const BORDER = "#e7ddc5"
 const ACCENT_GOLD = "#c88a1a"
 const ACCENT_RUST = "#b14a3a"
 
+const H2_SIZE = "clamp(28px, 5vw, 38px)"
+const H3_SIZE = "clamp(24px, 4vw, 30px)"
+
 export default function LandingPage() {
   return (
-    <div style={{ background: CREAM, color: TEXT, minHeight: "100vh" }}>
+    <div style={{ background: CREAM, color: TEXT, minHeight: "100vh", overflowX: "clip" }}>
       <TopBar />
-      <Hero />
-      <TrustBar />
-      <ValueProps />
-      <HowItWorks />
-      <DeepFeatures />
-      <Security />
-      <Pricing />
-      <FAQ />
-      <FinalCTA />
+      <main>
+        <Hero />
+        <TrustBar />
+        <HowItWorks />
+        <FeatureGroups />
+        <Workbench />
+        <GetPaid />
+        <BuiltForCertified />
+        <Security />
+        <Pricing />
+        <FAQ />
+        <FinalCTA />
+      </main>
       <Footer />
     </div>
   )
@@ -63,10 +70,11 @@ function TopBar() {
     >
       <div
         className="max-w-[1200px] mx-auto flex items-center justify-between"
-        style={{ padding: "14px 24px" }}
+        style={{ padding: "14px 20px" }}
       >
-        <Link href="/" className="flex items-center gap-3">
+        <Link href="/" className="flex items-center gap-3" aria-label="TraqConverter home">
           <div
+            aria-hidden="true"
             className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-white"
             style={{ background: TEAL, fontSize: 18 }}
           >
@@ -84,13 +92,13 @@ function TopBar() {
                 marginTop: -2,
               }}
             >
-              <span className="hidden sm:inline">LAYOUT-PRESERVING TRANSLATION</span>
+              <span className="hidden sm:inline">CERTIFIED TRANSLATION WORKSPACE</span>
             </div>
           </div>
         </Link>
-        <nav className="hidden md:flex items-center gap-8">
+        <nav aria-label="Main" className="hidden lg:flex items-center gap-7">
           <a href="#features" style={navLink}>Features</a>
-          <a href="#how-it-works" style={navLink}>How it works</a>
+          <a href="#get-paid" style={navLink}>Get paid</a>
           <a href="#security" style={navLink}>Security</a>
           <a href="#pricing" style={navLink}>Pricing</a>
           <a href="#faq" style={navLink}>FAQ</a>
@@ -98,12 +106,11 @@ function TopBar() {
         <div className="flex items-center gap-1 sm:gap-3 whitespace-nowrap">
           <Link
             href="/login"
-            className="hidden sm:inline-block"
             style={{
               fontSize: 14,
               fontWeight: 500,
               color: TEXT,
-              padding: "8px 16px",
+              padding: "8px 12px",
             }}
           >
             Sign in
@@ -135,15 +142,23 @@ const navLink = {
   fontWeight: 500,
 }
 
+const eyebrowStyle = {
+  fontSize: 11,
+  letterSpacing: "0.16em",
+  color: TEAL,
+  fontWeight: 600,
+  marginBottom: 10,
+}
+
 function Hero() {
   const catalog = usePlans()
   const trialLine = catalog
-    ? `${catalog.trial.days}-day trial with ${pagesLabel(catalog.trial.credits)} free`
+    ? `${pagesLabel(catalog.trial.credits)} free for ${catalog.trial.days} days`
     : "Free trial"
   return (
     <section style={{ position: "relative", overflow: "hidden" }}>
-      {}
       <div
+        aria-hidden="true"
         style={{
           position: "absolute",
           top: -120,
@@ -159,10 +174,10 @@ function Hero() {
       />
       <div
         className="max-w-[1200px] mx-auto"
-        style={{ padding: "80px 24px 64px" }}
+        style={{ padding: "clamp(48px, 8vw, 80px) 20px 64px" }}
       >
-        <div className="grid lg:grid-cols-[1.15fr_1fr] gap-12 items-center">
-          <div>
+        <div className="grid lg:grid-cols-[1.1fr_1fr] gap-12 items-center">
+          <div className="min-w-0">
             <div
               className="inline-flex items-center gap-2 mb-6"
               style={{
@@ -176,18 +191,20 @@ function Hero() {
               }}
             >
               <span
+                aria-hidden="true"
                 style={{
                   width: 6,
                   height: 6,
                   borderRadius: "50%",
                   background: TEAL,
+                  flexShrink: 0,
                 }}
               />
-              FOR PROFESSIONAL TRANSLATORS · PDF · DOCX · SCANS
+              FOR CERTIFIED TRANSLATORS AND AGENCIES
             </div>
             <h1
               style={{
-                fontSize: 56,
+                fontSize: "clamp(36px, 6.5vw, 56px)",
                 lineHeight: 1.05,
                 fontWeight: 700,
                 letterSpacing: "-0.02em",
@@ -195,8 +212,8 @@ function Hero() {
                 marginBottom: 20,
               }}
             >
-              The first draft of every certified translation.{" "}
-              <span style={{ color: TEAL }}>Layout included.</span>
+              Certified translations, layout and all.{" "}
+              <span style={{ color: TEAL }}>Ready for your signature.</span>
             </h1>
             <p
               style={{
@@ -204,14 +221,13 @@ function Hero() {
                 lineHeight: 1.55,
                 color: MUTED,
                 marginBottom: 32,
-                maxWidth: 560,
+                maxWidth: 580,
               }}
             >
-              Upload your client&apos;s scan, PDF, or Word file. TraqConverter
-              reads it, translates it, and rebuilds the page layout, marking
-              signatures, stamps, and unreadable parts the way you would. Correct
-              it in place or ask the built-in AI to fix a highlighted passage, then export
-              it with your own certification page.
+              Upload a scan, PDF, photo or Word file. TraqConverter translates it,
+              rebuilds the page and marks signatures, stamps and unreadable parts.
+              You check it next to the original, add your certification page,
+              and send it to the client, with payment collected first if you want.
             </p>
             <div className="flex flex-wrap items-center gap-3 mb-8">
               <Link
@@ -228,11 +244,11 @@ function Hero() {
                   gap: 8,
                 }}
               >
-                Start free 7-day trial
-                <span>→</span>
+                Start free trial
+                <span aria-hidden="true">→</span>
               </Link>
-              <Link
-                href="#how-it-works"
+              <a
+                href="#pricing"
                 style={{
                   background: "#ffffff",
                   color: TEXT,
@@ -246,28 +262,27 @@ function Hero() {
                   gap: 8,
                 }}
               >
-                Watch how it works
-              </Link>
+                See pricing
+              </a>
             </div>
-            <div className="flex flex-wrap items-center gap-x-7 gap-y-2">
+            <ul className="flex flex-wrap items-center gap-x-7 gap-y-2">
               {[
                 "No credit card required",
                 trialLine,
                 "You review and sign every document",
               ].map((t) => (
-                <div
+                <li
                   key={t}
                   className="flex items-center gap-2"
                   style={{ fontSize: 13, color: MUTED }}
                 >
                   <Check />
                   {t}
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
 
-          {}
           <HeroVisual />
         </div>
       </div>
@@ -277,8 +292,8 @@ function Hero() {
 
 function HeroVisual() {
   return (
-    <div className="relative">
-      <Shot src="/landing/editor.webp" width={1800} height={1204} alt="Source and translation side by side; clicking a translated line highlights it on the original" priority />
+    <div className="relative min-w-0">
+      <Shot src="/landing/editor.webp" width={1800} height={1204} alt="The editor: the original document on the left, the translated document on the right, with the clicked line highlighted on the original" priority />
       <div
         className="hidden md:block"
         style={{
@@ -327,7 +342,7 @@ function Shot({
         overflow: "hidden",
       }}
     >
-      <div className="flex items-center gap-1.5" style={{ padding: "10px 14px", borderBottom: `1px solid ${CREAM_DARK}` }}>
+      <div aria-hidden="true" className="flex items-center gap-1.5" style={{ padding: "10px 14px", borderBottom: `1px solid ${CREAM_DARK}` }}>
         <div style={dot("#ffb8a8")} />
         <div style={dot("#ffd98a")} />
         <div style={dot("#a8d9a3")} />
@@ -349,86 +364,289 @@ const dot = (c: string) => ({
 function TrustBar() {
   return (
     <section
+      aria-label="At a glance"
       style={{
         background: CREAM_DARK,
         borderTop: `1px solid ${BORDER}`,
         borderBottom: `1px solid ${BORDER}`,
       }}
     >
-      <div
+      <dl
         className="max-w-[1200px] mx-auto grid grid-cols-2 md:grid-cols-4 gap-y-6 gap-x-6"
-        style={{ padding: "28px 24px" }}
+        style={{ padding: "28px 20px" }}
       >
         {[
           { n: "28", l: "Languages" },
-          { n: "PDF · DOCX · JPG · PNG", l: "Input formats" },
+          { n: "PDF · DOCX · JPG · PNG", l: "Input formats, up to 20 MB" },
           { n: "DOCX · PDF", l: "Export formats" },
           { n: "10 AI edits", l: "Included per page" },
         ].map((s) => (
-          <div key={s.l}>
-            <div
+          <div key={s.l} className="min-w-0 flex flex-col-reverse">
+            <dt style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>{s.l}</dt>
+            <dd
               style={{
-                fontSize: 28,
+                fontSize: "clamp(18px, 2.2vw, 24px)",
                 fontWeight: 700,
                 color: TEAL,
                 letterSpacing: "-0.02em",
+                overflowWrap: "anywhere",
               }}
             >
               {s.n}
-            </div>
-            <div style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>
-              {s.l}
-            </div>
+            </dd>
           </div>
         ))}
+      </dl>
+    </section>
+  )
+}
+
+const STEPS = [
+  {
+    n: "01",
+    t: "Upload",
+    b: "Drop in a PDF, scan, photo or Word file, or a whole client batch. Pick the target language; the source can be detected for you.",
+  },
+  {
+    n: "02",
+    t: "Review & edit",
+    b: "Correct the translation in place, next to the original. Uncertain readings are flagged, and a check lists anything to look at before you sign.",
+  },
+  {
+    n: "03",
+    t: "Certify & deliver",
+    b: "Add your own certification page or the standard one, then export one delivery PDF: translation, certification and a copy of the original.",
+  },
+  {
+    n: "04",
+    t: "Get paid",
+    b: "Send the client a private download link. Make it protected and they see a watermarked preview until they've paid you.",
+  },
+]
+
+function HowItWorks() {
+  return (
+    <section
+      id="how-it-works"
+      style={{
+        padding: "80px 20px",
+        background: CREAM_DARK,
+        borderBottom: `1px solid ${BORDER}`,
+      }}
+    >
+      <div className="max-w-[1200px] mx-auto">
+        <SectionHeader
+          eyebrow="HOW IT WORKS"
+          title="From the client's scan to a paid delivery"
+        />
+        <ol className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5 mt-12">
+          {STEPS.map((s) => (
+            <li
+              key={s.n}
+              style={{
+                background: "#ffffff",
+                border: `1px solid ${BORDER}`,
+                borderRadius: 20,
+                padding: 24,
+              }}
+            >
+              <div
+                aria-hidden="true"
+                style={{
+                  fontSize: 34,
+                  fontWeight: 700,
+                  color: TEAL,
+                  letterSpacing: "-0.04em",
+                  lineHeight: 1,
+                  marginBottom: 14,
+                }}
+              >
+                {s.n}
+              </div>
+              <h3 style={{ fontSize: 17, fontWeight: 600, color: TEXT, marginBottom: 8 }}>
+                {s.t}
+              </h3>
+              <p style={{ fontSize: 14, lineHeight: 1.55, color: MUTED }}>
+                {s.b}
+              </p>
+            </li>
+          ))}
+        </ol>
       </div>
     </section>
   )
 }
 
-function ValueProps() {
+type Group = {
+  icon: React.ReactNode
+  title: string
+  lede: string
+  items: string[]
+  plan?: string
+}
+
+const GROUPS: Group[] = [
+  {
+    icon: <IconLayout />,
+    title: "Translate",
+    lede: "Layout-preserving translation of scans, PDFs, photos and Word files.",
+    items: [
+      "Tables, forms and signature blocks come back where they were, as an editable Word document",
+      "Signatures, stamps and seals noted in brackets: [Signature], [Stamp: …]",
+      "[illegible] only on the part that can't be read; names, dates and figures are never guessed",
+      "Instructions for the AI on each project, plus a library of saved instructions",
+      "Editable copy mode: a same-language Word file of the document for your CAT tool",
+    ],
+  },
+  {
+    icon: <IconBolt />,
+    title: "Edit & check",
+    lede: "Work in the translated document, side by side with the original.",
+    items: [
+      "Type corrections directly; click any line to see it highlighted on the original",
+      "Uncertain readings are flagged for you to check",
+      "Highlight a passage and ask the AI to change just that part",
+      "Insert and move pictures, your logo and your stamp",
+      "Undo step by step, or regenerate the document with new instructions",
+      "Ready-to-certify check: missing numbers, uncertain readings, possibly untranslated text, a missing certification page",
+    ],
+  },
+  {
+    icon: <IconShield />,
+    title: "Certify",
+    lede: "Your certification page, filled in and exported with the translation.",
+    items: [
+      "Upload your own Word certification with merge fields, or use the standard page",
+      "Choose the template for each project, or when you click Certify & deliver",
+      "Edit the date and languages in place",
+      "Dates and language names are written in the template's language",
+    ],
+    plan: "Pro and above",
+  },
+  {
+    icon: <IconSend />,
+    title: "Deliver & get paid",
+    lede: "One file for the client, and a link to send it.",
+    items: [
+      "One-click delivery PDF: translation, certification and a copy of the original",
+      "Private client download links that expire after 1, 7 or 30 days",
+      "Protected links: a watermarked, blurred preview until the client pays",
+      "Clients pay through your own Stripe account or your PayPal.me",
+      "Batches: several files for one client, one ZIP download",
+    ],
+  },
+  {
+    icon: <IconBrain />,
+    title: "Learns from your work",
+    lede: "Each job you finish makes the next one faster.",
+    items: [
+      "Recurring documents (same type and country) start from your template automatically",
+      "Add from a past job: turn an old original and your translation into a template",
+      "Translation memory built from the text you approve and deliver",
+      "TMX import and export; every entry editable",
+      "A glossary that picks up the terms you correct",
+      "Shared names and terms across every document in a batch",
+    ],
+    plan: "Memory and glossary on Pro and above",
+  },
+  {
+    icon: <IconUsers />,
+    title: "Team",
+    lede: "For agencies and studios that share the work.",
+    items: [
+      "Team members with roles: admin, PM, reviewer, member",
+      "Assign projects; the assignee gets an email",
+      "An Assigned to me filter on the projects list",
+      "In-app notifications when a translation is ready",
+    ],
+  },
+]
+
+function FeatureGroups() {
   return (
-    <section id="features" style={{ padding: "80px 24px" }}>
+    <section id="features" style={{ padding: "80px 20px" }}>
       <div className="max-w-[1200px] mx-auto">
         <SectionHeader
-          eyebrow="WHY TRAQCONVERTER"
-          title="Built for translators who sign what they deliver"
-          subtitle="The AI does the first draft and the layout. You stay in control of every line, and the tool gets better at your work each time."
+          eyebrow="FEATURES"
+          title="Everything a certified job needs, in one place"
+          subtitle="Translate, check, certify, deliver and get paid, without moving files between tools."
         />
-        <div className="grid md:grid-cols-3 gap-5 mt-12">
-          <FeatureCard
-            icon={<IconLayout />}
-            title="Layout rebuilt, page for page"
-            body="Tables, two-column forms, and signature blocks come back where they were on the original, as an editable Word document, not a text dump."
-          />
-          <FeatureCard
-            icon={<IconShield />}
-            title="Stamps, signatures, and [illegible]"
-            body="Noted where they appear, in the target language, the way you would: [Signature], [Round stamp: …], [Revenue stamp: €16.00], and [illegible] only on the part that can't be read."
-          />
-          <FeatureCard
-            icon={<IconBolt />}
-            title="Ask AI on any passage"
-            body="Highlight a line, a table, or a signature block and say what's off. Wording and formatting fixes take seconds; every change can be undone."
-          />
-          <FeatureCard
-            icon={<IconBrain />}
-            title="Learns your templates and terms"
-            body="Your corrections become your team's terminology. A finished document becomes a template, so the next one of the same kind starts from your version."
-          />
-          <FeatureCard
-            icon={<IconLock />}
-            title="Checked before you sign"
-            body="Every number, date, name, and code in the source is compared with your translation, along with untranslated text, missing stamp notes, and your glossary."
-          />
-          <FeatureCard
-            icon={<IconUsers />}
-            title="Your certification page and stamp"
-            body="Your statement, date, languages, logo, and stamp go at the end of the document and export with it as one file. Drag your stamp wherever it belongs."
-          />
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5 mt-12">
+          {GROUPS.map((g) => (
+            <GroupCard key={g.title} group={g} />
+          ))}
         </div>
       </div>
     </section>
+  )
+}
+
+function GroupCard({ group }: { group: Group }) {
+  return (
+    <article
+      className="flex flex-col"
+      style={{
+        background: "#ffffff",
+        border: `1px solid ${BORDER}`,
+        borderRadius: 20,
+        padding: 24,
+      }}
+    >
+      <div className="flex items-center gap-3" style={{ marginBottom: 12 }}>
+        <IconTile>{group.icon}</IconTile>
+        <h3 style={{ fontSize: 19, fontWeight: 700, color: TEXT }}>{group.title}</h3>
+      </div>
+      <p style={{ fontSize: 14, lineHeight: 1.55, color: MUTED, marginBottom: 14 }}>{group.lede}</p>
+      <ul className="space-y-2.5" style={{ flex: 1 }}>
+        {group.items.map((it) => (
+          <li key={it} className="flex items-start gap-2.5" style={{ fontSize: 14, lineHeight: 1.5, color: TEXT }}>
+            <span style={{ color: TEAL, flexShrink: 0, marginTop: 3 }}>
+              <Check />
+            </span>
+            <span>{it}</span>
+          </li>
+        ))}
+      </ul>
+      {group.plan && (
+        <div
+          style={{
+            alignSelf: "flex-start",
+            marginTop: 16,
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: "0.04em",
+            color: TEAL_DARK,
+            background: CREAM_DARK,
+            border: `1px solid ${BORDER}`,
+            padding: "4px 10px",
+            borderRadius: 999,
+          }}
+        >
+          {group.plan}
+        </div>
+      )}
+    </article>
+  )
+}
+
+function IconTile({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        background: TEAL_SOFT,
+        color: TEAL,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+      }}
+    >
+      {children}
+    </div>
   )
 }
 
@@ -447,38 +665,25 @@ function FeatureCard({
         background: "#ffffff",
         border: `1px solid ${BORDER}`,
         borderRadius: 20,
-        padding: 26,
+        padding: 24,
       }}
     >
-      <div
-        style={{
-          width: 44,
-          height: 44,
-          borderRadius: 12,
-          background: TEAL_SOFT,
-          color: TEAL,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          marginBottom: 18,
-        }}
-      >
-        {icon}
+      <div style={{ marginBottom: 16 }}>
+        <IconTile>{icon}</IconTile>
       </div>
-      <div style={{ fontSize: 17, fontWeight: 600, color: TEXT, marginBottom: 8 }}>
+      <h3 style={{ fontSize: 17, fontWeight: 600, color: TEXT, marginBottom: 8 }}>
         {title}
-      </div>
-      <div style={{ fontSize: 14, lineHeight: 1.55, color: MUTED }}>{body}</div>
+      </h3>
+      <p style={{ fontSize: 14, lineHeight: 1.55, color: MUTED }}>{body}</p>
     </div>
   )
 }
 
-function HowItWorks() {
+function Workbench() {
   return (
     <section
-      id="how-it-works"
       style={{
-        padding: "80px 24px",
+        padding: "80px 20px",
         background: CREAM_DARK,
         borderTop: `1px solid ${BORDER}`,
         borderBottom: `1px solid ${BORDER}`,
@@ -486,114 +691,383 @@ function HowItWorks() {
     >
       <div className="max-w-[1200px] mx-auto">
         <SectionHeader
-          eyebrow="HOW IT WORKS"
-          title="From the client's scan to a translation you can sign"
-        />
-        <div className="grid md:grid-cols-3 gap-5 mt-12">
-          {[
-            {
-              n: "01",
-              t: "Upload the client's document",
-              b: "Drag in a PDF, DOCX, JPG, or PNG. Pick the target language and either pick the source or let auto-detect choose.",
-            },
-            {
-              n: "02",
-              t: "Correct the draft",
-              b: "The source stays on the left, the translated document on the right. Type corrections directly, or highlight a passage and ask the AI to change it.",
-            },
-            {
-              n: "03",
-              t: "Certify & deliver",
-              b: "Export DOCX or PDF with the original layout. On Pro and above, your certification page with your details, logo, and stamp is added for you to sign.",
-            },
-          ].map((s, i) => (
-            <div
-              key={s.n}
-              style={{
-                background: "#ffffff",
-                border: `1px solid ${BORDER}`,
-                borderRadius: 20,
-                padding: 26,
-                position: "relative",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 38,
-                  fontWeight: 700,
-                  color: TEAL,
-                  letterSpacing: "-0.04em",
-                  lineHeight: 1,
-                  marginBottom: 16,
-                }}
-              >
-                {s.n}
-              </div>
-              <div style={{ fontSize: 17, fontWeight: 600, color: TEXT, marginBottom: 8 }}>
-                {s.t}
-              </div>
-              <div style={{ fontSize: 14, lineHeight: 1.55, color: MUTED }}>
-                {s.b}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function DeepFeatures() {
-  return (
-    <section style={{ padding: "80px 24px" }}>
-      <div className="max-w-[1200px] mx-auto">
-        <SectionHeader
-          eyebrow="THE WORKBENCH"
+          eyebrow="THE EDITOR"
           title="Edit the document, not a list of segments"
           subtitle="The translation is a real Word document next to the original. Type where something's wrong, or highlight it and ask the AI."
         />
         <ShowcaseRow
           image={<Shot maxHeight={560} src="/landing/assistant.webp" width={1400} height={1570} alt="Asking the AI to write a date in full; the edited line is highlighted" />}
           eyebrow="ASK AI"
-          title="Fix anything by asking"
+          title="Fix a passage by asking"
           items={[
-            { t: "Point at it", b: "Highlight the passage; the assistant sees it, the original, and the rest of the document." },
+            { t: "Point at it", b: "Highlight the passage; the AI sees it, the original and the rest of the document." },
             { t: "Say what's off", b: "“Write the date in full”, “put the stamp beside the signature”, “use Registry Office”." },
-            { t: "Seconds, not a re-translation", b: "Only what you pointed at changes. Undo is one click." },
+            { t: "Only that part changes", b: "The rest of the document stays as it is. Undo is one click." },
           ]}
         />
         <ShowcaseRow
           reverse
-          image={<Shot maxHeight={560} src="/landing/checks.webp" width={1100} height={1486} alt="Ready to certify checklist listing what to check before signing" />}
+          image={<Shot maxHeight={560} src="/landing/checks.webp" width={1100} height={1486} alt="Ready-to-certify checklist listing what to check before signing" />}
           eyebrow="READY TO CERTIFY"
-          title="Nothing slips past your signature"
+          title="Checked before you sign"
           items={[
-            { t: "Numbers, dates, codes, names", b: "Compared with the source. A missing digit is flagged before you sign, not after the client does." },
-            { t: "Uncertain readings", b: "Faded stamps, handwriting, and smudged digits are marked for you to look at, with the spot highlighted on the original." },
-            { t: "One click to the problem", b: "Each item jumps to the paragraph and its place on the source." },
+            { t: "Numbers, dates, codes and names", b: "Compared with the source. A missing digit is flagged before you sign, not after the client spots it." },
+            { t: "Uncertain readings", b: "Faded stamps, handwriting and smudged digits are marked, with the spot highlighted on the original." },
+            { t: "Untranslated text and the certification page", b: "Text that may have been left in the source language is listed, and so is a missing certification page." },
           ]}
         />
         <ShowcaseRow
-          image={<Shot maxHeight={560} src="/landing/cert.webp" width={1100} height={1486} alt="Certification page fields: date, languages, translator, document" />}
+          image={<Shot maxHeight={560} src="/landing/cert.webp" width={1100} height={1486} alt="Certification page fields: date, languages, translator and document" />}
           eyebrow="CERTIFICATION"
           title="Your certification page, built in"
           items={[
-            { t: "Filled in for you", b: "Translator, date, source and target language, document, and pages, in the target language." },
+            { t: "Your template or ours", b: "Upload your Word certification with merge fields, or use the standard page. Pick it per project or at Certify & deliver." },
             { t: "Edit in place", b: "Change the date or languages without touching the rest of the page." },
-            { t: "One file out", b: "Export DOCX or PDF with the source copy, the translation, and your certification page together." },
+            { t: "One file out", b: "The delivery PDF holds the translation, your certification page and a copy of the original." },
           ]}
         />
-        <div className="grid md:grid-cols-2 gap-6 mt-20">
-          <HighlightCard
-            eyebrow="LEARNS AS YOU WORK"
-            title="The second driving licence is faster than the first"
-            body="Finished documents become your team's templates. The next document of the same kind is built from your version, changing only names, dates, and numbers, in seconds instead of minutes. The terms you correct are remembered and used next time."
-          />
-          <HighlightCard
-            eyebrow="BATCHES"
-            title="One client, many documents, one spelling"
-            body="Upload a client's birth certificate, diploma, and transcripts together. Names, institutions, and places are rendered the same way in every document, and you download the whole batch as one ZIP."
-          />
+      </div>
+    </section>
+  )
+}
+
+function ShowcaseRow({
+  image,
+  eyebrow,
+  title,
+  items,
+  reverse = false,
+}: {
+  image: React.ReactNode
+  eyebrow: string
+  title: string
+  items: { t: string; b: string }[]
+  reverse?: boolean
+}) {
+  return (
+    <div className="grid md:grid-cols-2 gap-10 md:gap-12 items-center mt-16 md:mt-20">
+      <div className={`min-w-0 ${reverse ? "md:order-2" : ""}`}>{image}</div>
+      <div className="min-w-0">
+        <div style={eyebrowStyle}>{eyebrow}</div>
+        <h3 style={{ fontSize: H3_SIZE, lineHeight: 1.15, fontWeight: 700, color: TEXT, letterSpacing: "-0.02em", marginBottom: 22 }}>{title}</h3>
+        <FeatureList items={items} />
+      </div>
+    </div>
+  )
+}
+
+function GetPaid() {
+  return (
+    <section id="get-paid" style={{ padding: "80px 20px" }}>
+      <div
+        className="max-w-[1200px] mx-auto"
+        style={{
+          background: TEAL,
+          color: "#ffffff",
+          borderRadius: 32,
+          padding: "clamp(28px, 5vw, 56px)",
+          position: "relative",
+          overflow: "hidden",
+          boxShadow: "0 20px 50px rgba(10,120,112,0.20)",
+        }}
+      >
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            top: -120,
+            left: -100,
+            width: 340,
+            height: 340,
+            borderRadius: "50%",
+            background: "rgba(255,255,255,0.06)",
+            pointerEvents: "none",
+          }}
+        />
+        <div className="relative grid lg:grid-cols-[1.1fr_1fr] gap-10 items-center">
+          <div className="min-w-0">
+            <div style={{ ...eyebrowStyle, color: "rgba(255,255,255,0.75)" }}>PROTECTED UNTIL PAID</div>
+            <h2
+              style={{
+                fontSize: H2_SIZE,
+                lineHeight: 1.12,
+                fontWeight: 700,
+                letterSpacing: "-0.02em",
+                marginBottom: 16,
+              }}
+            >
+              Get paid before you deliver
+            </h2>
+            <p style={{ fontSize: 16, lineHeight: 1.6, color: "rgba(255,255,255,0.88)", marginBottom: 24, maxWidth: 560 }}>
+              No more chasing invoices after the file has gone out. Send a protected link:
+              the client sees what they&apos;re paying for, but can&apos;t use it until they pay.
+            </p>
+            <ul className="space-y-4">
+              {[
+                {
+                  t: "A preview they can't use",
+                  b: "Every page is watermarked “PREVIEW – NOT VALID – UNPAID” and partly blurred.",
+                },
+                {
+                  t: "They pay the way they like",
+                  b: "Card, Apple Pay, Google Pay or PayPal through your own Stripe account, or by PayPal.me.",
+                },
+                {
+                  t: "The file is released after payment",
+                  b: "With Stripe, the download opens as soon as Stripe confirms. With PayPal.me, the client tells you they've paid and you release it.",
+                },
+                {
+                  t: "The money goes to you",
+                  b: "Payments land in your own Stripe or PayPal account, not ours. We never see or store card or bank details.",
+                },
+              ].map((it) => (
+                <li key={it.t} className="flex items-start gap-3">
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 8,
+                      background: "rgba(255,255,255,0.16)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Check />
+                  </span>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 2 }}>{it.t}</div>
+                    <div style={{ fontSize: 14, lineHeight: 1.55, color: "rgba(255,255,255,0.82)" }}>{it.b}</div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <ProtectedPreview />
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// An illustration of the client's view of a protected link, drawn in CSS.
+function ProtectedPreview() {
+  const lines = [92, 70, 84, 58, 88, 64, 76]
+  return (
+    <figure className="min-w-0" style={{ margin: 0 }}>
+      <div
+        role="img"
+        aria-label="Illustration: a client's view of a protected link, with a watermarked, blurred page and a Pay button"
+        style={{
+          background: CREAM,
+          color: TEXT,
+          borderRadius: 22,
+          padding: 18,
+          boxShadow: "0 18px 44px rgba(0,0,0,0.18)",
+          maxWidth: 440,
+          margin: "0 auto",
+        }}
+      >
+        <div className="flex items-center justify-between gap-3" style={{ marginBottom: 14 }}>
+          <div className="min-w-0">
+            <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              Birth certificate – EN.pdf
+            </div>
+            <div style={{ fontSize: 11, color: SUBTLE }}>Shared by your translator</div>
+          </div>
+          <div
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: "0.08em",
+              color: ACCENT_RUST,
+              background: "#f8e6e1",
+              padding: "4px 10px",
+              borderRadius: 999,
+              whiteSpace: "nowrap",
+            }}
+          >
+            UNPAID
+          </div>
+        </div>
+        <div
+          style={{
+            position: "relative",
+            background: "#ffffff",
+            border: `1px solid ${BORDER}`,
+            borderRadius: 12,
+            padding: "20px 18px",
+            overflow: "hidden",
+          }}
+        >
+          <div style={{ height: 10, width: "46%", background: TEXT, opacity: 0.75, borderRadius: 3, margin: "0 auto 16px" }} />
+          {lines.map((w, i) => (
+            <div
+              key={i}
+              style={{
+                height: 7,
+                width: `${w}%`,
+                background: i % 3 === 1 ? CREAM_DEEP : "#cfc6b2",
+                borderRadius: 3,
+                marginBottom: 9,
+                filter: i % 2 === 0 ? "blur(2.5px)" : "none",
+              }}
+            />
+          ))}
+          <div className="flex justify-between items-end" style={{ marginTop: 18 }}>
+            <div style={{ fontSize: 10, color: SUBTLE, fontStyle: "italic" }}>[Signature]</div>
+            <div
+              style={{
+                width: 46,
+                height: 46,
+                borderRadius: "50%",
+                border: `2px dashed ${SUBTLE}`,
+                filter: "blur(1.5px)",
+              }}
+            />
+          </div>
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              pointerEvents: "none",
+            }}
+          >
+            <div
+              style={{
+                transform: "rotate(-24deg)",
+                fontSize: 13,
+                fontWeight: 700,
+                letterSpacing: "0.08em",
+                color: "rgba(177,74,58,0.55)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              PREVIEW – NOT VALID – UNPAID
+            </div>
+          </div>
+        </div>
+        <div
+          style={{
+            marginTop: 14,
+            background: TEAL,
+            color: "#ffffff",
+            borderRadius: 999,
+            textAlign: "center",
+            padding: "11px 16px",
+            fontSize: 14,
+            fontWeight: 600,
+          }}
+        >
+          Pay €45.00
+        </div>
+        <div style={{ fontSize: 11, color: SUBTLE, textAlign: "center", marginTop: 8 }}>
+          Card, Apple Pay, Google Pay or PayPal
+        </div>
+      </div>
+      <figcaption className="sr-only">Example only: you set the amount on each link.</figcaption>
+    </figure>
+  )
+}
+
+const NEEDS: { need: string; how: string }[] = [
+  {
+    need: "The translation has to mirror the original",
+    how: "The layout is rebuilt page for page, and every line links back to its place on the source.",
+  },
+  {
+    need: "Stamps, seals and signatures must be accounted for",
+    how: "Each is noted where it appears, in brackets, in the target language.",
+  },
+  {
+    need: "You can't guess an unreadable digit",
+    how: "Unreadable parts are marked [illegible] and uncertain readings are flagged for you.",
+  },
+  {
+    need: "One wrong number can get a document rejected",
+    how: "The ready-to-certify check compares numbers, dates, codes and names with the source.",
+  },
+  {
+    need: "Every delivery needs your signed statement",
+    how: "Your own Word certification is filled in and exported with the translation.",
+  },
+  {
+    need: "The same documents come back again and again",
+    how: "Templates, translation memory and your glossary are reused on the next job.",
+  },
+  {
+    need: "Clients sometimes pay late, or not at all",
+    how: "Protected links keep the file locked behind a watermarked preview until they pay.",
+  },
+  {
+    need: "Agencies split work across people",
+    how: "Roles, assignment with email notifications, and an Assigned to me view.",
+  },
+]
+
+function BuiltForCertified() {
+  return (
+    <section
+      style={{
+        padding: "80px 20px",
+        background: CREAM_DARK,
+        borderTop: `1px solid ${BORDER}`,
+        borderBottom: `1px solid ${BORDER}`,
+      }}
+    >
+      <div className="max-w-[1100px] mx-auto">
+        <SectionHeader
+          eyebrow="WHY TRANSLATORS SWITCH"
+          title="Built for certified translation, not just text"
+          subtitle="A general translation tool gives you words. Certified work needs more than that."
+        />
+        <div
+          className="mt-12"
+          style={{
+            background: "#ffffff",
+            border: `1px solid ${BORDER}`,
+            borderRadius: 20,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            className="hidden md:grid grid-cols-2"
+            style={{
+              background: CREAM,
+              borderBottom: `1px solid ${BORDER}`,
+              fontSize: 11,
+              letterSpacing: "0.14em",
+              fontWeight: 600,
+              color: SUBTLE,
+            }}
+          >
+            <div style={{ padding: "14px 24px" }}>WHAT CERTIFIED WORK NEEDS</div>
+            <div style={{ padding: "14px 24px", color: TEAL }}>HOW TRAQCONVERTER HANDLES IT</div>
+          </div>
+          <ul>
+            {NEEDS.map((n, i) => (
+              <li
+                key={n.need}
+                className="grid md:grid-cols-2"
+                style={{ borderTop: i === 0 ? "none" : `1px solid ${CREAM_DARK}` }}
+              >
+                <div className="px-6 pt-4 pb-1 md:pb-4" style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>
+                  {n.need}
+                </div>
+                <div className="flex items-start gap-2.5 px-6 pt-1 pb-4 md:pt-4" style={{ fontSize: 14, lineHeight: 1.55, color: MUTED }}>
+                  <span style={{ color: TEAL, flexShrink: 0, marginTop: 3 }}>
+                    <Check />
+                  </span>
+                  <span>{n.how}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     </section>
@@ -617,6 +1091,16 @@ const SECURITY_POINTS: { icon: React.ReactNode; title: string; body: string }[] 
     body: "Documents are processed only to deliver your translation. They're not used to train AI models.",
   },
   {
+    icon: <IconCard />,
+    title: "No client data for payments",
+    body: "Clients pay on Stripe or PayPal. We never see or store their card or bank details.",
+  },
+  {
+    icon: <IconLink />,
+    title: "Private, expiring links",
+    body: "Client links expire after 1, 7 or 30 days and can be revoked at any time. Only a hash of each link is stored.",
+  },
+  {
     icon: <IconUsers />,
     title: "Team access control",
     body: "Projects belong to your team, and roles (admin, PM, reviewer, member) decide who can do what.",
@@ -633,126 +1117,29 @@ const SECURITY_POINTS: { icon: React.ReactNode; title: string; body: string }[] 
   },
 ]
 
-const CERTIFIED_STRENGTHS = [
-  {
-    t: "Your own certification template",
-    b: "Upload your Word certification with merge fields; it's filled in and exported with the translation.",
-  },
-  {
-    t: "Learns from every delivered job",
-    b: "Templates, approved memory, TMX import and export, and the terms you correct.",
-  },
-  {
-    t: "Ready-to-certify check",
-    b: "Numbers, uncertain readings and a missing certification page are flagged before you sign.",
-  },
-  {
-    t: "Click any line to see it in the original",
-    b: "Every translated paragraph is linked to where it sits on the source.",
-  },
-  {
-    t: "Highlight and ask the AI to edit in place",
-    b: "Only the passage you point at changes, and undo is one click.",
-  },
-  {
-    t: "Batches with shared terms",
-    b: "Names, institutions and places read the same across a client's documents.",
-  },
-]
-
 function Security() {
   return (
-    <section
-      id="security"
-      style={{ padding: "80px 24px" }}
-    >
+    <section id="security" style={{ padding: "80px 20px" }}>
       <div className="max-w-[1200px] mx-auto">
         <SectionHeader
           eyebrow="SECURITY & PRIVACY"
           title="Your clients' documents stay private"
           subtitle="Certified work means passports, birth certificates and medical records. Here is how they're handled."
         />
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5 mt-12">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5 mt-12">
           {SECURITY_POINTS.map((p) => (
             <FeatureCard key={p.title} icon={p.icon} title={p.title} body={p.body} />
           ))}
         </div>
-        <div
+        <p
           className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 mt-8 text-center"
           style={{ fontSize: 14, color: MUTED }}
         >
           <span style={{ color: TEAL, fontWeight: 600 }}>GDPR-ready:</span>
-          <span>EU data residency, your data deleted when you delete it, and a data processing agreement (DPA) on request.</span>
-        </div>
-
-        <div
-          className="mt-16"
-          style={{
-            background: "#ffffff",
-            border: `1px solid ${BORDER}`,
-            borderRadius: 20,
-            padding: "30px 26px",
-          }}
-        >
-          <div style={{ fontSize: 11, letterSpacing: "0.16em", color: TEAL, fontWeight: 600, marginBottom: 10 }}>
-            WHY TRANSLATORS SWITCH
-          </div>
-          <div
-            style={{
-              fontSize: 26,
-              lineHeight: 1.2,
-              fontWeight: 700,
-              color: TEXT,
-              letterSpacing: "-0.02em",
-              marginBottom: 24,
-            }}
-          >
-            Built for certified translation, not just layout
-          </div>
-          <div className="grid md:grid-cols-2 gap-x-10">
-            <FeatureList items={CERTIFIED_STRENGTHS.slice(0, 3)} />
-            <div className="mt-5 md:mt-0">
-              <FeatureList items={CERTIFIED_STRENGTHS.slice(3)} />
-            </div>
-          </div>
-        </div>
+          <span>EU data storage, your data deleted when you delete it, and a data processing agreement (DPA) on request.</span>
+        </p>
       </div>
     </section>
-  )
-}
-
-function ShowcaseRow({
-  image,
-  eyebrow,
-  title,
-  items,
-  reverse = false,
-}: {
-  image: React.ReactNode
-  eyebrow: string
-  title: string
-  items: { t: string; b: string }[]
-  reverse?: boolean
-}) {
-  return (
-    <div className="grid md:grid-cols-2 gap-12 items-center mt-20">
-      <div className={reverse ? "md:order-2" : ""}>{image}</div>
-      <div>
-        <div style={{ fontSize: 11, letterSpacing: "0.16em", color: TEAL, fontWeight: 600, marginBottom: 10 }}>{eyebrow}</div>
-        <h3 style={{ fontSize: 30, lineHeight: 1.15, fontWeight: 700, color: TEXT, letterSpacing: "-0.02em", marginBottom: 22 }}>{title}</h3>
-        <FeatureList items={items} />
-      </div>
-    </div>
-  )
-}
-
-function HighlightCard({ eyebrow, title, body }: { eyebrow: string; title: string; body: string }) {
-  return (
-    <div style={{ background: "#ffffff", border: `1px solid ${BORDER}`, borderRadius: 20, padding: 30 }}>
-      <div style={{ fontSize: 11, letterSpacing: "0.16em", color: TEAL, fontWeight: 600, marginBottom: 10 }}>{eyebrow}</div>
-      <div style={{ fontSize: 22, lineHeight: 1.25, fontWeight: 700, color: TEXT, marginBottom: 12 }}>{title}</div>
-      <div style={{ fontSize: 15, lineHeight: 1.6, color: MUTED }}>{body}</div>
-    </div>
   )
 }
 
@@ -762,10 +1149,11 @@ function FeatureList({
   items: { t: string; b: string }[]
 }) {
   return (
-    <div className="space-y-5">
+    <ul className="space-y-5">
       {items.map((it) => (
-        <div key={it.t} className="flex items-start gap-4">
+        <li key={it.t} className="flex items-start gap-4">
           <div
+            aria-hidden="true"
             style={{
               width: 28,
               height: 28,
@@ -780,7 +1168,7 @@ function FeatureList({
           >
             <Check />
           </div>
-          <div>
+          <div className="min-w-0">
             <div style={{ fontSize: 16, fontWeight: 600, color: TEXT, marginBottom: 4 }}>
               {it.t}
             </div>
@@ -788,9 +1176,9 @@ function FeatureList({
               {it.b}
             </div>
           </div>
-        </div>
+        </li>
       ))}
-    </div>
+    </ul>
   )
 }
 
@@ -800,7 +1188,7 @@ function Pricing() {
     <section
       id="pricing"
       style={{
-        padding: "80px 24px",
+        padding: "80px 20px",
         background: CREAM_DARK,
         borderTop: `1px solid ${BORDER}`,
         borderBottom: `1px solid ${BORDER}`,
@@ -809,8 +1197,8 @@ function Pricing() {
       <div className="max-w-[1200px] mx-auto">
         <SectionHeader
           eyebrow="PRICING"
-          title="Simple plans. Pay only for the pages you translate."
-          subtitle="One credit translates one page. Subscriptions refill monthly; credit packs top you up. No setup fees."
+          title="Simple plans. Pay for the pages you translate."
+          subtitle="One credit translates one page. Subscriptions refill monthly, extra page packs top you up, and you can cancel anytime. No setup fees."
         />
 
         {catalog === undefined ? (
@@ -861,7 +1249,7 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
           background: "#ffffff",
           border: `1px solid ${BORDER}`,
           borderRadius: 22,
-          padding: "22px 28px",
+          padding: "22px clamp(20px, 4vw, 28px)",
         }}
       >
         <div style={{ minWidth: 0 }}>
@@ -880,8 +1268,8 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
             {pagesLabel(trial.credits)} free for {trial.days} days
           </div>
           <div style={{ fontSize: 14, color: MUTED, marginTop: 4 }}>
-            Layout-preserving rebuild and the full editor. Preview only:
-            downloads need a paid plan. No card required.
+            Layout-preserving translation and the full editor. Preview only:
+            downloads and client links need a paid plan. No card required.
           </div>
         </div>
         <Link
@@ -929,7 +1317,7 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
             marginBottom: 6,
           }}
         >
-          One-off credit packs — never expire
+          Extra page packs that never expire
         </h3>
         <p className="text-center" style={{ fontSize: 14, color: MUTED, marginBottom: 24 }}>
           For subscribers: add pages to any active plan. Bigger packs cost less per page.
@@ -1029,6 +1417,12 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
         >
           {VAT_NOTE}
         </p>
+        <p
+          className="max-w-[860px] mx-auto text-center"
+          style={{ fontSize: 13, color: MUTED, marginTop: 10, lineHeight: 1.5 }}
+        >
+          Change plan, download invoices or cancel anytime in the billing portal.
+        </p>
       </div>
     </>
   )
@@ -1079,7 +1473,7 @@ function PlanCard({
           MOST POPULAR
         </div>
       )}
-      <div
+      <h3
         style={{
           fontSize: 13,
           letterSpacing: "0.12em",
@@ -1089,7 +1483,7 @@ function PlanCard({
         }}
       >
         {plan.name.toUpperCase()}
-      </div>
+      </h3>
       <div className="flex items-baseline gap-1">
         <span style={{ fontSize: 16, fontWeight: 500, opacity: 0.7 }}>€</span>
         <span style={{ fontSize: 44, fontWeight: 700, letterSpacing: "-0.02em" }}>
@@ -1155,104 +1549,123 @@ function PlanCard({
 function FAQ() {
   const [open, setOpen] = useState<number | null>(0)
   const catalog = usePlans()
+  const trialAnswer = catalog
+    ? `Sign up and you get ${pagesLabel(catalog.trial.credits)} to translate within ${catalog.trial.days} days, with the full editor. No credit card is needed. The trial is for trying the translation and the editor: downloads and client links need a paid plan, and the certification page needs Pro or above.`
+    : "Sign up and you get a few free pages with the full editor. No credit card is needed. The trial is for trying the translation and the editor: downloads and client links need a paid plan, and the certification page needs Pro or above."
   const pricingAnswer = catalog
     ? `Each page is one credit. Subscriptions include a monthly allowance (${catalog.plans
         .map((p) => `${p.credits} on ${p.name}`)
         .join(", ")}) that resets each billing period. Subscribers can add credit packs of ${catalog.credit_packs
         .map((c) => c.credits)
-        .join(", ")} credits, which don't expire. The ${catalog.trial.days}-day trial includes ${pagesLabel(
-        catalog.trial.credits,
-      )}.`
+        .join(", ")} credits, which don't expire.`
     : "Each page is one credit. Subscriptions include a monthly allowance that resets each billing period, and subscribers can add credit packs that don't expire. The plans are listed above."
   const items = [
     {
       q: "Is the output ready to certify?",
-      a: "It's a draft for you to review, not a certified translation. You check it, correct it, and sign your statement; TraqConverter never certifies anything itself. On Pro and above, your certification page with your details, logo, and stamp is added to the export. Acceptance still depends on your credentials and the receiving authority's rules.",
+      a: "It's a draft for you to review, not a certified translation. You check it, correct it and sign your statement; TraqConverter never certifies anything itself. The ready-to-certify check lists what to look at first. On Pro and above, your certification page is added to the export. Acceptance still depends on your credentials and the receiving authority's rules.",
     },
     {
-      q: "How are signatures, stamps, and unreadable parts handled?",
-      a: "They are never copied as images. Each is noted where it appears, in the target language: [Signature], [Round stamp: Municipality of Rome – Registry Office], [Revenue stamp: €16.00]. Anything unreadable is marked [illegible] on exactly that word or number; names, dates, and figures are never guessed.",
-    },
-    {
-      q: "What file formats do you support?",
-      a: "PDF (single or multi-page, including scans), JPG, PNG, and DOCX. Exports are DOCX and PDF with the layout rebuilt.",
-    },
-    {
-      q: "Will the layout look like the original?",
-      a: "That's the goal of the rebuild: text blocks, tables, and signature blocks are placed where they were in the original. Complex pages can need touch-ups, which you make in the editor by typing or by asking the AI.",
-    },
-    {
-      q: "Which languages do you handle?",
-      a: "28 languages, including Arabic, Hebrew, Chinese (Simplified and Traditional), Japanese, and Korean. Auto-detect can pick the source language for you.",
+      q: "How does the free trial work?",
+      a: trialAnswer,
     },
     {
       q: "How does pricing work?",
       a: pricingAnswer,
     },
     {
-      q: "What does a page credit include?",
-      a: "Translating one page, plus 10 AI edits on that document with Ask AI. After that, 1 credit adds 10 more edits. Each document can be regenerated from scratch twice.",
+      q: "Do prices include VAT?",
+      a: VAT_NOTE,
     },
     {
-      q: "Does it really learn from my corrections?",
-      a: "Yes. The terms you correct are added to your team's terminology and used in future translations; you can remove any of them. Finished documents become templates, so the next document of the same kind starts from your approved version.",
+      q: "Can I cancel anytime?",
+      a: "Yes. Change plan, update your card, download invoices or cancel from the billing portal, linked from Billing in your account.",
+    },
+    {
+      q: "How do my clients pay me?",
+      a: "Connect your own Stripe account in Settings → Payments and clients can pay by card, Apple Pay, Google Pay or PayPal (the methods you turn on in Stripe); the download is released as soon as Stripe confirms the payment. You can also add your PayPal.me name: the client pays you there and you release the link. The money goes to your account, and Stripe's usual fees apply.",
+    },
+    {
+      q: "How are signatures, stamps and unreadable parts handled?",
+      a: "They are never copied as images. Each is noted where it appears, in the target language: [Signature], [Stamp: Municipality of Rome – Registry Office]. Anything unreadable is marked [illegible] on exactly that word or number; names, dates and figures are never guessed.",
+    },
+    {
+      q: "What files and languages do you support?",
+      a: "PDF (single or multi-page, including scans), JPG, PNG and DOCX, up to 20 MB each. 28 languages, including Arabic, Hebrew, Chinese (Simplified and Traditional), Japanese and Korean; auto-detect can pick the source language. Exports are DOCX and PDF.",
+    },
+    {
+      q: "What does a page credit include?",
+      a: "Translating one page, plus 10 AI edits per page with Ask AI. After that, 1 credit adds 10 more edits. Each document can be regenerated twice.",
+    },
+    {
+      q: "Does it really learn from my work?",
+      a: "Yes. The text you approve and deliver goes into your translation memory, and the terms you correct go into your glossary; you can edit or remove any of them, and import or export the memory as TMX. Finished documents become templates, so the next document of the same type from the same country starts from your version.",
     },
     {
       q: "What happens to my files?",
-      a: "Projects stay in your account until you delete them, which you can do at any time. Deleting a project removes its files, text, and translation memory entries. We don't train models on your documents.",
+      a: "They're stored in the EU (Ireland), encrypted at rest, and not used to train AI models. Projects stay in your account until you delete them; deleting a project removes its files, text and translation memory entries. A data processing agreement (DPA) is available on request.",
     },
     {
       q: "Can my team work together?",
-      a: "Paid plans include team members with roles (admin, PM, reviewer, member), and project assignment; each plan's team size is listed under Pricing. Pro and above add a shared translation memory and glossary.",
+      a: "Paid plans include team members with roles (admin, PM, reviewer, member) and project assignment with email notifications; each plan's team size is listed under Pricing. Pro and above add a shared translation memory and glossary.",
     },
   ]
   return (
-    <section id="faq" style={{ padding: "80px 24px" }}>
+    <section id="faq" style={{ padding: "80px 20px" }}>
       <div className="max-w-[820px] mx-auto">
         <SectionHeader
           eyebrow="QUESTIONS"
           title="Questions translators ask"
         />
         <div className="space-y-3 mt-12">
-          {items.map((it, i) => (
-            <div
-              key={it.q}
-              style={{
-                background: "#ffffff",
-                border: `1px solid ${BORDER}`,
-                borderRadius: 16,
-                overflow: "hidden",
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setOpen(open === i ? null : i)}
-                className="w-full flex items-center justify-between text-left"
+          {items.map((it, i) => {
+            const isOpen = open === i
+            return (
+              <div
+                key={it.q}
                 style={{
-                  padding: "18px 22px",
-                  background: "transparent",
-                  border: "none",
-                  cursor: "pointer",
+                  background: "#ffffff",
+                  border: `1px solid ${BORDER}`,
+                  borderRadius: 16,
+                  overflow: "hidden",
                 }}
               >
-                <span
-                  style={{ fontSize: 15, fontWeight: 600, color: TEXT }}
-                >
-                  {it.q}
-                </span>
-                <span
-                  style={{
-                    color: TEAL,
-                    fontSize: 20,
-                    transform: open === i ? "rotate(45deg)" : "rotate(0deg)",
-                    transition: "transform 0.18s",
-                  }}
-                >
-                  +
-                </span>
-              </button>
-              {open === i && (
+                <h3>
+                  <button
+                    type="button"
+                    id={`faq-q-${i}`}
+                    aria-expanded={isOpen}
+                    aria-controls={`faq-a-${i}`}
+                    onClick={() => setOpen(isOpen ? null : i)}
+                    className="w-full flex items-center justify-between gap-4 text-left"
+                    style={{
+                      padding: "18px 22px",
+                      background: "transparent",
+                      border: "none",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>
+                      {it.q}
+                    </span>
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        color: TEAL,
+                        fontSize: 20,
+                        flexShrink: 0,
+                        transform: isOpen ? "rotate(45deg)" : "rotate(0deg)",
+                        transition: "transform 0.18s",
+                      }}
+                    >
+                      +
+                    </span>
+                  </button>
+                </h3>
                 <div
+                  id={`faq-a-${i}`}
+                  role="region"
+                  aria-labelledby={`faq-q-${i}`}
+                  hidden={!isOpen}
                   style={{
                     padding: "0 22px 20px",
                     fontSize: 14,
@@ -1262,9 +1675,9 @@ function FAQ() {
                 >
                   {it.a}
                 </div>
-              )}
-            </div>
-          ))}
+              </div>
+            )
+          })}
         </div>
       </div>
     </section>
@@ -1273,13 +1686,13 @@ function FAQ() {
 
 function FinalCTA() {
   return (
-    <section style={{ padding: "0 24px 80px" }}>
+    <section style={{ padding: "0 20px 80px" }}>
       <div
         className="max-w-[1100px] mx-auto"
         style={{
           background: TEAL,
           borderRadius: 32,
-          padding: "60px 40px",
+          padding: "clamp(36px, 6vw, 60px) clamp(22px, 5vw, 40px)",
           color: "#fff",
           textAlign: "center",
           position: "relative",
@@ -1288,6 +1701,7 @@ function FinalCTA() {
         }}
       >
         <div
+          aria-hidden="true"
           style={{
             position: "absolute",
             top: -100,
@@ -1301,27 +1715,28 @@ function FinalCTA() {
         />
         <h2
           style={{
-            fontSize: 38,
+            fontSize: H2_SIZE,
             fontWeight: 700,
             letterSpacing: "-0.02em",
             marginBottom: 14,
             lineHeight: 1.15,
+            position: "relative",
           }}
         >
-          Draft your next certified translation
+          Translate, certify and get paid in one place
         </h2>
         <p
           style={{
             fontSize: 17,
             color: "rgba(255,255,255,0.85)",
-            marginBottom: 30,
             maxWidth: 600,
             margin: "0 auto 30px",
+            position: "relative",
           }}
         >
-          Upload a document, correct it next to the original, and export it with your certification page. No credit card needed for the trial.
+          Upload your next client document and see the draft next to the original. No credit card needed for the trial.
         </p>
-        <div className="flex items-center justify-center gap-3 flex-wrap">
+        <div className="flex items-center justify-center gap-3 flex-wrap" style={{ position: "relative" }}>
           <Link
             href="/register"
             style={{
@@ -1333,10 +1748,10 @@ function FinalCTA() {
               fontSize: 15,
             }}
           >
-            Start free trial →
+            Start free trial <span aria-hidden="true">→</span>
           </Link>
-          <Link
-            href="/login"
+          <a
+            href="#pricing"
             style={{
               background: "transparent",
               color: "#fff",
@@ -1347,8 +1762,8 @@ function FinalCTA() {
               border: "1px solid rgba(255,255,255,0.4)",
             }}
           >
-            Sign in
-          </Link>
+            See pricing
+          </a>
         </div>
       </div>
     </section>
@@ -1361,13 +1776,14 @@ function Footer() {
       style={{
         borderTop: `1px solid ${BORDER}`,
         background: CREAM_DARK,
-        padding: "40px 24px 30px",
+        padding: "40px 20px 30px",
       }}
     >
-      <div className="max-w-[1200px] mx-auto grid md:grid-cols-4 gap-8">
+      <div className="max-w-[1200px] mx-auto grid sm:grid-cols-2 md:grid-cols-4 gap-8">
         <div>
           <div className="flex items-center gap-2 mb-3">
             <div
+              aria-hidden="true"
               className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white"
               style={{ background: TEAL, fontSize: 14 }}
             >
@@ -1377,15 +1793,17 @@ function Footer() {
               TraqConverter
             </div>
           </div>
-          <div style={{ fontSize: 12, color: MUTED, lineHeight: 1.6 }}>
-            AI document translation that keeps the original layout.
-          </div>
+          <p style={{ fontSize: 12, color: MUTED, lineHeight: 1.6 }}>
+            Layout-preserving translation, certification and paid delivery for certified translators.
+          </p>
         </div>
         <FooterCol
           title="Product"
           links={[
             ["Features", "#features"],
             ["How it works", "#how-it-works"],
+            ["Get paid", "#get-paid"],
+            ["Security", "#security"],
             ["Pricing", "#pricing"],
             ["FAQ", "#faq"],
           ]}
@@ -1488,7 +1906,7 @@ function SectionHeader({
       </div>
       <h2
         style={{
-          fontSize: 38,
+          fontSize: H2_SIZE,
           fontWeight: 700,
           letterSpacing: "-0.02em",
           color: TEXT,
@@ -1581,6 +1999,30 @@ function IconBolt() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <path d="m13 2-7 12h6l-2 8 8-12h-6Z" />
+    </svg>
+  )
+}
+function IconSend() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 3 10 14" />
+      <path d="m21 3-7 18-4-7-7-4Z" />
+    </svg>
+  )
+}
+function IconCard() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M3 10h18M7 15h3" />
+    </svg>
+  )
+}
+function IconLink() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" />
+      <path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
     </svg>
   )
 }
