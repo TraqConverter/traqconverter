@@ -127,17 +127,21 @@ def render_invite_email(
     register_url: str,
 ) -> tuple[str, str]:
     """Return (subject, html) for a team-invite email."""
-    safe_role = (role or "Member").capitalize()
-    safe_team = team_name or "your team"
-    safe_inviter = inviter_name or inviter_email
-    subject = f"{safe_inviter} invited you to {safe_team} on OnlineDocTranslator"
+    from html import escape
+
+    # Names and team names are user-typed; unescaped they'd put markup in an email sent from our domain.
+    subject = f"{inviter_name or inviter_email} invited you to {team_name or 'your team'} on OnlineDocTranslator"
+    safe_role = escape((role or "Member").capitalize())
+    safe_team = escape(team_name or "your team")
+    safe_inviter = escape(inviter_name or inviter_email)
+    register_url = escape(register_url, quote=True)
 
     html = f"""\
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>{subject}</title>
+<title>{escape(subject)}</title>
 </head>
 <body style="margin:0;padding:0;background:#faf5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1f2a2e;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf5ee;padding:32px 12px;">

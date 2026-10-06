@@ -321,6 +321,22 @@ def _place_inline(doc: _Doc, run, target_block_id: str, position: str, align: st
         target.addnext(p)
 
 
+_BLANK_RUN_CHILDREN = {w("rPr"), w("tab"), w("br"), w("cr"), w("lastRenderedPageBreak")}
+_MATH = "{http://schemas.openxmlformats.org/officeDocument/2006/math}oMath"
+
+
+def _has_content(p) -> bool:
+    """Anything worth keeping: text, but also symbols, fields, legacy shapes, objects and notes paragraph_text can't see."""
+    for r in p.iter(w("r")):
+        for child in r:
+            if child.tag == w("t"):
+                if (child.text or "").strip():
+                    return True
+            elif child.tag not in _BLANK_RUN_CHILDREN:
+                return True
+    return next(p.iter(_MATH, w("fldSimple")), None) is not None
+
+
 def _detach(doc: _Doc, run, keep=None) -> None:
     """Remove the picture run; drop its paragraph when nothing else is left in it, unless it is `keep`."""
     p = run.getparent()
@@ -333,7 +349,7 @@ def _detach(doc: _Doc, run, keep=None) -> None:
     p.remove(run)
     while p is not None and p.tag != w("p"):
         p = p.getparent()
-    if p is None or p is keep or blocks.paragraph_text(p).strip() or next(p.iter(w("drawing")), None) is not None:
+    if p is None or p is keep or _has_content(p):
         return
     if p.find(f"{w('pPr')}/{w('sectPr')}") is not None:
         return

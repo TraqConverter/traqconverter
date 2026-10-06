@@ -193,7 +193,14 @@ function Jobs() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<StatusFilter>("all")
-  const [query, setQuery] = useState("")
+  // The header search lands here with ?q=; a new ?q replaces whatever was typed.
+  const qParam = searchParams.get("q") || ""
+  const [query, setQuery] = useState(qParam)
+  const [seenQ, setSeenQ] = useState(qParam)
+  if (qParam !== seenQ) {
+    setSeenQ(qParam)
+    setQuery(qParam)
+  }
   const [assigningId, setAssigningId] = useState<string | null>(null)
   const [assignBusy, setAssignBusy] = useState<string | null>(null)
 

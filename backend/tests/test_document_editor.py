@@ -71,6 +71,98 @@ def test_typed_edit_undo_and_stale_version(client, project_with_doc):
     assert client.post(f"{url}/undo", headers=owner["headers"], json={}).status_code == 404
 
 
+def test_regenerated_document_replaces_the_edited_one_and_undo_returns_to_it(client, db, storage, project_with_doc):
+    owner, project = project_with_doc()
+    data, v = _get(client, owner, project)
+    bid = docx_blocks.block_ids(data)[1]
+    url = f"/projects/{project.id}/document"
+    r = client.post(f"{url}/edits", headers=owner["headers"], json={"version": v, "edits": [{"block_id": bid, "text": "edited"}]})
+    assert r.json()["version"] == 2
+
+    # What run_rebuild does when a Regenerate finishes.
+    key = f"uploads/{uuid.uuid4()}_authored.docx"
+    storage["objects"][key] = _docx("REGENERATED TITLE", "Fresh layout")
+    db.refresh(project)
+    project.authored_docx_s3_key = key
+    db.commit()
+
+    data, v = _get(client, owner, project)
+    assert v == 3 and _texts(data) == ["REGENERATED TITLE", "Fresh layout"]
+    bid = docx_blocks.block_ids(data)[1]
+    r = client.post(f"{url}/edits", headers=owner["headers"], json={"version": v, "edits": [{"block_id": bid, "text": "Fresh layout, edited"}]})
+    assert r.status_code == 200
+    assert _texts(_get(client, owner, project)[0]) == ["REGENERATED TITLE", "Fresh layout, edited"]
+
+    client.post(f"{url}/undo", headers=owner["headers"], json={})
+    client.post(f"{url}/undo", headers=owner["headers"], json={})
+    assert _texts(_get(client, owner, project)[0])[1] == "edited"
+
+
+def test_word_upload_opens_in_the_editor(client, db, storage, make_user, make_project):
+    owner = make_user()
+    project = make_project(owner, source_kind="DOCX")
+    project.file_name = "contract.docx"
+    storage["objects"][project.output_file] = _docx("Translated contract", "Clause 1")
+    db.commit()
+    data, version = _get(client, owner, project)
+    assert version == 1 and _texts(data) == ["Translated contract", "Clause 1"]
+
+
+def test_editor_refuses_a_project_still_processing(client, db, project_with_doc):
+    from app.models.project import ProjectStatus
+
+    owner, project = project_with_doc()
+    project.status = ProjectStatus.PROCESSING
+    db.commit()
+    r = client.get(f"/projects/{project.id}/document", headers=owner["headers"])
+    assert r.status_code == 409
+    db.refresh(project)
+    assert not project.document_version
+
+
+def test_parallel_first_loads_share_one_version(db, project_with_doc):
+    import threading
+
+    from app.database import SessionLocal
+    from app.models.document_version import DocumentVersion
+    from app.models.project import TranslationProject
+    from app.services import document_editor
+
+    owner, project = project_with_doc()
+    first_building = threading.Event()
+    release = threading.Event()
+    results, errors = [], []
+
+    def load(wait):
+        session = SessionLocal()
+        try:
+            p = session.query(TranslationProject).filter(TranslationProject.id == project.id).one()
+
+            def build():
+                if wait:
+                    first_building.set()
+                    release.wait(5)
+                return _docx("Title", "Body")
+
+            results.append(document_editor.current_document(session, p, owner["user"], build)[1])
+        except Exception as e:
+            errors.append(e)
+        finally:
+            session.close()
+
+    first = threading.Thread(target=load, args=(True,))
+    first.start()
+    assert first_building.wait(5)
+    second = threading.Thread(target=load, args=(False,))
+    second.start()
+    second.join(0.5)
+    release.set()
+    first.join(5)
+    second.join(5)
+    assert not errors and sorted(results) == [1, 1]
+    assert db.query(DocumentVersion).filter(DocumentVersion.project_id == project.id).count() == 1
+
+
 def test_other_tenant_cannot_touch_document(client, project_with_doc, make_user):
     owner, project = project_with_doc()
     other = make_user()

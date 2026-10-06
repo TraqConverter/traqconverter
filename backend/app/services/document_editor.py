@@ -153,18 +153,31 @@ def _prune(db: Session, project: TranslationProject) -> None:
             db.delete(v)
 
 
+def _current_row(db: Session, project: TranslationProject) -> Optional[DocumentVersion]:
+    if not project.document_version:
+        return None
+    row = (
+        db.query(DocumentVersion)
+        .filter(DocumentVersion.project_id == project.id, DocumentVersion.version == project.document_version)
+        .first()
+    )
+    # A regenerate or re-run replaces authored_docx_s3_key; the saved version then no longer is the document.
+    return row if row and row.s3_key == project.authored_docx_s3_key else None
+
+
 def current_document(db: Session, project: TranslationProject, user: User, build_initial) -> tuple[bytes, int]:
-    """Current tagged DOCX and its version; the first call snapshots the pipeline output as version 1."""
-    if project.document_version:
-        row = (
-            db.query(DocumentVersion)
-            .filter(DocumentVersion.project_id == project.id, DocumentVersion.version == project.document_version)
-            .first()
-        )
-        if row:
-            return _download(row.s3_key), project.document_version
+    """Current tagged DOCX and its version; the first call (or the first after a rebuild) snapshots the pipeline output."""
+    row = _current_row(db, project)
+    if row:
+        return _download(row.s3_key), project.document_version
+    # Parallel first loads would both save the same version number; take the row lock and look again.
+    db.query(TranslationProject).filter(TranslationProject.id == project.id).with_for_update().populate_existing().one()
+    row = _current_row(db, project)
+    if row:
+        return _download(row.s3_key), project.document_version
+    note = "New translation" if project.document_version else "Initial translation"
     data = docx_blocks.tag_blocks(build_initial())
-    version = save_version(db, project, data, "Initial translation", user)
+    version = save_version(db, project, data, note, user)
     db.commit()
     return data, version
 

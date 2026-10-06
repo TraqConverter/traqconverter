@@ -748,7 +748,9 @@ def run(db: Session, project: TranslationProject, user, data: bytes, smap: dict,
     state = source_map.get_state(db, project)
     version = project.document_version or 0
     enabled = certifications_enabled(db, user)
-    key = f"{CHECKS_VERSION}|{version}|{state.map_revision or 0}|{glossary_signature(db, project)}|{int(enabled)}"
+    # Undo frees a version number for the next edit, so the number alone can name two different documents.
+    digest = hashlib.sha256(data).hexdigest()[:16]
+    key = f"{CHECKS_VERSION}|{version}|{digest}|{state.map_revision or 0}|{glossary_signature(db, project)}|{int(enabled)}"
     pending = smap.get("status") == "running"
     cached = state.checks or {}
     if not refresh and cached.get("key") == key:

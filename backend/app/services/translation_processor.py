@@ -262,6 +262,12 @@ def _stop_if_already_in_target(db, project) -> bool:
     return True
 
 
+def local_file_name(file_name: str | None) -> str:
+    """The project's file name made safe to join to a temp dir: no folders, no absolute paths, no '..'."""
+    name = Path((file_name or "").replace("\\", "/")).name.strip()
+    return name if name and name not in (".", "..") else "source" + Path(file_name or "").suffix.lower()
+
+
 def _image_to_pdf(data: bytes, file_name: str) -> bytes:
     img = fitz.open(stream=data, filetype=Path(file_name).suffix.lstrip(".").lower() or "png")
     try:
@@ -310,7 +316,7 @@ def process_translation_job(project_id: str):
 
         temp_dir = Path(tempfile.mkdtemp())
 
-        input_file = temp_dir / project.file_name
+        input_file = temp_dir / local_file_name(project.file_name)
 
         download_file_from_s3(
             project.file_path,
@@ -612,7 +618,7 @@ def process_translation_job(project_id: str):
 
 
 
-        output_file = temp_dir / f"translated_{project.file_name}"
+        output_file = temp_dir / f"translated_{input_file.name}"
 
         try:
             pairs = []

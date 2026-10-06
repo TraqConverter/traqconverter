@@ -37,7 +37,11 @@ One supported path:
    | `stripe_secret_key`, `stripe_publishable_key`, `stripe_webhook_secret` | Stripe dashboard |
    | `STRIPE_PRICE_BASIC`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_CREDITS_10/25/50` | Stripe price IDs |
    | `STRIPE_PRICE_STUDIO`, `STRIPE_PRICE_AGENCY` | Optional Stripe price IDs (€79/month and €249/month). Unset: the plan shows "Contact us" |
+   | `STRIPE_PORTAL_CONFIGURATION` | `bpc_...` printed by `python scripts/stripe_setup.py` |
+   | `STRIPE_CONNECT_WEBHOOK_SECRET` | Signing secret of the Connect webhook (step 4) |
    | `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | `https://<vercel-domain>/success`, `/cancel` |
+   | `FRONTEND_URL` | `https://<vercel-domain>`. Every link we send (password reset, invites, client links, Stripe return pages) starts with it; unset, they point at localhost |
+   | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Resend key and a sender on a verified domain. Unset, no email is sent: no password resets, invites or payment notices |
    | `CORS_ORIGINS` | `https://<vercel-domain>` |
 
 3. Deploy. `railway.json` runs `python -m alembic upgrade head` as the pre-deploy step, so every deploy migrates before the new version starts. A failed migration stops the deploy.
@@ -67,13 +71,20 @@ python -m alembic upgrade head
    | `NEXT_PUBLIC_API_URL` | Railway API URL, no trailing slash |
 
    It is inlined at build time. A production build without it fails on purpose, so redeploy after changing it.
-3. Deploy, then set `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` and `CORS_ORIGINS` on Railway to the Vercel domain and redeploy the backend.
+3. Deploy, then set `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`, `FRONTEND_URL` and `CORS_ORIGINS` on Railway to the Vercel domain and redeploy the backend.
 
-## 4. Stripe webhook
+## 4. Stripe webhooks
 
-1. **Developers → Webhooks → Add endpoint**: `https://<railway-api>/stripe/webhook`.
-2. Events: `checkout.session.completed`, `invoice.payment_succeeded`, `customer.subscription.deleted`.
-3. Copy the signing secret (`whsec_...`) into `stripe_webhook_secret` on Railway.
+Two endpoints, each with its own signing secret.
+
+1. **Developers → Webhooks → Add endpoint**: `https://<railway-api>/stripe/webhook`, listening to events on **your account**.
+   Events: `checkout.session.completed`, `invoice.payment_succeeded`, `customer.subscription.updated`, `customer.subscription.deleted`.
+   Without `customer.subscription.updated`, plan changes made in the billing portal don't apply until the next renewal.
+   Copy the signing secret (`whsec_...`) into `stripe_webhook_secret` on Railway.
+2. **Add endpoint** again: `https://<railway-api>/stripe/connect/webhook`, listening to events on **connected accounts**.
+   Events: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `account.updated`, `account.application.deauthorized`.
+   Without it, a client's card payment never unlocks their protected link.
+   Copy its signing secret into `STRIPE_CONNECT_WEBHOOK_SECRET`.
 
 ## 5. Smoke test
 

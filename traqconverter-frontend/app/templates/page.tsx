@@ -181,18 +181,20 @@ export default function TemplatesPage() {
       </div>
 
       <div className="rounded-2xl overflow-x-auto" style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}>
-        <div className="min-w-[720px]">
-          <div
-            className="grid items-center text-[11px] font-semibold tracking-[0.14em] px-5 py-3"
-            style={{ gridTemplateColumns: COLUMNS, background: "#faf5ee", borderBottom: "1px solid #f1e8d1", color: "#9a9178" }}
-          >
-            <div>TITLE</div>
-            <div>DOCUMENT TYPE</div>
-            <div>TARGET</div>
-            <div className="text-right">USES</div>
-            <div className="text-right">LAST USED</div>
-            <div />
-          </div>
+        <div className={templates.length ? "min-w-[720px]" : undefined}>
+          {templates.length > 0 && (
+            <div
+              className="grid items-center text-[11px] font-semibold tracking-[0.14em] px-5 py-3"
+              style={{ gridTemplateColumns: COLUMNS, background: "#faf5ee", borderBottom: "1px solid #f1e8d1", color: "#9a9178" }}
+            >
+              <div>TITLE</div>
+              <div>DOCUMENT TYPE</div>
+              <div>TARGET</div>
+              <div className="text-right">USES</div>
+              <div className="text-right">LAST USED</div>
+              <div />
+            </div>
+          )}
 
           {loading ? (
             <div className="px-5 py-12 text-center text-sm" style={{ color: "#8a8270" }}>

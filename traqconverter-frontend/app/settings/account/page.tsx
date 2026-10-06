@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { api } from "@/lib/api"
 import { clearToken, setToken, getRemembered } from "@/lib/auth"
+import { resetWallet } from "@/lib/plan"
 import SavedInstructionsSection from "@/components/settings/SavedInstructionsSection"
 import PaymentsSection from "@/components/settings/PaymentsSection"
 
@@ -265,9 +266,14 @@ export default function AccountSettingsPage() {
     }
   }
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
     if (!confirm("Sign out of OnlineDocTranslator?")) return
+    // Same as the sidebar: revoke the token server-side and drop the cached plan.
+    try {
+      await api.post("/auth/logout")
+    } catch {}
     clearToken()
+    resetWallet()
     router.replace("/login")
   }
 

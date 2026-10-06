@@ -147,6 +147,9 @@ app.middleware("http")(_ai_usage.attribution_middleware)
 
 from app.config import settings as _settings
 
+if _settings.environment.lower() == "production" and "localhost" in _settings.FRONTEND_URL:
+    logger.error("FRONTEND_URL is %s in production: emailed and client links will point at localhost", _settings.FRONTEND_URL)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_settings.cors_origins,
@@ -314,7 +317,8 @@ WATCHDOG_INTERVAL_SECONDS = 60
 async def _watchdog_loop():
     while True:
         try:
-            recover_stalled_jobs()
+            # Off the event loop: a slow or unreachable database would stall every request.
+            await asyncio.to_thread(recover_stalled_jobs)
         except Exception:
             logger.exception("Watchdog cycle errored")
         try:

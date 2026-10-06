@@ -53,6 +53,20 @@ def test_always_thinking_models_send_no_thinking_or_temperature():
     assert claude_params.request_params("claude-fable-5", max_tokens=8000, temperature=0.3) == {}
 
 
+def test_opus_55_never_gets_thinking_disabled():
+    assert claude_params.request_params("claude-opus-5-5", max_tokens=8000, temperature=0.3) == {}
+    assert claude_params.request_params("claude-opus-5-5", max_tokens=8000, effort="low") == {
+        "output_config": {"effort": "low"}
+    }
+
+
+def test_opus_5_disables_thinking_only_at_high_effort_or_below():
+    assert claude_params.request_params("claude-opus-5", max_tokens=8000) == {"thinking": {"type": "disabled"}}
+    assert claude_params.request_params("claude-opus-5", max_tokens=8000, effort="xhigh") == {
+        "output_config": {"effort": "xhigh"}
+    }
+
+
 def test_rebuild_model_prefers_explicit_then_default(monkeypatch):
     assert claude_params.rebuild_model("claude-sonnet-4-6") == "claude-sonnet-4-6"
     monkeypatch.setattr(claude_params, "REBUILD_MODEL", "claude-opus-4-6")

@@ -115,6 +115,30 @@ def test_nudging_a_picture_within_its_own_paragraph_keeps_it():
     assert [i["id"] for i in docx_images.list_images(data)] == [image_id]
 
 
+def test_moving_a_picture_keeps_a_symbol_or_field_sharing_its_paragraph():
+    data, ids = _tagged("Title", "Body text")
+    data, image_id = docx_images.insert_image(data, docx_images.prepare_image(_png()), ids[0], "inline", 3)
+    doc = docx_blocks._Doc.load(data)
+    title = doc.find_block(ids[0])
+    for p in list(doc.trees["word/document.xml"].iter(f"{{{W}}}p")):
+        if p is not title and next(p.iter(f"{{{W}}}drawing"), None) is not None:
+            raise AssertionError("expected the picture inline in the title")
+    # A checkbox glyph (w:sym) and a page field: no plain text, so paragraph_text sees nothing.
+    title.append(etree.fromstring(f'<w:r xmlns:w="{W}"><w:sym w:font="Wingdings" w:char="F0A8"/></w:r>'))
+    title.append(etree.fromstring(f'<w:fldSimple xmlns:w="{W}" w:instr="PAGE"/>'))
+    for r in [r for r in title.findall(f"{{{W}}}r") if r.find(f"{{{W}}}t") is not None]:
+        title.remove(r)
+    data = doc.dump()
+
+    moved = docx_images.move_image(data, image_id, ids[1], "after")
+    body = _body_xml(moved).find(f"{{{W}}}body")
+    assert body.find(f".//{{{W}}}sym") is not None and body.find(f".//{{{W}}}fldSimple") is not None
+    assert ids[0] in docx_blocks.block_ids(moved)
+
+    deleted = docx_images.delete_image(data, image_id)
+    assert _body_xml(deleted).find(f".//{{{W}}}sym") is not None
+
+
 def test_every_picture_has_an_editor_marker_right_before_it():
     data, ids = _tagged("One", "Two")
     data, image_id = docx_images.insert_image(data, docx_images.prepare_image(_png()), ids[1], "inline")

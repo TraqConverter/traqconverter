@@ -124,6 +124,16 @@ def change_password(
     return {"status": "password_updated", "access_token": new_token}
 
 
+def _user_by_email(db: Session, email: str):
+    """Emails match case-insensitively; an exact match wins for older accounts differing only in case."""
+    return (
+        db.query(User)
+        .filter(func.lower(User.email) == email.lower())
+        .order_by((User.email == email).desc())
+        .first()
+    )
+
+
 RESET_TOKEN_MINUTES = 60
 FORGOT_MESSAGE = "If an account exists for that email, we've sent a reset link."
 INVALID_RESET_MESSAGE = "This reset link is invalid or has expired."
@@ -268,6 +278,48 @@ def _stored_files(db: Session, team_id, user) -> list:
     return [k for k in keys if k]
 
 
+def _cancel_team_subscriptions(db: Session, team) -> None:
+    """Stop billing before the team is deleted; 502 (and nothing deleted) if Stripe can't confirm."""
+    import stripe
+
+    from app.services.stripe_billing import team_subscription_ids
+
+    for sub_id in team_subscription_ids(db, team):
+        try:
+            stripe.Subscription.cancel(sub_id)
+        except stripe.error.InvalidRequestError as e:
+            # Already cancelled, or no longer exists.
+            logger.info("Subscription %s not cancelled on account delete: %s", sub_id, e)
+        except Exception:
+            logger.exception("Couldn't cancel subscription %s on account delete", sub_id)
+            raise HTTPException(
+                status_code=502,
+                detail="Couldn't cancel your subscription with Stripe, so nothing was deleted. Try again in a minute.",
+            )
+
+
+def _hand_billing_to_owners(db: Session, user) -> None:
+    """A member who started the team's subscription leaves it with the owner, so renewals and the portal still work."""
+    if not (user.stripe_subscription_id or user.stripe_customer_id):
+        return
+    from app.models.team_member import TeamMember
+
+    owners = (
+        db.query(User)
+        .join(Team, Team.owner_id == User.id)
+        .join(TeamMember, TeamMember.team_id == Team.id)
+        .filter(TeamMember.user_id == user.id, User.id != user.id)
+        .all()
+    )
+    for owner in owners:
+        if user.stripe_subscription_id and not owner.stripe_subscription_id:
+            owner.stripe_subscription_id = user.stripe_subscription_id
+            owner.subscription_status = user.subscription_status
+            owner.subscription_plan = user.subscription_plan
+        if user.stripe_customer_id and not owner.stripe_customer_id:
+            owner.stripe_customer_id = user.stripe_customer_id
+
+
 @router.post("/delete-account")
 def delete_account(
     payload: DeleteAccount,
@@ -283,6 +335,7 @@ def delete_account(
 
     For a non-owner (a team member), we only remove their User row +
     their TeamMember rows. The team and its data stay with the owner.
+    An owner's Stripe subscription is cancelled first.
 
     Each step uses synchronize_session=False bulk deletes so the
     session doesn't get out of sync with the database. We walk
@@ -305,8 +358,12 @@ def delete_account(
     user_id = current_user.id
     team = db.query(Team).filter(Team.owner_id == user_id).first()
     stored_keys = _stored_files(db, team.id if team is not None else None, current_user)
+    if team is not None:
+        _cancel_team_subscriptions(db, team)
 
     try:
+        if team is None:
+            _hand_billing_to_owners(db, current_user)
         if team is not None:
             team_id = team.id
 
@@ -430,6 +487,19 @@ def delete_account(
             TeamMember.user_id == user_id
         ).delete(synchronize_session=False)
 
+        # Work in other teams stays there: their owner becomes the uploader, and comments lose their author.
+        db.execute(
+            text(
+                "UPDATE translation_projects p SET user_id = t.owner_id "
+                "FROM teams t WHERE p.team_id = t.id AND p.user_id = :uid"
+            ),
+            {"uid": str(user_id)},
+        )
+        db.execute(
+            text("UPDATE segment_comments SET user_id = NULL WHERE user_id = :uid"),
+            {"uid": str(user_id)},
+        )
+
 
 
 
@@ -477,12 +547,11 @@ def delete_account(
 def register(user_data: UserRegister, db: Session = Depends(get_db)):
     from app.models.team_member import TeamInvite
 
-    existing = db.query(User).filter(User.email == user_data.email).first()
-    if existing:
+    if _user_by_email(db, user_data.email):
         raise HTTPException(status_code=400, detail="Email already registered")
 
     user = User(
-        email=user_data.email,
+        email=user_data.email.lower(),
         password_hash=hash_password(user_data.password),
         full_name=user_data.full_name,
         terms_accepted_at=datetime.utcnow(),
@@ -577,7 +646,7 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     dependencies=[Depends(_login_limit)],
 )
 def login(user_data: UserLogin, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == user_data.email).first()
+    user = _user_by_email(db, user_data.email)
     if not user:
         raise HTTPException(status_code=400, detail="Invalid credentials")
 

@@ -246,9 +246,9 @@ export default function GlossaryPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <div
-            className="flex items-center gap-2 px-4 py-2 rounded-full w-72"
+            className="flex items-center gap-2 px-4 py-2 rounded-full flex-1 min-w-0 sm:flex-none sm:w-72"
             style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
           >
             <svg
@@ -268,7 +268,7 @@ export default function GlossaryPage() {
               placeholder="Search terms…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="flex-1 bg-transparent outline-none text-sm"
+              className="flex-1 min-w-0 bg-transparent outline-none text-sm"
               style={{ color: "#1f2a2e" }}
             />
           </div>
@@ -284,7 +284,7 @@ export default function GlossaryPage() {
               }
               setError(null)
             }}
-            className="px-4 py-2.5 rounded-full text-sm font-semibold transition flex items-center gap-2"
+            className="px-4 py-2.5 rounded-full text-sm font-semibold transition flex items-center gap-2 shrink-0 whitespace-nowrap"
             style={{ background: "#0a7870", color: "#fff" }}
             onMouseEnter={(e) => (e.currentTarget.style.background = "#0a645d")}
             onMouseLeave={(e) => (e.currentTarget.style.background = "#0a7870")}
@@ -459,9 +459,10 @@ export default function GlossaryPage() {
 
       {}
       <div
-        className="rounded-2xl overflow-hidden"
+        className="rounded-2xl overflow-x-auto"
         style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
       >
+        <div className={!loading && visible.length ? "min-w-[860px]" : undefined}>
         <div
           className="grid items-center text-[11px] font-semibold tracking-[0.14em] px-5 py-3"
           style={{
@@ -633,6 +634,7 @@ export default function GlossaryPage() {
             </div>
           ))
         )}
+        </div>
       </div>
     </div>
   )
