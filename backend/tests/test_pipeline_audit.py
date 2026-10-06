@@ -137,6 +137,37 @@ def test_template_capture_and_fill_leave_the_old_certification_page_out(db, stor
     assert "Anna Verdi" not in seen[0]["messages"][0]["content"][1]["text"]
 
 
+@pytest.mark.parametrize("path", ["rebuild-with-claude", "revise"])
+def test_regenerate_waits_for_the_translation(client, db, make_user, make_project, path):
+    owner = make_user()
+    project = make_project(owner, status=ProjectStatus.PROCESSING)
+    r = client.post(f"/projects/{project.id}/{path}", headers=owner["headers"], json={})
+    assert r.status_code == 409
+    db.refresh(project)
+    assert not project.revision_count and project.rebuild_status is None
+
+
+def test_regenerate_holds_the_row_lock_while_counting(db, make_user, make_project):
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError
+
+    from app.database import SessionLocal
+    from app.routers.project import _project_for_regenerate
+
+    owner = make_user()
+    project = make_project(owner)
+    first, second = SessionLocal(), SessionLocal()
+    try:
+        _project_for_regenerate(first, project.id, owner["user"])
+        with pytest.raises(OperationalError):
+            second.execute(text("SELECT id FROM translation_projects WHERE id = :id FOR UPDATE NOWAIT"), {"id": str(project.id)})
+    finally:
+        first.rollback()
+        second.rollback()
+        first.close()
+        second.close()
+
+
 def _word_file(path):
     from docx import Document
     from docx.oxml import parse_xml

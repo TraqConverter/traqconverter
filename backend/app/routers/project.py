@@ -1642,6 +1642,21 @@ def clear_edited_html(
 
 
 
+def _project_for_regenerate(db: Session, project_id: UUID, user: User) -> TranslationProject:
+    """The project row-locked, so two clicks can't both pass the regenerate limit or the running-rebuild check."""
+    get_user_project_or_404(db, project_id, user)
+    project = (
+        db.query(TranslationProject)
+        .filter(TranslationProject.id == project_id)
+        .with_for_update()
+        .populate_existing()
+        .one()
+    )
+    if project.status != ProjectStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="The translation must finish before it can be regenerated")
+    return project
+
+
 @router.post(
     "/{project_id}/revise",
     dependencies=[Depends(user_rate_limit("revise", max_requests=10, per_seconds=3600))],
@@ -1654,7 +1669,7 @@ def revise_project(
     current_user: User = Depends(get_current_user),
 ):
     """Queue an AI revision: segment text is improved, and PDFs get a fresh layout rebuild when instructions are given."""
-    project = get_user_project_or_404(db, project_id, current_user)
+    project = _project_for_regenerate(db, project_id, current_user)
     has_segments = (
         db.query(TranslationSegment.id)
         .filter(TranslationSegment.project_id == project.id)
@@ -1766,7 +1781,7 @@ def rebuild_with_claude(
     current_user: User = Depends(get_current_user),
 ):
     """Queue a fresh Claude-authored layout rebuild; poll GET /projects/{id} for rebuild_status."""
-    project = get_user_project_or_404(db, project_id, current_user)
+    project = _project_for_regenerate(db, project_id, current_user)
     if (project.source_kind or "").upper() != "PDF":
         raise HTTPException(status_code=400, detail="Regenerating only works for PDF source projects")
 
