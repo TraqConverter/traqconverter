@@ -383,17 +383,19 @@ export default function NewProjectPage() {
 
               <div className="flex items-center gap-3">
                 <button
+                  type="button"
+                  disabled={loading}
                   onClick={(e) => {
                     e.stopPropagation()
                     handlePickFile()
                   }}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium text-white transition"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium text-white transition disabled:opacity-60"
                   style={{ background: "#0a7870" }}
                   onMouseEnter={(e) => (e.currentTarget.style.background = "#0a645d")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "#0a7870")}
                 >
                   <IconUploadWhite />
-                  Browse files
+                  {file ? "Add more files" : "Browse files"}
                 </button>
               </div>
 
@@ -408,12 +410,41 @@ export default function NewProjectPage() {
               multiple
               className="hidden"
               accept=".pdf,.docx,.png,.jpg,.jpeg"
+              // Its click would bubble to the drop zone and ask for the picker twice; browsers then ignore it.
+              onClick={(e) => e.stopPropagation()}
               onChange={(e) => {
                 addFiles(e.target.files)
                 e.target.value = ""
               }}
             />
           </div>
+
+          {files.length === 1 && file && (
+            <div
+              className="mt-4 rounded-2xl px-4 py-3 flex items-center gap-3"
+              style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium truncate" style={{ color: "#1f2a2e" }}>
+                  {file.name}
+                </div>
+                <div className="text-xs" style={{ color: "#8a8270" }}>
+                  {(file.size / (1024 * 1024)).toFixed(1)} MB
+                  {pageCounts[fileKey(file)] ? ` · ${pageCounts[fileKey(file)]} page${pageCounts[fileKey(file)] === 1 ? "" : "s"}` : ""}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => removeFile(file)}
+                disabled={loading}
+                className="text-xs font-semibold px-3 py-1.5 rounded-full disabled:opacity-50"
+                style={{ color: "#b14a3a", border: "1px solid #ecd5cf", background: "#fdf6f4" }}
+                aria-label={`Remove ${file.name}`}
+              >
+                Remove
+              </button>
+            </div>
+          )}
 
           {multi && (
             <BatchList
