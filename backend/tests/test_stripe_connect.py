@@ -436,3 +436,24 @@ def test_connect_explains_when_the_platform_setup_is_unfinished(client, make_use
     r = client.post("/settings/payments/stripe/connect", headers=owner["headers"])
     assert r.status_code == 503
     assert "Stripe setup isn't finished" in r.json()["detail"]
+
+
+def test_a_failed_connect_is_retried_fresh_not_replayed(client, make_user, monkeypatch):
+    # Stripe replays a reused idempotency key's first answer for 24h, errors included,
+    # so each attempt needs its own key or a fixed setup still looks broken.
+    import stripe
+
+    keys = []
+
+    def create(**kw):
+        keys.append(kw["idempotency_key"])
+        if len(keys) == 1:
+            raise stripe.InvalidRequestError("You must complete your platform profile to use Connect.", None)
+        return {"id": ACCOUNT, "charges_enabled": False, "details_submitted": False}
+
+    monkeypatch.setattr(stripe.Account, "create", create)
+    monkeypatch.setattr(stripe.AccountLink, "create", lambda **kw: {"url": "https://connect.stripe.test/setup"})
+    owner = make_user()
+    assert client.post("/settings/payments/stripe/connect", headers=owner["headers"]).status_code == 503
+    assert client.post("/settings/payments/stripe/connect", headers=owner["headers"]).status_code == 200
+    assert len(keys) == 2 and keys[0] != keys[1]
