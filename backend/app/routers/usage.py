@@ -31,7 +31,7 @@ def get_ai_allowance(
     user: User = Depends(get_current_user),
 ):
     project = get_user_project_or_404(db, project_id, user)
-    return ai_allowance.allowance(db, project)
+    return ai_allowance.allowance(db, project, user)
 
 
 def _usd(value) -> float:

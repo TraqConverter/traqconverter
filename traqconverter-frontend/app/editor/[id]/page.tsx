@@ -56,6 +56,8 @@ type ProjectInfo = {
   rebuild_error?: string | null
   revision_count?: number
   free_revisions_left?: number
+  regenerations_left?: number
+  next_regenerate_cost_credits?: number
 }
 
 type DocStatus = {
@@ -73,10 +75,16 @@ type ConfirmState = {
   onConfirm: () => void
 }
 
-function revisionCostText(left: number | undefined) {
-  if (left === undefined) return "Regenerate is limited to 2 per document."
-  if (left <= 0) return "You've used both regenerations for this document. Use Ask AI for further changes."
-  return `${left} of 2 regenerations left for this document.`
+function credits(n: number) {
+  return `${n} credit${n === 1 ? "" : "s"}`
+}
+
+function revisionCostText(left: number | undefined, cost: number | undefined, used: number) {
+  if (left === undefined || cost === undefined)
+    return "The first regenerate of a document is free. Later ones cost one credit per page."
+  if (left <= 0) return "You've used all the regenerations for this document. Use Ask AI for further changes."
+  if (cost > 0) return `This regenerate costs ${credits(cost)} (one per page) · ${left} left`
+  return `${used === 0 ? "First regenerate is free" : "This regenerate is free"} · ${left} left`
 }
 
 const MAX_INSTRUCTIONS = 1000
@@ -207,14 +215,21 @@ export default function EditorPage() {
   >(null)
   const [showRerunPicker, setShowRerunPicker] = useState(false)
 
-  const markRebuildRunning = (revisionCount?: number) => {
+  const markRebuildRunning = (started?: {
+    revision_count?: number
+    regenerations_left?: number
+    next_regenerate_cost_credits?: number
+  }) => {
     setProject((p) =>
       p
         ? {
             ...p,
             rebuild_status: "running",
             rebuild_error: null,
-            revision_count: revisionCount ?? p.revision_count,
+            revision_count: started?.revision_count ?? p.revision_count,
+            free_revisions_left: started?.regenerations_left ?? p.free_revisions_left,
+            regenerations_left: started?.regenerations_left ?? p.regenerations_left,
+            next_regenerate_cost_credits: started?.next_regenerate_cost_credits ?? p.next_regenerate_cost_credits,
           }
         : p,
     )
@@ -248,9 +263,12 @@ export default function EditorPage() {
       setError(null)
       await saveInstructions(text)
       const res = await api.post(`/projects/${id}/rebuild-with-claude`)
-      markRebuildRunning(res.data?.revision_count)
+      markRebuildRunning(res.data)
+      const charged = Number(res.data?.credits_charged) || 0
       setNotice(
-        "Regenerating. The document updates here when it finishes.",
+        charged > 0
+          ? `Regenerating for ${credits(charged)}. The document updates here when it finishes; a failed run is refunded.`
+          : "Regenerating. The document updates here when it finishes.",
       )
     } catch (err: unknown) {
       setError(apiErrorDetail(err, "Couldn't start regenerating."))
@@ -1296,7 +1314,9 @@ export default function EditorPage() {
         <RegenerateDialog
           initial={project.ai_instructions || ""}
           editableCopy={isDtp}
-          left={project.free_revisions_left}
+          left={project.regenerations_left ?? project.free_revisions_left}
+          cost={project.next_regenerate_cost_credits}
+          used={project.revision_count ?? 0}
           onClose={() => setRegenerateOpen(false)}
           onSave={(text) => void saveInstructionsOnly(text)}
           onRegenerate={(text) => void runRegenerate(text)}
@@ -1622,6 +1642,8 @@ function RegenerateDialog({
   initial,
   editableCopy,
   left,
+  cost,
+  used,
   onClose,
   onSave,
   onRegenerate,
@@ -1629,6 +1651,8 @@ function RegenerateDialog({
   initial: string
   editableCopy: boolean
   left: number | undefined
+  cost: number | undefined
+  used: number
   onClose: () => void
   onSave: (text: string) => void
   onRegenerate: (text: string) => void
@@ -1729,7 +1753,7 @@ function RegenerateDialog({
           className="text-[12px] rounded-lg px-3 py-2"
           style={{ background: "#f3ecdb", color: "#4a4638", marginBottom: 16 }}
         >
-          {revisionCostText(left)}
+          {revisionCostText(left, cost, used)}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {changed && (
@@ -1762,7 +1786,7 @@ function RegenerateDialog({
               cursor: outOfRegenerations ? "not-allowed" : "pointer",
             }}
           >
-            Regenerate
+            {!outOfRegenerations && cost ? `Regenerate for ${credits(cost)}` : "Regenerate"}
           </button>
         </div>
       </div>
