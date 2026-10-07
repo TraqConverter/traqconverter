@@ -50,7 +50,7 @@ export default function PrivacyPage() {
       <ul>
         <li>Email address, full name, and your password, which we store only as a one-way (bcrypt) hash.</li>
         <li>Your team, your role in it, and invitations you send or receive (the invitee&apos;s email and role).</li>
-        <li>The logo you upload for your certification page.</li>
+        <li>The logos, stamps and signatures your team uploads to Media.</li>
         <li>The date and time you accepted the Terms of Service.</li>
       </ul>
       <h3>Your content</h3>
