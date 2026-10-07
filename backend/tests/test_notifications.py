@@ -10,7 +10,15 @@ from app.services import notifications
 from tests.test_language_guards import pipeline  # noqa: F401
 from tests.test_review import fake, page_cache, review_project  # noqa: F401
 from tests.test_protected_links import _pdf, stub_export  # noqa: F401
-from tests.test_stripe_connect import ACCOUNT, _event, _post, calls, connect_secret, no_real_stripe  # noqa: F401
+from tests.test_stripe_connect import (  # noqa: F401
+    ACCOUNT,
+    _event,
+    _post,
+    accounts_v1,
+    calls,
+    connect_secret,
+    no_real_stripe,
+)
 
 CLIENT_EMAIL = "giulia.bianchi@cliente.it"
 CLIENT_NAME = "Giulia Bianchi"

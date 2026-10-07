@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict, field_validator
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 
 class Settings(BaseSettings):
@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     # Connect: signing secret of the webhook endpoint that listens to events on connected accounts.
     STRIPE_CONNECT_WEBHOOK_SECRET: Optional[str] = None
     STRIPE_CONNECT_DEFAULT_COUNTRY: str = "IT"
+    # "v2": connected accounts via Accounts v2 (/v2/core/accounts), what the platform account is set up for. "v1": /v1/accounts.
+    STRIPE_CONNECT_ACCOUNTS_API: Literal["v1", "v2"] = "v2"
+    STRIPE_V2_API_VERSION: str = "2026-09-30.endive"
     # Our cut of each protected-link payment, in percent; 0 means no application fee at all.
     PLATFORM_FEE_PERCENT: float = 0
 

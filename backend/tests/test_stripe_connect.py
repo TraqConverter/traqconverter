@@ -36,11 +36,21 @@ def no_real_stripe(monkeypatch):
         (stripe.Webhook, "construct_event"),
     ):
         monkeypatch.setattr(target, name, refuse)
+    import requests
+
+    monkeypatch.setattr(requests, "request", refuse)
 
 
 @pytest.fixture()
-def calls(monkeypatch):
-    """Records each mocked Stripe call; the account starts fully onboarded."""
+def accounts_v1(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "STRIPE_CONNECT_ACCOUNTS_API", "v1")
+
+
+@pytest.fixture()
+def calls(monkeypatch, accounts_v1):
+    """Records each mocked Stripe call (v1 accounts); the account starts fully onboarded."""
     import stripe
 
     log = {"accounts": [], "links": [], "retrieved": [], "sessions": []}
@@ -451,7 +461,7 @@ def test_paid_claim_emails_the_creator_not_the_owner(client, db, storage, make_u
     assert [m["to"] for m in emails] == ["translator@traqtest.io"]
 
 
-def test_connect_explains_when_the_platform_setup_is_unfinished(client, make_user, monkeypatch):
+def test_connect_explains_when_the_platform_setup_is_unfinished(client, make_user, monkeypatch, accounts_v1):
     import stripe
 
     def refuse(**kwargs):
@@ -466,7 +476,7 @@ def test_connect_explains_when_the_platform_setup_is_unfinished(client, make_use
     assert "Stripe setup isn't finished" in r.json()["detail"]
 
 
-def test_a_failed_connect_is_retried_fresh_not_replayed(client, make_user, monkeypatch):
+def test_a_failed_connect_is_retried_fresh_not_replayed(client, make_user, monkeypatch, accounts_v1):
     # Stripe replays a reused idempotency key's first answer for 24h, errors included,
     # so each attempt needs its own key or a fixed setup still looks broken.
     import stripe
@@ -485,3 +495,196 @@ def test_a_failed_connect_is_retried_fresh_not_replayed(client, make_user, monke
     assert client.post("/settings/payments/stripe/connect", headers=owner["headers"]).status_code == 503
     assert client.post("/settings/payments/stripe/connect", headers=owner["headers"]).status_code == 200
     assert len(keys) == 2 and keys[0] != keys[1]
+
+
+# Accounts v2 (the default): direct HTTPS calls, requests mocked
+
+
+class _Resp:
+    def __init__(self, status_code, body):
+        self.status_code = status_code
+        self._body = body
+        self.text = str(body)
+
+    def json(self):
+        return self._body
+
+
+def _v2_account(card_status="restricted", entries=()):
+    return {
+        "id": ACCOUNT,
+        "object": "v2.core.account",
+        "configuration": {"merchant": {"capabilities": {"card_payments": {"status": card_status}}}},
+        "requirements": {"entries": [
+            {"description": d, "awaiting_action_from": "user", "minimum_deadline": {"status": s}} for d, s in entries
+        ]},
+    }
+
+
+@pytest.fixture()
+def v2(monkeypatch):
+    """Records each v2 request; answers with `state["account"]` or `state["error"]`."""
+    import requests
+
+    log = []
+    state = {"account": _v2_account(entries=[("identity.verification", "currently_due")]), "error": None}
+
+    def request(method, url, **kw):
+        log.append({"method": method, "url": url, **kw})
+        if state["error"]:
+            return _Resp(400, {"error": state["error"]})
+        if url.endswith("/v2/core/account_links"):
+            return _Resp(200, {"object": "v2.core.account_link",
+                               "url": f"https://accounts.stripe.test/r/{kw['json']['account']}",
+                               "expires_at": "2026-10-07T12:10:00.000Z"})
+        return _Resp(200, state["account"])
+
+    monkeypatch.setattr(requests, "request", request)
+    return {"log": log, "state": state}
+
+
+def test_v2_connect_sends_the_account_and_link_requests(client, db, make_user, v2):
+    from app.config import settings
+
+    owner = make_user(email="owner@traqtest.io")
+    owner["team"].name = "Espresso Translations"
+    db.commit()
+    r = client.post("/settings/payments/stripe/connect", json={"country": "de"}, headers=owner["headers"])
+    assert r.status_code == 200, r.text
+    assert r.json() == {"url": f"https://accounts.stripe.test/r/{ACCOUNT}"}
+
+    create, link = v2["log"]
+    assert (create["method"], create["url"]) == ("POST", "https://api.stripe.com/v2/core/accounts")
+    assert create["json"] == {
+        "contact_email": "owner@traqtest.io",
+        "display_name": "Espresso Translations",
+        "identity": {"country": "de"},
+        "dashboard": "full",
+        "defaults": {"responsibilities": {"fees_collector": "stripe", "losses_collector": "stripe"}},
+        "configuration": {"merchant": {"capabilities": {"card_payments": {"requested": True}}}},
+        "include": ["configuration.merchant", "requirements", "identity", "defaults"],
+        "metadata": {"team_id": str(owner["team"].id)},
+    }
+    headers = create["headers"]
+    assert headers["Authorization"] == f"Bearer {settings.stripe_secret_key}"
+    assert headers["Stripe-Version"] == "2026-09-30.endive"
+    assert headers["Content-Type"] == "application/json"
+    assert headers["Idempotency-Key"].startswith(f"connect-account-{owner['team'].id}-")
+    assert create["timeout"]
+
+    back = "http://localhost:3000/settings/account?stripe=return#payments"
+    assert (link["method"], link["url"]) == ("POST", "https://api.stripe.com/v2/core/account_links")
+    assert link["json"] == {"account": ACCOUNT, "use_case": {"type": "account_onboarding", "account_onboarding": {
+        "configurations": ["merchant"], "return_url": back, "refresh_url": back}}}
+
+    db.refresh(owner["team"])
+    assert owner["team"].stripe_account_id == ACCOUNT and owner["team"].stripe_account_status == "restricted"
+
+    # Back again: the stored account is reused, only a new link is made.
+    assert client.post("/settings/payments/stripe/connect", headers=owner["headers"]).status_code == 200
+    assert [c["url"].rsplit("/", 1)[1] for c in v2["log"]] == ["accounts", "account_links", "account_links"]
+
+
+def test_v2_default_country_is_lowercased(client, make_user, v2):
+    owner = make_user()
+    client.post("/settings/payments/stripe/connect", headers=owner["headers"])
+    assert v2["log"][0]["json"]["identity"] == {"country": "it"}
+
+
+def test_v2_idempotency_key_is_fresh_per_attempt(client, make_user, v2):
+    owner = make_user()
+    v2["state"]["error"] = {"code": "connect_profile_not_submitted", "message": "Complete your platform profile."}
+    assert client.post("/settings/payments/stripe/connect", headers=owner["headers"]).status_code == 503
+    v2["state"]["error"] = None
+    assert client.post("/settings/payments/stripe/connect", headers=owner["headers"]).status_code == 200
+    keys = [c["headers"]["Idempotency-Key"] for c in v2["log"] if c["url"].endswith("/accounts")]
+    assert len(keys) == 2 and keys[0] != keys[1]
+
+
+@pytest.mark.parametrize("card_status, entries, status, charges, submitted, due", [
+    ("active", [], "active", True, True, 0),
+    ("active", [("tax_id", "eventually_due")], "active", True, True, 0),
+    ("pending", [], "pending", False, True, 0),
+    ("pending", [("tax_id", "eventually_due")], "pending", False, True, 0),
+    (None, [], "pending", False, True, 0),
+    ("restricted", [], "restricted", False, True, 0),
+    ("pending", [("individual.id", "currently_due"), ("tos", "past_due")], "restricted", False, False, 2),
+])
+def test_v2_status_mapping(card_status, entries, status, charges, submitted, due):
+    from app.services import stripe_connect
+
+    account = stripe_connect.from_v2(_v2_account(card_status, entries))
+    assert account["status"] == status
+    assert account["charges_enabled"] is charges and account["details_submitted"] is submitted
+    assert stripe_connect.requirements_due(account) == due
+
+
+def test_v2_status_refresh(client, db, make_user, v2):
+    owner = make_user()
+    owner["team"].stripe_account_id = ACCOUNT
+    owner["team"].stripe_account_status = "pending"
+    db.commit()
+    v2["state"]["account"] = _v2_account("restricted", [("individual.id", "currently_due"), ("tos", "past_due")])
+    body = client.get("/settings/payments", headers=owner["headers"]).json()
+    assert body["stripe_status"] == "restricted"
+    assert body["stripe_charges_enabled"] is False and body["stripe_details_submitted"] is False
+    assert body["stripe_requirements_due"] == 2
+    [get] = v2["log"]
+    assert (get["method"], get["url"]) == ("GET", f"https://api.stripe.com/v2/core/accounts/{ACCOUNT}")
+    assert get["params"] == [("include[0]", "configuration.merchant"), ("include[1]", "requirements")]
+    assert "Idempotency-Key" not in get["headers"]
+
+    # Back from onboarding: asked straight away, whatever the throttle says.
+    v2["state"]["account"] = _v2_account("active")
+    body = client.get("/settings/payments?refresh=1", headers=owner["headers"]).json()
+    assert body["stripe_status"] == "active" and body["stripe_charges_enabled"] is True
+    assert body["stripe_requirements_due"] == 0
+    db.refresh(owner["team"])
+    assert owner["team"].stripe_account_status == "active"
+
+
+def test_v2_refresh_survives_a_stripe_error(client, db, make_user, v2):
+    owner = make_user()
+    owner["team"].stripe_account_id = ACCOUNT
+    owner["team"].stripe_account_status = "pending"
+    db.commit()
+    v2["state"]["error"] = {"code": "not_found", "message": "No such account."}
+    assert client.get("/settings/payments", headers=owner["headers"]).json()["stripe_status"] == "pending"
+
+
+@pytest.mark.parametrize("code, http, detail", [
+    ("connect_profile_not_submitted", 503, "Stripe setup isn't finished"),
+    ("connect_identity_not_verified", 503, "Stripe setup isn't finished"),
+    ("platform_registration_required", 503, "Stripe setup isn't finished"),
+    ("account_create_activation_required", 503, "Stripe setup isn't finished"),
+    ("cross_border_connected_account_creation_not_allowed", 422,
+     "Card payments aren't available for accounts in this country yet."),
+    ("email_invalid", 502, "Stripe isn't reachable"),
+])
+def test_v2_errors_are_explained(client, db, make_user, v2, code, http, detail):
+    owner = make_user()
+    v2["state"]["error"] = {"code": code, "message": "Stripe says no."}
+    r = client.post("/settings/payments/stripe/connect", headers=owner["headers"])
+    assert r.status_code == http and detail in r.json()["detail"]
+    db.refresh(owner["team"])
+    assert owner["team"].stripe_account_id is None
+
+
+def test_v2_error_parsing_and_network_failure(monkeypatch):
+    import requests
+
+    from app.services import stripe_connect
+
+    refused = _Resp(400, {"error": {"code": "email_invalid", "message": "Bad email"}})
+    monkeypatch.setattr(requests, "request", lambda *a, **kw: refused)
+    with pytest.raises(stripe_connect.StripeV2Error) as err:
+        stripe_connect._v2_request("POST", "/v2/core/accounts", json={})
+    assert (err.value.code, err.value.message, err.value.status) == ("email_invalid", "Bad email", 400)
+
+    def down(*a, **kw):
+        raise requests.ConnectionError("down")
+
+    monkeypatch.setattr(requests, "request", down)
+    with pytest.raises(stripe_connect.StripeV2Error) as err:
+        stripe_connect._v2_request("GET", "/v2/core/accounts/acct_1")
+    assert err.value.code == "api_connection_error"
