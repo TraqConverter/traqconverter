@@ -373,7 +373,7 @@ function TrustBar() {
           { n: "28", l: "Languages" },
           { n: "PDF · DOCX · JPG · PNG", l: "Input formats, up to 20 MB" },
           { n: "DOCX · PDF", l: "Export formats" },
-          { n: "10 AI edits", l: "Included per page" },
+          { n: "5 AI edits", l: "Included per page" },
         ].map((s) => (
           <div key={s.l} className="min-w-0 flex flex-col-reverse">
             <dt style={{ fontSize: 12, color: MUTED, marginTop: 2 }}>{s.l}</dt>
@@ -1164,8 +1164,8 @@ function ValueStrip() {
     },
     {
       n: "1 page = 1 credit",
-      l: "with 10 AI edits included",
-      d: "Each translated page uses one credit and comes with 10 Ask AI edits on that document.",
+      l: "with 5 AI edits included",
+      d: "Each translated page uses one credit and comes with 5 Ask AI edits on that document.",
     },
   ]
   if (cheapest && dearest) {
@@ -1923,7 +1923,7 @@ function FAQ() {
     },
     {
       q: "What does a page credit include?",
-      a: "Translating one page, plus 10 AI edits per page with Ask AI. After that, 1 credit adds 10 more edits. Each document can be regenerated twice.",
+      a: "Translating one page, plus 5 AI edits per page with Ask AI. After that, 1 credit adds 5 more edits. The first Regenerate of a document is free; a second one costs one credit per page.",
     },
     {
       q: "Does it really learn from my work?",
