@@ -137,6 +137,25 @@ def test_subscription_checkout_and_renewal_show_in_the_wallet_history(client, db
     assert grants == [("SUBSCRIPTION_GRANT", SUBSCRIPTION_GRANTS["PRO"])] * 2
 
 
+def test_first_invoice_after_checkout_adds_no_second_grant_row(client, db, make_user, monkeypatch):
+    owner = make_user(plan="TRIAL", credits=1)
+    checkout = {
+        "id": f"evt_{uuid.uuid4().hex}",
+        "type": "checkout.session.completed",
+        "data": {"object": {
+            "id": "cs_sub_2", "payment_status": "paid", "mode": "subscription", "subscription": "sub_live",
+            "metadata": {"user_id": str(owner["user"].id), "team_id": str(owner["team"].id), "plan": "BASIC"},
+        }},
+    }
+    assert _post_event(client, monkeypatch, checkout).json() == {"status": "success"}
+    first = _invoice(owner, {"price": {"id": "price_ci_basic"}, "period": {"end": 1893456000}})
+    first["data"]["object"]["billing_reason"] = "subscription_create"
+    assert _post_event(client, monkeypatch, first).json() == {"status": "success"}
+    grants = [t for t in _transactions(client, owner) if t[0] == "SUBSCRIPTION_GRANT"]
+    assert grants == [("SUBSCRIPTION_GRANT", SUBSCRIPTION_GRANTS["BASIC"])]
+    assert _wallet(db, owner).subscription_credits == SUBSCRIPTION_GRANTS["BASIC"]
+
+
 def test_sync_session_pack_purchase_records_the_ledger_once(client, db, make_user, monkeypatch):
     import stripe
 
