@@ -4,10 +4,10 @@ Tiers
 -----
 TRIAL  — Given automatically on registration. 7 days, 3 credits, can run
          test translations but cannot download the result. No Translation
-         Memory, Glossary, Templates or Certifications, in the UI or in
-         background work.
+         Memory, Glossary, Templates, Media or Certifications, in the UI or
+         in background work.
 BASIC  — €19 / 19 credits / month. Full download access, team
-         collaboration and templates, but no Translation Memory, Glossary
+         collaboration, templates and the media library, but no Translation Memory, Glossary
          or Certifications library.
 PRO    — €29 / 29 credits / month. Everything in Basic plus Translation
          Memory, Glossary and Certifications.
@@ -33,6 +33,7 @@ _PRO_FEATURES = {
     "certifications": True,
     "template_upload": True,
     "templates": True,
+    "media": True,
 }
 
 PLAN_FEATURES = {
@@ -44,6 +45,7 @@ PLAN_FEATURES = {
         "certifications": False,
         "template_upload": False,
         "templates": False,
+        "media": False,
     },
     "BASIC": {
         "download_translation": True,
@@ -53,6 +55,7 @@ PLAN_FEATURES = {
         "certifications": False,
         "template_upload": True,
         "templates": True,
+        "media": True,
     },
     "PRO": dict(_PRO_FEATURES),
     "STUDIO": dict(_PRO_FEATURES),

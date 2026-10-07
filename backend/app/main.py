@@ -265,6 +265,7 @@ from app.routers import saved_instructions as saved_instructions_router
 from app.routers import delivery_links as delivery_links_router
 from app.routers import stripe_connect as stripe_connect_router
 from app.routers import notifications as notifications_router
+from app.routers import media as media_router
 
 app.include_router(settings_router.router)
 app.include_router(stripe.router)
@@ -289,6 +290,7 @@ app.include_router(delivery_links_router.router)
 app.include_router(delivery_links_router.public_router)
 app.include_router(stripe_connect_router.router)
 app.include_router(notifications_router.router)
+app.include_router(media_router.router)
 
 logger.info("All routers registered successfully")
 

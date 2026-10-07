@@ -156,6 +156,7 @@ FEATURE_LABELS = {
     "certifications": "Certifications",
     "template_upload": "Template uploads",
     "templates": "Templates",
+    "media": "The media library",
 }
 
 
