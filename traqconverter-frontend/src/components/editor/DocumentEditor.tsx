@@ -2249,9 +2249,9 @@ function MenuItem({
     >
       {thumb ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={thumb} alt="" className="w-6 h-6 object-contain rounded" style={{ background: "#faf5ee" }} />
+        <img src={thumb} alt="" className="w-6 h-6 shrink-0 object-contain rounded" style={{ background: "#faf5ee" }} />
       ) : (
-        <span className="w-6 h-6 rounded flex items-center justify-center" style={{ background: "#e3f1ee", color: "#0a5e58" }}>
+        <span className="w-6 h-6 shrink-0 rounded flex items-center justify-center" style={{ background: "#e3f1ee", color: "#0a5e58" }}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             {icon === "media" ? (
               <>
