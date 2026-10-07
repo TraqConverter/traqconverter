@@ -1,4 +1,4 @@
-"""What goes on a project's certification page: the template to use, the field values, the saved logo and stamp."""
+"""What goes on a project's certification page: the template to use, the field values, the Media logo and stamp."""
 from __future__ import annotations
 
 import logging
@@ -10,8 +10,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.models.certification import Certification
-from app.services import cert_locale, docx_certification, docx_images, document_editor
-from app.services.docx_blocks import DocxEditError
+from app.services import cert_locale, docx_certification, document_editor, media_library
 
 logger = logging.getLogger(__name__)
 
@@ -93,18 +92,6 @@ def load_bytes(cert: Certification) -> bytes:
     return document_editor._download(cert.file_path)
 
 
-def load_image(key: Optional[str], remove_background: bool) -> Optional[docx_images.PreparedImage]:
-    if not key:
-        return None
-    try:
-        return docx_images.prepare_image(document_editor._download(key), remove_background=remove_background)
-    except (DocxEditError, OSError, KeyError):
-        logger.warning("Skipping unreadable image %s for the certification page", key)
-    except Exception:
-        logger.exception("Couldn't load %s for the certification page", key)
-    return None
-
-
 def _translator(user) -> str:
     return (getattr(user, "full_name", "") or "").strip() or (getattr(user, "email", "") or "").split("@")[0]
 
@@ -172,8 +159,8 @@ def content_for_project(db: Session, project, user, template: Optional[bytes]) -
         values=values,
         day=today,
         pages=project.page_count or 0,
-        logo=load_image(getattr(user, "logo_s3_key", None), remove_background=False),
-        stamp=load_image(team.stamp_s3_key if team else None, remove_background=True),
+        logo=media_library.auto_image_or_none(db, project, "logo"),
+        stamp=media_library.auto_image_or_none(db, project, "stamp"),
         template_docx=template,
         statement_override=project.certification_override_text,
         extra_tokens=extra,
@@ -192,6 +179,7 @@ def example_content(db: Session, user, team, template: bytes) -> docx_certificat
     sample = SimpleNamespace(
         id=None, file_name=ex["file_name"], source_language=ex["source_language"],
         target_language=ex["target_language"], page_count=ex["pages"], total_segments=0,
+        team_id=team.id if team else None,
     )
     extra = build_substitution_values(user=user, project=sample, team=team)
     extra["certificate_number"] = f"CERT-{today.year}-EXAMPLE"
@@ -206,8 +194,8 @@ def example_content(db: Session, user, team, template: bytes) -> docx_certificat
         values=values,
         day=today,
         pages=ex["pages"],
-        logo=load_image(getattr(user, "logo_s3_key", None), remove_background=False),
-        stamp=load_image(team.stamp_s3_key if team else None, remove_background=True),
+        logo=media_library.auto_image_or_none(db, sample, "logo"),
+        stamp=media_library.auto_image_or_none(db, sample, "stamp"),
         template_docx=template,
         extra_tokens=extra,
     )

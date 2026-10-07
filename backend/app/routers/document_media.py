@@ -2,7 +2,7 @@
 import logging
 from datetime import date
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Annotated, Literal, Optional, Union
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -17,10 +17,19 @@ from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import get_user_project_or_404
 from app.models.certification import Certification
 from app.models.document_version import DocumentVersion
+from app.models.media_asset import MediaAsset
 from app.models.project import TranslationProject, is_dtp
 from app.models.user import User
 from app.routers.document import StampUnavailable, _initial_builder, _locked_project, _require_version, team_stamp
-from app.services import cert_locale, cert_page, docx_certification, docx_images, docx_page_stamp, document_editor
+from app.services import (
+    cert_locale,
+    cert_page,
+    docx_certification,
+    docx_images,
+    docx_page_stamp,
+    document_editor,
+    media_library,
+)
 from app.services.docx_blocks import DocxEditError
 
 logger = logging.getLogger(__name__)
@@ -32,6 +41,7 @@ IMAGE_ID = r"^img_[0-9a-f]{8}$"
 Position = Literal["before", "after", "inline"]
 Align = Literal["left", "center", "right"]
 _cert_feature = [Depends(require_feature("certifications"))]
+_media_feature = [Depends(require_feature("media"))]
 _upload_limit = [Depends(user_rate_limit("doc_images", max_requests=120, per_seconds=3600))]
 
 
@@ -90,6 +100,20 @@ class _PageStamp(BaseModel):
     width_cm: Optional[float] = Field(
         default=None, ge=docx_page_stamp.MIN_WIDTH_CM, le=docx_page_stamp.MAX_WIDTH_CM
     )
+    # A stamp from Media to show instead of the current one.
+    asset_id: Optional[UUID] = None
+
+
+class _Place(BaseModel):
+    version: int
+    scope: Literal["page", "all"] = "page"
+    # The page's first paragraph (or, for "cursor", the paragraph the picture goes after).
+    block_id: Optional[str] = Field(default=None, pattern=BLOCK_ID)
+    # Every page's first paragraph, for scope "all".
+    block_ids: list[Annotated[str, Field(pattern=BLOCK_ID)]] = Field(default_factory=list, max_length=500)
+    vertical: Literal["top", "bottom", "cursor"] = "bottom"
+    align: Align = "right"
+    width_cm: float = Field(default=3.5, ge=0.5, le=19)
 
 
 # A team template's id, "standard" for the built-in page, or left out for the project's saved pick.
@@ -137,27 +161,6 @@ def _edit(db: Session, project_id: UUID, user: User, version: int, note: str, ch
         document_editor.save_version(db, project, new_data, note, user)
     db.commit()
     return project.document_version
-
-
-def _asset_key(db: Session, project: TranslationProject, user: User, asset: str) -> Optional[str]:
-    if asset == "logo":
-        return getattr(user, "logo_s3_key", None)
-    from app.models.team import Team
-
-    team = db.query(Team).filter(Team.id == project.team_id).first()
-    return team.stamp_s3_key if team else None
-
-
-def _load_asset(key: str, remove_background: bool) -> docx_images.PreparedImage:
-    try:
-        raw = document_editor._download(key)
-    except Exception:
-        logger.exception("Couldn't load saved asset %s", key)
-        raise HTTPException(status_code=502, detail="Couldn't load that image from storage")
-    try:
-        return docx_images.prepare_image(raw, remove_background=remove_background)
-    except DocxEditError as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/{project_id}/document/status")
@@ -216,48 +219,66 @@ async def upload_document_image(
     return {"version": new_version, "image_id": inserted["id"]}
 
 
-@router.get("/{project_id}/document/assets")
-def list_assets(project_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    from app.services.s3_service import generate_presigned_download_url
+def _team_asset(db: Session, project: TranslationProject, asset_id: UUID, kind: Optional[str] = None) -> MediaAsset:
+    q = db.query(MediaAsset).filter(MediaAsset.id == asset_id, MediaAsset.team_id == project.team_id)
+    if kind:
+        q = q.filter(MediaAsset.kind == kind)
+    asset = q.first()
+    if asset is None:
+        raise HTTPException(status_code=404, detail="That picture isn't in your media library")
+    return asset
+
+
+def _prepared(asset: MediaAsset) -> docx_images.PreparedImage:
+    try:
+        return media_library.prepare(asset)
+    except media_library.AssetUnavailable:
+        raise HTTPException(status_code=502, detail="Couldn't load that picture from storage")
+
+
+@router.get("/{project_id}/document/media", dependencies=_media_feature)
+def list_project_media(project_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """The team's library for the editor's picker, the project's target language first."""
+    from app.routers.media import asset_json
 
     project = get_user_project_or_404(db, project_id, user)
-    out = {}
-    for asset in ("logo", "stamp"):
-        key = _asset_key(db, project, user, asset)
-        url = None
-        if key:
-            try:
-                url = generate_presigned_download_url(key, inline=True)
-            except Exception:
-                logger.warning("Couldn't sign %s url", asset)
-        out[asset] = {"available": bool(key), "url": url}
-    return out
+    language = media_library.project_language(project)
+    assets = media_library.ranked_for(media_library.team_assets(db, project.team_id), language)
+    return {"language": language, "assets": [asset_json(a) for a in assets]}
 
 
-@router.post("/{project_id}/document/assets/{asset}", dependencies=_upload_limit)
-def insert_asset(
+@router.post("/{project_id}/document/media/{asset_id}/place", dependencies=_media_feature + _upload_limit)
+def place_media(
     project_id: UUID,
-    asset: Literal["logo", "stamp"],
-    payload: _ImagePlacement,
+    asset_id: UUID,
+    payload: _Place,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """A media library picture at the cursor, or at a corner of this page or every page: one version, one undo."""
+    if payload.vertical == "cursor" and payload.scope != "page":
+        raise HTTPException(status_code=422, detail="At the cursor places on this page only")
+    if payload.scope == "page" and not payload.block_id:
+        raise HTTPException(status_code=422, detail="block_id is required for this page")
+    if payload.scope == "all" and not payload.block_ids:
+        raise HTTPException(status_code=422, detail="block_ids lists the first paragraph of every page")
     project = get_user_project_or_404(db, project_id, user)
-    key = _asset_key(db, project, user, asset)
-    if not key:
-        raise HTTPException(status_code=404, detail=f"No {asset} saved in Settings")
-    prepared = _load_asset(key, remove_background=asset == "stamp")
-    default_width = docx_certification.STAMP_WIDTH_CM if asset == "stamp" else docx_certification.LOGO_WIDTH_CM
-    inserted = {}
+    asset = _team_asset(db, project, asset_id)
+    prepared = _prepared(asset)
+    made = {"ids": []}
 
     def change(data, _project):
-        out, inserted["id"] = docx_images.insert_image(
-            data, prepared, payload.block_id, payload.position, payload.width_cm or default_width, payload.align or "left"
-        )
+        if payload.vertical == "cursor":
+            out, image_id = docx_images.insert_image(data, prepared, payload.block_id, "after", payload.width_cm, payload.align)
+            made["ids"] = [image_id]
+            return out
+        targets = payload.block_ids if payload.scope == "all" else [payload.block_id]
+        out, made["ids"] = docx_images.place_on_pages(data, prepared, targets, payload.vertical, payload.align, payload.width_cm)
         return out
 
-    new_version = _edit(db, project_id, user, payload.version, f"Inserted {asset}", change)
-    return {"version": new_version, "image_id": inserted["id"]}
+    note = f"Placed {asset.name} on every page" if payload.scope == "all" else f"Placed {asset.name}"
+    new_version = _edit(db, project_id, user, payload.version, note, change)
+    return {"version": new_version, "image_ids": made["ids"]}
 
 
 @router.post("/{project_id}/document/images/{image_id}/move")
@@ -349,13 +370,17 @@ def copy_image_to_pages(
 
 
 def _page_stamp_state(db: Session, project: TranslationProject, data: bytes, version: int) -> dict:
-    from app.models.team import Team
+    from app.routers.media import asset_json
 
-    team = db.query(Team).filter(Team.id == project.team_id).first()
+    stamps = media_library.ranked_for(
+        media_library.team_assets(db, project.team_id, "stamp"), media_library.project_language(project)
+    )
+    keep = ("id", "name", "language", "auto_use", "url")
     return {
         "version": version,
-        "available": bool(team and team.stamp_s3_key) and not is_dtp(project),
+        "available": bool(stamps) and not is_dtp(project),
         **docx_page_stamp.state(data),
+        "stamps": [{k: v for k, v in asset_json(a).items() if k in keep} for a in stamps],
     }
 
 
@@ -374,24 +399,37 @@ def update_page_stamp(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """An `asset_id` swaps the stamp's picture for that Media stamp, keeping its place and size."""
     project = get_user_project_or_404(db, project_id, user)
     if is_dtp(project):
         raise HTTPException(status_code=409, detail="An editable copy has no page stamp")
-    image = None
-    if payload.enabled:
+    image = asset_ref = None
+    if payload.asset_id is not None:
+        asset = _team_asset(db, project, payload.asset_id, kind="stamp")
+        image, asset_ref = _prepared(asset), str(asset.id)
+    elif payload.enabled:
         try:
-            image, _ = team_stamp(db, project)
+            image, asset_ref = team_stamp(db, project)
         except StampUnavailable:
             raise HTTPException(status_code=502, detail="Couldn't load your stamp from storage")
         if image is None:
-            raise HTTPException(status_code=404, detail="No stamp saved in Settings")
+            raise HTTPException(status_code=404, detail="There's no stamp in Media yet")
 
     def change(data, _p):
         return docx_page_stamp.update(
-            data, enabled=payload.enabled, align=payload.align, width_cm=payload.width_cm, image=image
+            data,
+            enabled=payload.enabled,
+            align=payload.align,
+            width_cm=payload.width_cm,
+            image=image,
+            asset_id=asset_ref,
+            replace_image=payload.asset_id is not None,
         )
 
-    note = {True: "Turned the page stamp on", False: "Turned the page stamp off"}.get(payload.enabled, "Changed the page stamp")
+    if payload.asset_id is not None:
+        note = "Changed the page stamp picture"
+    else:
+        note = {True: "Turned the page stamp on", False: "Turned the page stamp off"}.get(payload.enabled, "Changed the page stamp")
     _edit(db, project_id, user, payload.version, note, change)
     project = get_user_project_or_404(db, project_id, user)
     data, version = document_editor.current_document(db, project, user, _initial_builder(db, project, user))

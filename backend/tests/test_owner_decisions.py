@@ -22,31 +22,7 @@ def _wallet(db, who):
     return db.query(CreditWallet).filter(CreditWallet.team_id == who["team"].id).one()
 
 
-# --- 1/2. Stamp: owner and admin only -----------------------------------------
-
-
-@pytest.mark.parametrize("role,allowed", [("ADMIN", True), ("MEMBER", False), ("PM", False), ("REVIEWER", False)])
-def test_team_stamp_is_for_the_owner_and_admins(client, db, make_user, role, allowed):
-    owner = make_user()
-    other = make_user(team=owner["team"], role=role)
-    expected = 200 if allowed else 403
-
-    r = client.post("/settings/upload-stamp", headers=other["headers"], files={"file": ("stamp.png", io.BytesIO(PNG), "image/png")})
-    assert r.status_code == expected, r.text
-    assert client.patch("/settings/stamp-alignment", headers=other["headers"], json={"alignment": "left"}).status_code == expected
-    assert client.delete("/settings/stamp", headers=other["headers"]).status_code == expected
-    assert client.get("/settings/stamp", headers=other["headers"]).json()["can_edit"] is allowed
-    assert client.get("/settings/stamp", headers=owner["headers"]).json()["can_edit"] is True
-
-
-def test_owner_can_replace_the_stamp(client, db, make_user):
-    owner = make_user()
-    first = client.post("/settings/upload-stamp", headers=owner["headers"], files={"file": ("a.png", io.BytesIO(PNG), "image/png")})
-    second = client.post("/settings/upload-stamp", headers=owner["headers"], files={"file": ("b.png", io.BytesIO(PNG), "image/png")})
-    assert first.status_code == second.status_code == 200
-    db.refresh(owner["team"])
-    assert owner["team"].stamp_s3_key == second.json()["stamp_s3_key"] != first.json()["stamp_s3_key"]
-
+# --- 1/2. Stamp: owner and admin only (now the media library, see test_media_library.py) ----
 
 # --- 3. Refunds go back to the bucket they came from --------------------------
 
@@ -233,11 +209,12 @@ def test_every_start_command_trusts_the_proxy_headers():
 # --- 6. File names -----------------------------------------------------------
 
 
-@pytest.mark.parametrize("path", ["/settings/upload-logo", "/settings/upload-stamp"])
-def test_logo_and_stamp_names_cannot_leave_the_temp_dir(client, make_user, path):
+def test_media_names_cannot_leave_the_temp_dir(client, make_user):
+    from tests.test_document_media import _png
+
     owner = make_user()
     name = f"escape_{uuid.uuid4().hex}.png"
-    r = client.post(path, headers=owner["headers"], files={"file": (f"../{name}", io.BytesIO(PNG), "image/png")})
+    r = client.post("/media", headers=owner["headers"], files={"file": (f"../{name}", io.BytesIO(_png()), "image/png")})
     assert r.status_code == 200, r.text
     assert not (Path(tempfile.gettempdir()) / name).exists()
 

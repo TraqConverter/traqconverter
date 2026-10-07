@@ -623,6 +623,90 @@ def copy_to_blocks(data: bytes, image_id: str, placements: list[tuple[str, int, 
     return _finish(doc), new_ids
 
 
+TWIP_EMU = 635
+_A4_TWIPS = (11906, 16838)
+_MARGIN_TWIPS = 1440
+
+
+def _twips(el, attr: str, default: int) -> int:
+    try:
+        return abs(int(el.get(w(attr)))) if el is not None and el.get(w(attr)) is not None else default
+    except ValueError:
+        return default
+
+
+def section_geometry(doc: _Doc, p) -> dict[str, int]:
+    """Page size and margins in EMU of the section a body paragraph is in (A4 with 2.54 cm margins if unsaid)."""
+    body = doc.trees[DOCUMENT].find(w("body"))
+    unit = p
+    while unit is not None and unit.getparent() is not body:
+        unit = unit.getparent()
+    sect = None
+    if unit is not None:
+        for el in (unit, *unit.itersiblings()):
+            if el.tag == w("p"):
+                sect = el.find(f"{w('pPr')}/{w('sectPr')}")
+                if sect is not None:
+                    break
+    if sect is None:
+        sect = body.find(w("sectPr"))
+    size = sect.find(w("pgSz")) if sect is not None else None
+    mar = sect.find(w("pgMar")) if sect is not None else None
+    out = {
+        "page_w": _twips(size, "w", _A4_TWIPS[0]),
+        "page_h": _twips(size, "h", _A4_TWIPS[1]),
+        "top": _twips(mar, "top", _MARGIN_TWIPS),
+        "bottom": _twips(mar, "bottom", _MARGIN_TWIPS),
+        "left": _twips(mar, "left", _MARGIN_TWIPS),
+        "right": _twips(mar, "right", _MARGIN_TWIPS),
+    }
+    return {k: v * TWIP_EMU for k, v in out.items()}
+
+
+def page_offsets(geometry: dict[str, int], cx: int, cy: int, vertical: str, align: str) -> tuple[int, int]:
+    """(x, y) from the column's left and the page's first paragraph, which sits at the top margin."""
+    text_w = max(cx, geometry["page_w"] - geometry["left"] - geometry["right"])
+    text_h = max(cy, geometry["page_h"] - geometry["top"] - geometry["bottom"])
+    x = {"left": 0, "center": (text_w - cx) // 2, "right": text_w - cx}[align]
+    y = text_h - cy if vertical == "bottom" else 0
+    return x, y
+
+
+def place_on_pages(
+    data: bytes, image: PreparedImage, block_ids: list[str], vertical: str, align: str, width_cm: float
+) -> tuple[bytes, list[str]]:
+    """One floating copy per page from its first paragraph, sharing one media part; skips the certification page."""
+    from app.services.docx_certification import _marker_units
+
+    if vertical not in ("top", "bottom"):
+        raise DocxEditError("vertical must be top or bottom")
+    if align not in ALIGNS:
+        raise DocxEditError("align must be left, center or right")
+    doc = _Doc.load(data)
+    cert = {p for unit in _marker_units(doc) for p in unit.iter(w("p"))}
+    targets, seen = [], set()
+    for block_id in block_ids:
+        if block_id in seen:
+            continue
+        seen.add(block_id)
+        target = _block_paragraph(doc, block_id)
+        if target not in cert:
+            targets.append(target)
+    if not targets:
+        raise ImageError("There's no page of the translation to put it on")
+    rid = add_image_part(doc, image)
+    cx = int(_clamp_width(width_cm) * EMU_PER_CM)
+    cy = max(1, int(cx * image.height_px / max(1, image.width_px)))
+    new_ids = []
+    for target in targets:
+        x, y = page_offsets(section_geometry(doc, target), cx, cy, vertical, align)
+        image_id = _new_image_id(doc)
+        frame = _build_anchor(image_id, _next_docpr_id(doc), cx, cy, _graphic(rid, image_id, cx, cy), x, y)
+        target.insert(_insertion_index(target), _new_run(frame))
+        new_ids.append(image_id)
+    return _finish(doc), new_ids
+
+
 def list_images(data: bytes) -> list[dict]:
     doc = _Doc.load(data)
     out = []

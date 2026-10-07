@@ -9,8 +9,9 @@ translation layout:
   [CERTIFICATION PAGE — translator + date stamp, optionally via the
    project's selected certification template with {{token}} expansion]
 
-If the team has uploaded a company stamp in Settings, it lives in the
-section footer so Word repeats it on every page.
+The editor document carries its own page stamp. An older one gets the
+team's stamp from Media (by target language) in the section footer, so
+Word repeats it on every page.
 
 This is invoked from `generate_docx` and `generate_pdf` in
 `export_service.py` whenever the project has an authored DOCX or
