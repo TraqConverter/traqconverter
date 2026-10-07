@@ -87,6 +87,13 @@ class Settings(BaseSettings):
 
     CREDIT_PRICE_CENTS: int = 100
 
+    # Ask AI: edits included per page of a document, then 1 credit per this many more.
+    AI_EDITS_PER_PAGE: int = 5
+    AI_EDITS_PER_EXTRA_CREDIT: int = 5
+    # Regenerate: the first N per document are free, later ones cost one credit per page, up to the cap.
+    REGENERATE_FREE_PER_PROJECT: int = 1
+    REGENERATE_LIMIT_PER_PROJECT: int = 3
+
 
     STRIPE_PRICE_CREDITS_10: Optional[str] = None
     STRIPE_PRICE_CREDITS_25: Optional[str] = None
