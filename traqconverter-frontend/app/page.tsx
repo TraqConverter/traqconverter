@@ -18,10 +18,10 @@ import {
   type PlanCatalog,
 } from "@/lib/plans"
 import { BrandMark, BrandName } from "@/components/brand/Logo"
+import DemoVideo from "@/components/landing/DemoVideo"
 
 const CREAM = "#faf5ee"
 const CREAM_DARK = "#f3ecdb"
-const CREAM_DEEP = "#ede3cc"
 const TEAL = "#0a7870"
 const TEAL_DARK = "#0a5e58"
 const TEAL_SOFT = "#cfe6e2"
@@ -42,13 +42,16 @@ export default function LandingPage() {
       <main>
         <Hero />
         <TrustBar />
+        <WhyBuy />
+        <SeeItWork />
+        <ValueStrip />
         <HowItWorks />
         <FeatureGroups />
         <Workbench />
         <GetPaid />
-        <BuiltForCertified />
         <Security />
         <Pricing />
+        <RiskReversal />
         <FAQ />
         <FinalCTA />
       </main>
@@ -92,6 +95,7 @@ function TopBar() {
           </div>
         </Link>
         <nav aria-label="Main" className="hidden lg:flex items-center gap-7">
+          <a href="#demo" style={navLink}>Demo</a>
           <a href="#features" style={navLink}>Features</a>
           <a href="#get-paid" style={navLink}>Get paid</a>
           <a href="#security" style={navLink}>Security</a>
@@ -171,7 +175,7 @@ function Hero() {
         className="max-w-[1200px] mx-auto"
         style={{ padding: "clamp(48px, 8vw, 80px) 20px 64px" }}
       >
-        <div className="grid lg:grid-cols-[1.1fr_1fr] gap-12 items-center">
+        <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] gap-10 lg:gap-12 items-center">
           <div className="min-w-0">
             <div
               className="inline-flex items-center gap-2 mb-6"
@@ -287,28 +291,23 @@ function Hero() {
 
 function HeroVisual() {
   return (
-    <div className="relative min-w-0">
-      <Shot src="/landing/editor.webp" width={1800} height={1204} alt="The editor: the original document on the left, the translated document on the right, with the clicked line highlighted on the original" priority />
-      <div
-        className="hidden md:block"
-        style={{
-          position: "absolute",
-          left: -18,
-          bottom: 28,
-          background: "#ffffff",
-          border: `1px solid ${BORDER}`,
-          borderRadius: 14,
-          padding: "10px 14px",
-          boxShadow: "0 12px 28px rgba(30,30,20,0.12)",
-          fontSize: 12,
-          color: TEXT,
-          maxWidth: 230,
-        }}
-      >
-        <div style={{ color: TEAL, fontWeight: 600, marginBottom: 2 }}>Click a line, see its source</div>
-        <div style={{ color: MUTED }}>Every translated paragraph is linked to where it sits on the original.</div>
-      </div>
-    </div>
+    <figure className="min-w-0" style={{ margin: 0 }}>
+      <DemoVideo
+        eager
+        src="/landing/demo-editor.webm"
+        poster="/landing/demo-editor.png"
+        label="Demo: in the editor, clicking a translated line highlights the same line on the original document"
+      />
+      <figcaption className="flex items-start gap-2" style={{ fontSize: 13, color: MUTED, marginTop: 12 }}>
+        <span style={{ color: TEAL, flexShrink: 0, marginTop: 3 }}>
+          <Check />
+        </span>
+        <span>
+          <strong style={{ color: TEXT, fontWeight: 600 }}>Click a line, see its source.</strong> Recorded in the live
+          app on a sample certificate.
+        </span>
+      </figcaption>
+    </figure>
   )
 }
 
@@ -840,229 +839,563 @@ function GetPaid() {
               ))}
             </ul>
           </div>
-          <ProtectedPreview />
+          <ProtectedLinkClip />
         </div>
       </div>
     </section>
   )
 }
 
-// An illustration of the client's view of a protected link, drawn in CSS.
-function ProtectedPreview() {
-  const lines = [92, 70, 84, 58, 88, 64, 76]
+function ProtectedLinkClip() {
   return (
     <figure className="min-w-0" style={{ margin: 0 }}>
-      <div
-        role="img"
-        aria-label="Illustration: a client's view of a protected link, with a watermarked, blurred page and a Pay button"
-        style={{
-          background: CREAM,
-          color: TEXT,
-          borderRadius: 22,
-          padding: 18,
-          boxShadow: "0 18px 44px rgba(0,0,0,0.18)",
-          maxWidth: 440,
-          margin: "0 auto",
-        }}
-      >
-        <div className="flex items-center justify-between gap-3" style={{ marginBottom: 14 }}>
-          <div className="min-w-0">
-            <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              Birth certificate – EN.pdf
-            </div>
-            <div style={{ fontSize: 11, color: SUBTLE }}>Shared by your translator</div>
-          </div>
-          <div
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: "0.08em",
-              color: ACCENT_RUST,
-              background: "#f8e6e1",
-              padding: "4px 10px",
-              borderRadius: 999,
-              whiteSpace: "nowrap",
-            }}
-          >
-            UNPAID
-          </div>
-        </div>
-        <div
-          style={{
-            position: "relative",
-            background: "#ffffff",
-            border: `1px solid ${BORDER}`,
-            borderRadius: 12,
-            padding: "20px 18px",
-            overflow: "hidden",
-          }}
-        >
-          <div style={{ height: 10, width: "46%", background: TEXT, opacity: 0.75, borderRadius: 3, margin: "0 auto 16px" }} />
-          {lines.map((w, i) => (
-            <div
-              key={i}
-              style={{
-                height: 7,
-                width: `${w}%`,
-                background: i % 3 === 1 ? CREAM_DEEP : "#cfc6b2",
-                borderRadius: 3,
-                marginBottom: 9,
-                filter: i % 2 === 0 ? "blur(2.5px)" : "none",
-              }}
-            />
-          ))}
-          <div className="flex justify-between items-end" style={{ marginTop: 18 }}>
-            <div style={{ fontSize: 10, color: SUBTLE, fontStyle: "italic" }}>[Signature]</div>
-            <div
-              style={{
-                width: 46,
-                height: 46,
-                borderRadius: "50%",
-                border: `2px dashed ${SUBTLE}`,
-                filter: "blur(1.5px)",
-              }}
-            />
-          </div>
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              pointerEvents: "none",
-            }}
-          >
-            <div
-              style={{
-                transform: "rotate(-24deg)",
-                fontSize: 13,
-                fontWeight: 700,
-                letterSpacing: "0.08em",
-                color: "rgba(177,74,58,0.55)",
-                whiteSpace: "nowrap",
-              }}
-            >
-              PREVIEW – NOT VALID – UNPAID
-            </div>
-          </div>
-        </div>
-        <div
-          style={{
-            marginTop: 14,
-            background: TEAL,
-            color: "#ffffff",
-            borderRadius: 999,
-            textAlign: "center",
-            padding: "11px 16px",
-            fontSize: 14,
-            fontWeight: 600,
-          }}
-        >
-          Pay €45.00
-        </div>
-        <div style={{ fontSize: 11, color: SUBTLE, textAlign: "center", marginTop: 8 }}>
-          Card, Apple Pay, Google Pay or PayPal
-        </div>
-      </div>
-      <figcaption className="sr-only">Example only: you set the amount on each link.</figcaption>
+      <DemoVideo
+        src="/landing/demo-protected-link.webm"
+        poster="/landing/demo-protected-link.png"
+        label="Demo: the client's page for a protected link, with a watermarked, partly blurred preview and a Pay button"
+      />
+      <figcaption style={{ fontSize: 12, color: "rgba(255,255,255,0.8)", marginTop: 10, textAlign: "center" }}>
+        The client&apos;s page for a protected link. Sample data; you set the amount on each link.
+      </figcaption>
     </figure>
   )
 }
 
-const NEEDS: { need: string; how: string }[] = [
+const OUTCOMES: { problem: string; outcome: string; detail: string }[] = [
   {
-    need: "The translation has to mirror the original",
-    how: "The layout is rebuilt page for page, and every line links back to its place on the source.",
+    problem: "Rebuilding the layout by hand takes most of the job",
+    outcome: "The layout comes back rebuilt",
+    detail: "Tables, forms and signature blocks sit where they were on the original, in an editable Word document.",
   },
   {
-    need: "Stamps, seals and signatures must be accounted for",
-    how: "Each is noted where it appears, in brackets, in the target language.",
+    problem: "Stamps and seals you can barely read",
+    outcome: "Each one is marked in brackets",
+    detail: "[Stamp: …] and [Signature] where they appear; an unreadable word or digit is marked [illegible], never guessed.",
   },
   {
-    need: "You can't guess an unreadable digit",
-    how: "Unreadable parts are marked [illegible] and uncertain readings are flagged for you.",
+    problem: "One wrong digit can get a document rejected",
+    outcome: "Numbers are checked before you sign",
+    detail: "Numbers, dates, codes and names are compared with the original, and anything that differs is listed.",
   },
   {
-    need: "One wrong number can get a document rejected",
-    how: "The ready-to-certify check compares numbers, dates, codes and names with the source.",
+    problem: "Checking means flipping between two files",
+    outcome: "Click a line, see its source",
+    detail: "Every translated line is linked to its place on the original and highlighted there when you click it.",
   },
   {
-    need: "Every delivery needs your signed statement",
-    how: "Your own Word certification is filled in and exported with the translation.",
+    problem: "Chasing clients for payment",
+    outcome: "The file is released when they pay",
+    detail: "Send a protected link: the client sees a watermarked preview, and with Stripe the download opens once they've paid.",
   },
   {
-    need: "The same documents come back again and again",
-    how: "Templates, translation memory and your glossary are reused on the next job.",
-  },
-  {
-    need: "Clients sometimes pay late, or not at all",
-    how: "Protected links keep the file locked behind a watermarked preview until they pay.",
-  },
-  {
-    need: "Agencies split work across people",
-    how: "Roles, assignment with email notifications, and an Assigned to me view.",
+    problem: "The same documents, again and again",
+    outcome: "Your past work is reused",
+    detail: "Templates start the next certificate of the same type from your version; memory and glossary carry your terms.",
   },
 ]
 
-function BuiltForCertified() {
+function WhyBuy() {
   return (
     <section
+      id="why"
       style={{
         padding: "80px 20px",
         background: CREAM_DARK,
-        borderTop: `1px solid ${BORDER}`,
         borderBottom: `1px solid ${BORDER}`,
       }}
     >
       <div className="max-w-[1100px] mx-auto">
         <SectionHeader
-          eyebrow="WHY TRANSLATORS SWITCH"
-          title="Built for certified translation, not just text"
-          subtitle="A general translation tool gives you words. Certified work needs more than that."
+          eyebrow="WHY TRANSLATORS BUY"
+          title="Less retyping, fewer rejected documents, paid on time"
+          subtitle="Certified work has the same slow parts on every job. These are the ones it takes off your hands."
         />
-        <div
-          className="mt-12"
-          style={{
-            background: "#ffffff",
-            border: `1px solid ${BORDER}`,
-            borderRadius: 20,
-            overflow: "hidden",
-          }}
-        >
+        <ul className="grid md:grid-cols-2 gap-4 mt-12">
+          {OUTCOMES.map((o) => (
+            <li
+              key={o.problem}
+              style={{
+                background: "#ffffff",
+                border: `1px solid ${BORDER}`,
+                borderRadius: 18,
+                padding: "20px 22px",
+              }}
+            >
+              <div className="flex items-start gap-2" style={{ fontSize: 14, color: MUTED, marginBottom: 8 }}>
+                <span aria-hidden="true" style={{ color: ACCENT_RUST, fontWeight: 700, flexShrink: 0 }}>
+                  ✕
+                </span>
+                <span>
+                  <span className="sr-only">Problem: </span>
+                  {o.problem}
+                </span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span style={{ color: TEAL, flexShrink: 0, marginTop: 4 }}>
+                  <Check />
+                </span>
+                <div>
+                  <h3 style={{ fontSize: 17, fontWeight: 700, color: TEXT, lineHeight: 1.3 }}>
+                    <span className="sr-only">Outcome: </span>
+                    {o.outcome}
+                  </h3>
+                  <p style={{ fontSize: 14, lineHeight: 1.55, color: MUTED, marginTop: 4 }}>{o.detail}</p>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  )
+}
+
+type Demo = {
+  id: string
+  step: string
+  title: string
+  line: string
+  note: string
+  src: string
+  poster: string
+  label: string
+}
+
+const DEMOS: Demo[] = [
+  {
+    id: "upload",
+    step: "Upload",
+    title: "Drop in the client's scan",
+    line: "It reads each page, translates the text and rebuilds the layout, with the stage shown as it goes.",
+    note: "Sample data; processing sped up",
+    src: "/landing/demo-upload.webm",
+    poster: "/landing/demo-upload.png",
+    label: "Demo: a PDF is dropped on the New project page; the progress shows Reading page 2 of 3, Translating the text and Rebuilding the layout, then the editor opens",
+  },
+  {
+    id: "editor",
+    step: "Review",
+    title: "Click a line, see its source",
+    line: "Click any translated line and the same line lights up on the original.",
+    note: "Recorded in the live app",
+    src: "/landing/demo-editor.webm",
+    poster: "/landing/demo-editor.png",
+    label: "Demo: clicking translated lines in the editor highlights each one on the original certificate",
+  },
+  {
+    id: "checks",
+    step: "Check",
+    title: "Checked before you sign",
+    line: "An illegible digit, a reformatted number and a faded stamp are listed, each highlighted on the original.",
+    note: "Recorded in the live app",
+    src: "/landing/demo-checks.webm",
+    poster: "/landing/demo-checks.png",
+    label: "Demo: the Ready to certify panel opens with one item to check and two notes; picking each one highlights it on the original",
+  },
+  {
+    id: "certify",
+    step: "Certify",
+    title: "Your certification page, in the document",
+    line: "Open the certification page fields and change the date or languages in place.",
+    note: "Recorded in the live app",
+    src: "/landing/demo-certification.webm",
+    poster: "/landing/demo-certification.png",
+    label: "Demo: the Certification panel opens over the certification page and the date is changed",
+  },
+  {
+    id: "paid",
+    step: "Get paid",
+    title: "Paid before they download",
+    line: "The client sees a watermarked, partly blurred preview and a Pay button for the amount you set.",
+    note: "Sample data",
+    src: "/landing/demo-protected-link.webm",
+    poster: "/landing/demo-protected-link.png",
+    label: "Demo: a client's protected link page with a Pay €45 button and a watermarked, blurred preview of the translation",
+  },
+]
+
+function SeeItWork() {
+  const [active, setActive] = useState(0)
+  const demo = DEMOS[active]
+  const onKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0
+    if (!step) return
+    e.preventDefault()
+    const next = (active + step + DEMOS.length) % DEMOS.length
+    setActive(next)
+    document.getElementById(`demo-tab-${DEMOS[next].id}`)?.focus()
+  }
+  return (
+    <section id="demo" style={{ padding: "80px 20px" }}>
+      <div className="max-w-[1200px] mx-auto">
+        <SectionHeader
+          eyebrow="SEE IT WORK"
+          title="From scan to paid delivery, in five short clips"
+          subtitle="Recorded in OnlineDocTranslator on a sample residence certificate from a fictional town."
+        />
+        <div className="grid lg:grid-cols-[300px_minmax(0,1fr)] gap-6 lg:gap-8 mt-12 items-start">
           <div
-            className="hidden md:grid grid-cols-2"
-            style={{
-              background: CREAM,
-              borderBottom: `1px solid ${BORDER}`,
-              fontSize: 11,
-              letterSpacing: "0.14em",
-              fontWeight: 600,
-              color: SUBTLE,
-            }}
+            role="tablist"
+            aria-label="Product demos"
+            aria-orientation="vertical"
+            onKeyDown={onKey}
+            className="flex flex-wrap lg:flex-col gap-2"
           >
-            <div style={{ padding: "14px 24px" }}>WHAT CERTIFIED WORK NEEDS</div>
-            <div style={{ padding: "14px 24px", color: TEAL }}>HOW ONLINEDOCTRANSLATOR HANDLES IT</div>
-          </div>
-          <ul>
-            {NEEDS.map((n, i) => (
-              <li
-                key={n.need}
-                className="grid md:grid-cols-2"
-                style={{ borderTop: i === 0 ? "none" : `1px solid ${CREAM_DARK}` }}
-              >
-                <div className="px-6 pt-4 pb-1 md:pb-4" style={{ fontSize: 15, fontWeight: 600, color: TEXT }}>
-                  {n.need}
-                </div>
-                <div className="flex items-start gap-2.5 px-6 pt-1 pb-4 md:pt-4" style={{ fontSize: 14, lineHeight: 1.55, color: MUTED }}>
-                  <span style={{ color: TEAL, flexShrink: 0, marginTop: 3 }}>
-                    <Check />
+            {DEMOS.map((d, i) => {
+              const selected = i === active
+              return (
+                <button
+                  key={d.id}
+                  id={`demo-tab-${d.id}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  aria-controls="demo-panel"
+                  tabIndex={selected ? 0 : -1}
+                  onClick={() => setActive(i)}
+                  className="text-left flex items-center gap-3"
+                  style={{
+                    background: selected ? "#ffffff" : "transparent",
+                    border: `1px solid ${selected ? TEAL : BORDER}`,
+                    borderRadius: 14,
+                    padding: "10px 14px",
+                    cursor: "pointer",
+                    boxShadow: selected ? "0 8px 20px rgba(10,120,112,0.10)" : "none",
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 999,
+                      background: selected ? TEAL : CREAM_DARK,
+                      color: selected ? "#ffffff" : MUTED,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {i + 1}
                   </span>
-                  <span>{n.how}</span>
-                </div>
-              </li>
-            ))}
-          </ul>
+                  <span className="min-w-0">
+                    <span style={{ display: "block", fontSize: 14, fontWeight: 600, color: TEXT }}>{d.step}</span>
+                    <span className="hidden lg:block" style={{ fontSize: 12, color: MUTED, lineHeight: 1.4 }}>
+                      {d.title}
+                    </span>
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+          <div id="demo-panel" role="tabpanel" aria-labelledby={`demo-tab-${demo.id}`} className="min-w-0">
+            <DemoVideo
+              key={demo.id}
+              src={demo.src}
+              poster={demo.poster}
+              label={demo.label}
+              loop={false}
+              onEnded={() => setActive((i) => (i + 1) % DEMOS.length)}
+            />
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1" style={{ marginTop: 14 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: TEXT }}>{demo.title}</h3>
+              <span style={{ fontSize: 12, color: SUBTLE }}>{demo.note}</span>
+            </div>
+            <p style={{ fontSize: 15, lineHeight: 1.55, color: MUTED, marginTop: 4 }}>{demo.line}</p>
+          </div>
+        </div>
+        <DemoCTA />
+      </div>
+    </section>
+  )
+}
+
+function DemoCTA() {
+  const catalog = usePlans()
+  const trial = catalog ? `${pagesLabel(catalog.trial.credits)} free for ${catalog.trial.days} days, no card required.` : "Free trial, no card required."
+  return (
+    <div
+      className="mt-14 flex flex-wrap items-center justify-between gap-5"
+      style={{
+        background: TEAL,
+        color: "#ffffff",
+        borderRadius: 24,
+        padding: "clamp(22px, 4vw, 32px) clamp(22px, 4vw, 36px)",
+      }}
+    >
+      <div className="min-w-0">
+        <h3 style={{ fontSize: "clamp(20px, 3vw, 24px)", fontWeight: 700, letterSpacing: "-0.01em" }}>
+          Try it on one of your own documents
+        </h3>
+        <p style={{ fontSize: 15, color: "rgba(255,255,255,0.85)", marginTop: 4 }}>{trial}</p>
+      </div>
+      <div className="flex flex-wrap gap-3">
+        <Link
+          href="/register"
+          style={{ background: "#ffffff", color: TEAL_DARK, padding: "13px 24px", borderRadius: 999, fontWeight: 700, fontSize: 15 }}
+        >
+          Start free trial <span aria-hidden="true">→</span>
+        </Link>
+        <a
+          href="#pricing"
+          style={{ color: "#ffffff", padding: "13px 22px", borderRadius: 999, fontWeight: 600, fontSize: 15, border: "1px solid rgba(255,255,255,0.45)" }}
+        >
+          See pricing
+        </a>
+      </div>
+    </div>
+  )
+}
+
+function ValueStrip() {
+  const catalog = usePlans()
+  const plans = catalog?.plans ?? []
+  const byPerPage = [...plans].sort((a, b) => a.price_per_page_eur - b.price_per_page_eur)
+  const cheapest = byPerPage[0]
+  const dearest = byPerPage[byPerPage.length - 1]
+  const items: { n: string; l: string; d: string }[] = [
+    {
+      n: "~12 min",
+      l: "for a 10-page PDF",
+      d: "From upload to a rebuilt draft, in a production run on 6 October 2026. Typical, not guaranteed: scans usually take 1–2 minutes a page.",
+    },
+    {
+      n: "1 page = 1 credit",
+      l: "with 10 AI edits included",
+      d: "Each translated page uses one credit and comes with 10 Ask AI edits on that document.",
+    },
+  ]
+  if (cheapest && dearest) {
+    items.push({
+      n: `${euro(cheapest.price_per_page_eur)} a page`,
+      l: `on ${cheapest.name}`,
+      d: `Subscription pages cost ${euro(cheapest.price_per_page_eur)} to ${euro(dearest.price_per_page_eur)} each, depending on the plan. Plus VAT where applicable.`,
+    })
+  }
+  if (catalog) {
+    items.push({
+      n: `${pagesLabel(catalog.trial.credits)} free`,
+      l: `for ${catalog.trial.days} days`,
+      d: "Try it on a real document before you pay. No card required.",
+    })
+  }
+  return (
+    <section
+      aria-labelledby="value-title"
+      style={{
+        padding: "56px 20px",
+        background: CREAM_DARK,
+        borderTop: `1px solid ${BORDER}`,
+        borderBottom: `1px solid ${BORDER}`,
+      }}
+    >
+      <div className="max-w-[1200px] mx-auto">
+        <h2 id="value-title" className="text-center" style={{ fontSize: H3_SIZE, fontWeight: 700, letterSpacing: "-0.02em", color: TEXT }}>
+          What a document takes, in time and money
+        </h2>
+        <dl className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-8">
+          {items.map((it) => (
+            <div
+              key={it.n}
+              className="min-w-0 flex flex-col"
+              style={{ background: "#ffffff", border: `1px solid ${BORDER}`, borderRadius: 18, padding: 20 }}
+            >
+              <dt style={{ fontSize: 13, fontWeight: 600, color: TEXT, order: 2 }}>{it.l}</dt>
+              <dd style={{ order: 1, fontSize: "clamp(24px, 3vw, 30px)", fontWeight: 700, color: TEAL, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
+                {it.n}
+              </dd>
+              <dd style={{ order: 3, fontSize: 13, lineHeight: 1.5, color: MUTED, marginTop: 6 }}>{it.d}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </section>
+  )
+}
+
+// Cheapest set of top-up packs that covers `need` pages; packs can repeat.
+function cheapestTopUp(need: number, packs: { credits: number; price_cents: number }[]) {
+  if (need <= 0 || !packs.length) return { cents: 0, counts: new Map<number, number>() }
+  const limit = need + Math.max(...packs.map((p) => p.credits))
+  const cost: number[] = new Array(limit + 1).fill(Infinity)
+  const pick: number[] = new Array(limit + 1).fill(-1)
+  cost[0] = 0
+  for (let c = 1; c <= limit; c++) {
+    packs.forEach((p, i) => {
+      if (p.credits <= c && cost[c - p.credits] + p.price_cents < cost[c]) {
+        cost[c] = cost[c - p.credits] + p.price_cents
+        pick[c] = i
+      }
+    })
+  }
+  let best = need
+  for (let c = need; c <= limit; c++) if (cost[c] < cost[best]) best = c
+  const counts = new Map<number, number>()
+  for (let c = best; c > 0 && pick[c] >= 0; c -= packs[pick[c]].credits) {
+    const credits = packs[pick[c]].credits
+    counts.set(credits, (counts.get(credits) ?? 0) + 1)
+  }
+  return { cents: cost[best], counts }
+}
+
+function PlanFinder({ catalog }: { catalog: PlanCatalog }) {
+  const [pages, setPages] = useState(30)
+  const [needCert, setNeedCert] = useState(true)
+  const packs = catalog.credit_packs.filter((p) => p.available)
+  const rows = catalog.plans
+    .filter((p) => p.available && (!needCert || p.features.certifications))
+    .map((plan) => {
+      const top = cheapestTopUp(pages - plan.credits, packs)
+      const total = plan.price_eur + top.cents / 100
+      const extra = [...top.counts.entries()].map(([credits, n]) => `${n} × ${credits}-page pack`).join(" + ")
+      return { plan, total, extra }
+    })
+  const best = rows.reduce<(typeof rows)[number] | null>((b, r) => (!b || r.total < b.total ? r : b), null)
+  const money = (n: number) => `€${n.toFixed(2)}`
+  return (
+    <div
+      className="mt-12"
+      style={{ background: "#ffffff", border: `1px solid ${BORDER}`, borderRadius: 22, padding: "clamp(20px, 4vw, 30px)" }}
+    >
+      <h3 style={{ fontSize: 20, fontWeight: 700, color: TEXT }}>Which plan fits your month?</h3>
+      <p style={{ fontSize: 14, color: MUTED, marginTop: 4 }}>
+        Move the slider to your usual number of pages. Pages beyond a plan&apos;s allowance are priced with extra page packs.
+      </p>
+      <div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-6 md:gap-10 mt-6 items-start">
+        <div className="min-w-0">
+          <label htmlFor="pages-per-month" style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>
+            Pages a month: <output htmlFor="pages-per-month" style={{ color: TEAL, fontSize: 18 }}>{pages}</output>
+          </label>
+          <input
+            id="pages-per-month"
+            type="range"
+            min={1}
+            max={600}
+            step={1}
+            value={pages}
+            onChange={(e) => setPages(Number(e.target.value))}
+            className="w-full mt-3"
+            style={{ accentColor: TEAL }}
+          />
+          <div className="flex justify-between" style={{ fontSize: 11, color: SUBTLE }}>
+            <span>1</span>
+            <span>600</span>
+          </div>
+          <label className="flex items-start gap-2 mt-4" style={{ fontSize: 13, color: TEXT, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={needCert}
+              onChange={(e) => setNeedCert(e.target.checked)}
+              style={{ accentColor: TEAL, marginTop: 3 }}
+            />
+            <span>I need the certification page, translation memory and glossary</span>
+          </label>
+          {best && (
+            <div style={{ marginTop: 18, background: TEAL_SOFT, borderRadius: 16, padding: "14px 16px" }} aria-live="polite">
+              <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", color: TEAL_DARK }}>BEST FIT</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: TEXT, marginTop: 2 }}>
+                {best.plan.name}: {money(best.total)} a month
+              </div>
+              <div style={{ fontSize: 14, color: TEAL_DARK, marginTop: 2 }}>
+                {money(best.total / pages)} a page at {pages} pages
+                {best.extra ? `, with ${best.extra}` : ""}
+              </div>
+            </div>
+          )}
+        </div>
+        <table className="w-full" style={{ fontSize: 14, borderCollapse: "collapse" }}>
+          <caption className="sr-only">Monthly cost of each plan at {pages} pages</caption>
+          <thead>
+            <tr style={{ fontSize: 11, letterSpacing: "0.1em", color: SUBTLE, textAlign: "left" }}>
+              <th scope="col" style={{ padding: "6px 0", fontWeight: 600 }}>PLAN</th>
+              <th scope="col" style={{ padding: "6px 0", fontWeight: 600, textAlign: "right" }}>A MONTH</th>
+              <th scope="col" style={{ padding: "6px 0", fontWeight: 600, textAlign: "right" }}>A PAGE</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const isBest = r === best
+              return (
+                <tr key={r.plan.code} style={{ borderTop: `1px solid ${CREAM_DARK}`, color: isBest ? TEAL_DARK : TEXT, fontWeight: isBest ? 700 : 400 }}>
+                  <th scope="row" style={{ padding: "10px 0", textAlign: "left", fontWeight: isBest ? 700 : 500 }}>
+                    {r.plan.name}
+                    <span style={{ display: "block", fontSize: 12, fontWeight: 400, color: MUTED }}>
+                      {r.plan.credits} pages{r.extra ? ` + ${r.extra}` : ""}
+                    </span>
+                  </th>
+                  <td style={{ padding: "10px 0", textAlign: "right" }}>{money(r.total)}</td>
+                  <td style={{ padding: "10px 0", textAlign: "right" }}>{money(r.total / pages)}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ fontSize: 12, color: SUBTLE, marginTop: 14 }}>
+        Prices from the current plan list, before VAT. Extra page packs are sold to subscribers and don&apos;t expire, so
+        unused pack pages carry over.
+      </p>
+    </div>
+  )
+}
+
+function RiskReversal() {
+  const catalog = usePlans()
+  const trialTitle = catalog ? `${pagesLabel(catalog.trial.credits)} free, no card` : "Free trial, no card"
+  const trialBody = catalog
+    ? `Sign up and translate ${pagesLabel(catalog.trial.credits)} within ${catalog.trial.days} days with the full editor. We don't ask for card details.`
+    : "Sign up and translate a few pages with the full editor. We don't ask for card details."
+  const points: { icon: React.ReactNode; title: string; body: React.ReactNode }[] = [
+    { icon: <IconCard />, title: trialTitle, body: trialBody },
+    {
+      icon: <IconBolt />,
+      title: "Cancel anytime",
+      body: "Change plan, download invoices or cancel from the billing portal, linked from Billing in your account.",
+    },
+    {
+      icon: <IconLock />,
+      title: "Your documents stay private",
+      body: (
+        <>
+          Stored in the EU, encrypted at rest and not used to train AI models.{" "}
+          <a href="#security" style={{ color: TEAL, fontWeight: 600 }}>
+            How documents are handled
+          </a>
+        </>
+      ),
+    },
+  ]
+  return (
+    <section aria-labelledby="risk-title" style={{ padding: "72px 20px 24px" }}>
+      <div className="max-w-[1100px] mx-auto">
+        <h2 id="risk-title" className="text-center" style={{ fontSize: H2_SIZE, fontWeight: 700, letterSpacing: "-0.02em", color: TEXT, lineHeight: 1.15 }}>
+          Try it before you pay anything
+        </h2>
+        <ul className="grid md:grid-cols-3 gap-5 mt-10">
+          {points.map((p) => (
+            <li key={p.title} style={{ background: "#ffffff", border: `1px solid ${BORDER}`, borderRadius: 20, padding: 24 }}>
+              <IconTile>{p.icon}</IconTile>
+              <h3 style={{ fontSize: 17, fontWeight: 700, color: TEXT, marginTop: 14 }}>{p.title}</h3>
+              <p style={{ fontSize: 14, lineHeight: 1.55, color: MUTED, marginTop: 6 }}>{p.body}</p>
+            </li>
+          ))}
+        </ul>
+        <div className="flex flex-wrap items-center justify-center gap-3 mt-10">
+          <Link
+            href="/register"
+            style={{ background: TEAL, color: "#ffffff", padding: "14px 28px", borderRadius: 999, fontWeight: 700, fontSize: 15 }}
+          >
+            Start free trial <span aria-hidden="true">→</span>
+          </Link>
+          <a
+            href="#demo"
+            style={{ background: "#ffffff", color: TEXT, padding: "14px 26px", borderRadius: 999, fontWeight: 600, fontSize: 15, border: `1px solid ${BORDER}` }}
+          >
+            Watch the demo
+          </a>
         </div>
       </div>
     </section>
@@ -1289,7 +1622,8 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
         ))}
       </div>
 
-      {}
+      <PlanFinder catalog={catalog} />
+
       <div className="mt-12">
         <div
           className="text-center"
@@ -1556,8 +1890,8 @@ function FAQ() {
     : "Each page is one credit. Subscriptions include a monthly allowance that resets each billing period, and subscribers can add credit packs that don't expire. The plans are listed above."
   const items = [
     {
-      q: "Is the output ready to certify?",
-      a: "It's a draft for you to review, not a certified translation. You check it, correct it and sign your statement; OnlineDocTranslator never certifies anything itself. The ready-to-certify check lists what to look at first. On Pro and above, your certification page is added to the export. Acceptance still depends on your credentials and the receiving authority's rules.",
+      q: "Is the AI translation good enough to certify?",
+      a: "It's a strong first draft, not a finished certified translation. You review it next to the original, correct it and sign it: you stay the certifying translator, and OnlineDocTranslator never certifies anything itself. The ready-to-certify check helps you catch what's easy to miss, such as a number that differs from the original, an unreadable stamp or text left untranslated. On Pro and above, your certification page goes into the export. Whether a translation is accepted still depends on your credentials and the receiving authority's rules.",
     },
     {
       q: "How does the free trial work?",
@@ -1789,6 +2123,7 @@ function Footer() {
         <FooterCol
           title="Product"
           links={[
+            ["Demo", "#demo"],
             ["Features", "#features"],
             ["How it works", "#how-it-works"],
             ["Get paid", "#get-paid"],
