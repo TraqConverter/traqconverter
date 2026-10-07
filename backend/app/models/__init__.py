@@ -17,3 +17,4 @@ from app.models.saved_instruction import SavedInstruction
 from app.models.delivery_link import DeliveryLink
 from app.models.password_reset import PasswordResetToken
 from app.models.notification import Notification
+from app.models.media_asset import MediaAsset

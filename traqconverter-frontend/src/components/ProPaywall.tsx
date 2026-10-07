@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation"
 import { euro, findPlan, usePlans } from "@/lib/plans"
 
 type Props = {
-  feature: "Translation Memory" | "Glossary" | "Certifications" | "Templates"
+  feature: "Translation Memory" | "Glossary" | "Certifications" | "Templates" | "Media"
   description: string
   plan?: "Basic" | "Pro"
 }
@@ -21,6 +21,7 @@ const PLAN_COPY = {
   Basic: {
     bullets: [
       "Templates from your delivered documents",
+      "A media library for your stamps and logos, one per language",
       "Download finished translations (DOCX & PDF)",
       "Team collaboration",
     ],

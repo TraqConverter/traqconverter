@@ -11,6 +11,8 @@ from app.services.docx_blocks import R_NS, WP_NS, DocxEditError, _Doc, w
 
 # Custom document property: the editor document carries its page stamp itself, so export adds none.
 MARKER = "_page_stamp_v1"
+# Which media library picture the stamp is, so the editor can show it as picked.
+ASSET_PROPERTY = "_page_stamp_asset"
 STAMP_NAME = "page_stamp"
 DEFAULT_WIDTH_CM = 3.0
 MIN_WIDTH_CM, MAX_WIDTH_CM = 2.5, 6.0
@@ -75,25 +77,51 @@ def is_marked(data: bytes) -> bool:
         return False
 
 
-def _mark(doc: _Doc) -> None:
-    if _is_marked(doc):
-        return
+def _properties(doc: _Doc, create: bool):
     raw = doc.files.get(_CUSTOM)
     if raw:
-        root = etree.fromstring(raw, blocks._PARSER)
-    else:
-        root = etree.Element(f"{{{_CUSTOM_NS}}}Properties", nsmap={None: _CUSTOM_NS, "vt": _VT_NS})
-        if "_rels/.rels" not in doc.files:
-            raise DocxEditError("Not a Word document")
-        rels = etree.fromstring(doc.files["_rels/.rels"], blocks._PARSER)
-        if not any(r.get("Type") == _CUSTOM_REL for r in rels):
-            _add_rel(rels, _CUSTOM_REL, _CUSTOM)
-            doc.files["_rels/.rels"] = _xml(rels)
-        _add_override(doc, _CUSTOM, _CUSTOM_TYPE)
-    pids = [int(p.get("pid") or 1) for p in root.findall(f"{{{_CUSTOM_NS}}}property")]
-    prop = etree.SubElement(root, f"{{{_CUSTOM_NS}}}property", fmtid=_FMTID, pid=str(max(pids, default=1) + 1), name=MARKER)
-    etree.SubElement(prop, f"{{{_VT_NS}}}lpwstr").text = "1"
+        return etree.fromstring(raw, blocks._PARSER)
+    if not create:
+        return None
+    root = etree.Element(f"{{{_CUSTOM_NS}}}Properties", nsmap={None: _CUSTOM_NS, "vt": _VT_NS})
+    if "_rels/.rels" not in doc.files:
+        raise DocxEditError("Not a Word document")
+    rels = etree.fromstring(doc.files["_rels/.rels"], blocks._PARSER)
+    if not any(r.get("Type") == _CUSTOM_REL for r in rels):
+        _add_rel(rels, _CUSTOM_REL, _CUSTOM)
+        doc.files["_rels/.rels"] = _xml(rels)
+    _add_override(doc, _CUSTOM, _CUSTOM_TYPE)
+    return root
+
+
+def _set_property(doc: _Doc, name: str, value: str | None) -> None:
+    root = _properties(doc, create=value is not None)
+    if root is None:
+        return
+    props = root.findall(f"{{{_CUSTOM_NS}}}property")
+    for prop in props:
+        if prop.get("name") == name:
+            root.remove(prop)
+    if value is not None:
+        pids = [int(p.get("pid") or 1) for p in root.findall(f"{{{_CUSTOM_NS}}}property")]
+        prop = etree.SubElement(root, f"{{{_CUSTOM_NS}}}property", fmtid=_FMTID, pid=str(max(pids, default=1) + 1), name=name)
+        etree.SubElement(prop, f"{{{_VT_NS}}}lpwstr").text = value
     doc.files[_CUSTOM] = _xml(root)
+
+
+def _get_property(doc: _Doc, name: str) -> str | None:
+    root = _properties(doc, create=False)
+    if root is None:
+        return None
+    for prop in root.findall(f"{{{_CUSTOM_NS}}}property"):
+        if prop.get("name") == name:
+            return "".join(prop.itertext()) or None
+    return None
+
+
+def _mark(doc: _Doc) -> None:
+    if not _is_marked(doc):
+        _set_property(doc, MARKER, "1")
 
 
 # --- footers ------------------------------------------------------------------
@@ -204,23 +232,31 @@ def _finish(doc: _Doc) -> bytes:
 # --- public -------------------------------------------------------------------
 
 
-def install(data: bytes, image: images.PreparedImage | None, align: str = "right", width_cm: float = DEFAULT_WIDTH_CM) -> bytes:
-    """Mark a new editor document and put the team stamp (if any) in its footers."""
+def install(
+    data: bytes,
+    image: images.PreparedImage | None,
+    align: str = "right",
+    width_cm: float = DEFAULT_WIDTH_CM,
+    asset_id: str | None = None,
+) -> bytes:
+    """Mark a new editor document and put the stamp (if any) in its footers."""
     doc = _Doc.load(data)
     _mark(doc)
     if image is not None and next(_stamp_frames(doc), None) is None:
         _add_stamps(doc, image, align if align in images.ALIGNS else "right", width_cm)
+        _set_property(doc, ASSET_PROPERTY, asset_id)
     return _finish(doc)
 
 
 def state(data: bytes) -> dict:
     doc = _Doc.load(data)
-    out = {"managed": _is_marked(doc), "enabled": False, "align": "right", "width_cm": DEFAULT_WIDTH_CM}
+    out = {"managed": _is_marked(doc), "enabled": False, "align": "right", "width_cm": DEFAULT_WIDTH_CM, "asset_id": None}
     frame = next((f for _, f in _stamp_frames(doc)), None)
     if frame is not None:
         cx = int(frame.find(_wp("extent")).get("cx"))
         out.update(
             enabled=True,
+            asset_id=_get_property(doc, ASSET_PROPERTY),
             align=images._align_of(images._paragraph_of(frame)),
             width_cm=round(cx / images.EMU_PER_CM, 1),
         )
@@ -234,7 +270,10 @@ def update(
     align: str | None = None,
     width_cm: float | None = None,
     image: images.PreparedImage | None = None,
+    asset_id: str | None = None,
+    replace_image: bool = False,
 ) -> bytes:
+    """`replace_image` swaps the picture of a stamp that's on, keeping its place and size."""
     if align is not None and align not in images.ALIGNS:
         raise DocxEditError("align must be left, center or right")
     doc = _Doc.load(data)
@@ -245,13 +284,20 @@ def update(
         if not current["enabled"]:
             return data
         _remove_stamps(doc)
+        _set_property(doc, ASSET_PROPERTY, None)
         return _finish(doc)
     if not current["enabled"]:
         if not enabled:
             raise DocxEditError("Turn the page stamp on first")
         if image is None:
-            raise DocxEditError("No stamp saved in Settings")
+            raise DocxEditError("There's no stamp in Media yet")
         _add_stamps(doc, image, align or current["align"], width_cm or current["width_cm"])
+        _set_property(doc, ASSET_PROPERTY, asset_id)
+        return _finish(doc)
+    if replace_image and image is not None:
+        _remove_stamps(doc)
+        _add_stamps(doc, image, align or current["align"], width_cm or current["width_cm"])
+        _set_property(doc, ASSET_PROPERTY, asset_id)
         return _finish(doc)
     for _, frame in _stamp_frames(doc):
         if width_cm is not None:
