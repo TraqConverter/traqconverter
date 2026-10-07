@@ -23,6 +23,7 @@ from app.services import (
     docx_page_stamp,
     document_editor,
     learning,
+    media_library,
     tm_capture,
 )
 
@@ -60,21 +61,14 @@ class StampUnavailable(Exception):
     pass
 
 
-def team_stamp(db: Session, project: TranslationProject) -> tuple[Optional[docx_images.PreparedImage], str]:
-    """The team's saved stamp ready for the page and its default alignment; None when the team has none."""
-    from app.models.team import Team
-
-    team = db.query(Team).filter(Team.id == project.team_id).first()
-    align = (getattr(team, "stamp_alignment", None) or "right").lower()
-    align = align if align in docx_images.ALIGNS else "right"
-    if not team or not team.stamp_s3_key:
-        return None, align
+def team_stamp(db: Session, project: TranslationProject) -> tuple[Optional[docx_images.PreparedImage], Optional[str]]:
+    """The project's automatic stamp from Media (target language first) and its id; None when the team has none."""
     try:
-        raw = document_editor._download(team.stamp_s3_key)
-        return docx_images.prepare_image(raw, remove_background=True), align
-    except Exception as e:
-        logger.warning("Couldn't load the team stamp for the page stamp (project=%s): %s", project.id, e)
+        image, asset = media_library.auto_image(db, project, "stamp")
+    except media_library.AssetUnavailable as e:
+        logger.warning("Couldn't load the stamp for the page stamp (project=%s)", project.id)
         raise StampUnavailable() from e
+    return image, str(asset.id) if asset else None
 
 
 def _initial_builder(db: Session, project: TranslationProject, user: User):
@@ -94,12 +88,12 @@ def _initial_builder(db: Session, project: TranslationProject, user: User):
         if not segments and not project.authored_docx_s3_key:
             raise HTTPException(status_code=404, detail="The translation isn't ready yet")
         project._export_user_email = user.email or ""
-        project._export_user_logo_key = getattr(user, "logo_s3_key", None)
-        stamp = align = None
+        project._export_user_logo_key = media_library.logo_key(db, project)
+        stamp = asset_id = None
         page_stamp = not is_dtp(project)
         if page_stamp:
             try:
-                stamp, align = team_stamp(db, project)
+                stamp, asset_id = team_stamp(db, project)
             except StampUnavailable:
                 # Unmarked, so the export still adds the stamp the old way.
                 page_stamp = False
@@ -109,7 +103,7 @@ def _initial_builder(db: Session, project: TranslationProject, user: User):
         if not page_stamp:
             return data
         try:
-            return docx_page_stamp.install(data, stamp, align or "right")
+            return docx_page_stamp.install(data, stamp, "right", asset_id=asset_id)
         except Exception:
             logger.exception("Couldn't add the page stamp (project=%s)", project.id)
             return data

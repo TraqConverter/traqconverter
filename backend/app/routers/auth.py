@@ -48,7 +48,6 @@ def me(current_user: User = Depends(get_current_user)):
         "role": current_user.role,
         "subscription_plan": current_user.subscription_plan,
         "subscription_status": current_user.subscription_status,
-        "logo_s3_key": getattr(current_user, "logo_s3_key", None),
     }
 
 
@@ -266,6 +265,7 @@ def _stored_files(db: Session, team_id, user) -> list:
         "SELECT s3_key FROM document_templates WHERE team_id = :tid",
         "SELECT file_path FROM certifications WHERE team_id = :tid",
         "SELECT stamp_s3_key FROM teams WHERE id = :tid",
+        "SELECT s3_key FROM media_assets WHERE team_id = :tid",
         "SELECT original_key, translation_key FROM template_uploads WHERE team_id = :tid",
     ]
     for sql in queries:

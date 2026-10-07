@@ -24,7 +24,9 @@ import {
   widthCm,
   type DocImage,
 } from "./docBlocks"
+import MediaPicker, { type Placement } from "./MediaPicker"
 import ReviewChecklist, { checksLabel, checksTone } from "./ReviewChecklist"
+import type { MediaAsset } from "@/lib/media"
 import type { CheckItem, Checks } from "./useReview"
 
 type ChatTurn = { role: "user" | "assistant"; content: string }
@@ -34,9 +36,18 @@ type SaveState = "idle" | "pending" | "saving" | "saved" | "error"
 type Busy = null | "chat" | "undo" | "image" | "cert"
 type Align = "left" | "center" | "right"
 type Selected = { id: string; floating: boolean; top: number; left: number; below: boolean }
-type Assets = { logo: { available: boolean; url: string | null }; stamp: { available: boolean; url: string | null } }
+type StampChoice = { id: string; name: string; language: string | null; auto_use: boolean; url: string | null }
 // `managed` is false for documents from before the editable stamp: their stamp is still added at export.
-type PageStamp = { version: number; available: boolean; managed: boolean; enabled: boolean; align: Align; width_cm: number }
+type PageStamp = {
+  version: number
+  available: boolean
+  managed: boolean
+  enabled: boolean
+  align: Align
+  width_cm: number
+  asset_id: string | null
+  stamps: StampChoice[]
+}
 type PagePlacement = { block_id: string; x_emu: number; y_emu: number }
 type CertFields = {
   translator: string
@@ -232,7 +243,7 @@ export default function DocumentEditor({
 
   const [selected, setSelected] = useState<Selected | null>(null)
   const [imageMenuOpen, setImageMenuOpen] = useState(false)
-  const [assets, setAssets] = useState<Assets | null>(null)
+  const [mediaOpen, setMediaOpen] = useState(false)
   const [pageStamp, setPageStamp] = useState<PageStamp | null>(null)
   const [stampWidthMm, setStampWidthMm] = useState(30)
   const [certOpen, setCertOpen] = useState(false)
@@ -1128,29 +1139,6 @@ export default function DocumentEditor({
     )
   }
 
-  const insertAsset = async (asset: "logo" | "stamp") => {
-    setImageMenuOpen(false)
-    const block = insertionBlock()
-    if (!block) {
-      setNotice("Click in the document where it should go.")
-      return
-    }
-    let newId = ""
-    await runChange(
-      "image",
-      async (version) => {
-        const res = await api.post<{ version: number; image_id: string }>(
-          `/projects/${projectId}/document/assets/${asset}`,
-          { version, block_id: block, position: "after", align: asset === "stamp" ? "right" : "center" },
-        )
-        newId = res.data.image_id
-        return res.data
-      },
-      (idoc) => selectAfterRender(newId)(idoc),
-      `Couldn't insert your ${asset}.`,
-    )
-  }
-
   const imageAction = (id: string, path: string, body: Record<string, unknown>) =>
     runChange(
       "image",
@@ -1228,20 +1216,12 @@ export default function DocumentEditor({
     void duplicateAt(image.id, own)
   }
 
-  // Pages as the editor renders them: docx-preview makes one section.docx per page break or section.
   const copyToEveryPage = async () => {
     const idoc = docRef.current
     const id = selectedIdRef.current
     const image = id ? imagesRef.current.find((i) => i.id === id) : null
     if (!idoc || !image) return
-    const pages = Array.from(idoc.querySelectorAll<HTMLElement>("section.docx"))
-    const certStart = idoc.getElementById(CERT_START_ID)?.closest("section.docx")
-    const certIndex = certStart ? pages.indexOf(certStart as HTMLElement) : -1
-    const translated = certIndex >= 0 ? pages.slice(0, certIndex) : pages
-    const firstParagraph = (page: HTMLElement) => {
-      const all = Array.from(page.querySelectorAll<HTMLElement>(`p[${BLOCK_ATTR}]`)).filter((p) => !p.closest("header, footer"))
-      return all.find((p) => !p.closest("td")) ?? all[0] ?? null
-    }
+    const translated = translatedPages(idoc)
     const source = image.img.closest("section.docx") as HTMLElement | null
     const anchor = source ? firstParagraph(source) : null
     if (!source || !anchor) return
@@ -1280,6 +1260,58 @@ export default function DocumentEditor({
     if (ok) setNotice(added === 1 ? "Added to 1 more page. Undo removes it." : `Added to ${added} more pages. Undo removes them all.`)
   }
 
+  const placeMedia = async (asset: MediaAsset, placement: Placement): Promise<boolean> => {
+    const idoc = docRef.current
+    if (!idoc) return false
+    const body: Record<string, unknown> = { ...placement }
+    if (placement.scope === "all") {
+      const blocks = translatedPages(idoc)
+        .map((page) => firstParagraph(page)?.getAttribute(BLOCK_ATTR))
+        .filter((b): b is string => !!b)
+      if (!blocks.length) {
+        setNotice("There's no page of the translation to put it on.")
+        return false
+      }
+      body.block_ids = blocks
+    } else {
+      const block = insertionBlock()
+      const page = block ? (idoc.querySelector(blockSelector(block))?.closest("section.docx") as HTMLElement | null) : null
+      const target = placement.vertical === "cursor" ? block : page ? firstParagraph(page)?.getAttribute(BLOCK_ATTR) : null
+      if (!target) {
+        setNotice("Click in the page where it should go.")
+        return false
+      }
+      if (placement.vertical !== "cursor" && page?.contains(idoc.getElementById(CERT_START_ID))) {
+        setNotice("That's the certification page, which has its own logo and stamp. Click in a page of the translation.")
+        return false
+      }
+      body.block_id = target
+    }
+    let ids: string[] = []
+    const ok = await runChange(
+      "image",
+      async (version) => {
+        const res = await api.post<{ version: number; image_ids: string[] }>(
+          `/projects/${projectId}/document/media/${asset.id}/place`,
+          { version, ...body },
+        )
+        ids = res.data.image_ids
+        return res.data
+      },
+      (idoc) => ids[0] && selectAfterRender(ids[0])(idoc),
+      `Couldn't place ${asset.name}.`,
+    )
+    if (ok && ids.length > 1) setNotice(`Placed on ${ids.length} pages. Undo removes them all.`)
+    return ok
+  }
+
+  const closeMedia = useCallback(() => setMediaOpen(false), [])
+
+  const openMediaPicker = () => {
+    setImageMenuOpen(false)
+    setMediaOpen(true)
+  }
+
   const loadPageStamp = async () => {
     try {
       const res = await api.get<PageStamp>(`/projects/${projectId}/document/page-stamp`)
@@ -1290,7 +1322,7 @@ export default function DocumentEditor({
     }
   }
 
-  const updatePageStamp = async (change: { enabled?: boolean; align?: Align; width_cm?: number }) => {
+  const updatePageStamp = async (change: { enabled?: boolean; align?: Align; width_cm?: number; asset_id?: string }) => {
     if (!pageStamp) return
     const saved: { state?: PageStamp } = {}
     await runChange(
@@ -1604,13 +1636,6 @@ export default function DocumentEditor({
     const next = !imageMenuOpen
     setImageMenuOpen(next)
     if (next) void loadPageStamp()
-    if (next && !assets) {
-      try {
-        setAssets((await api.get<Assets>(`/projects/${projectId}/document/assets`)).data)
-      } catch {
-        setAssets({ logo: { available: false, url: null }, stamp: { available: false, url: null } })
-      }
-    }
   }
 
   const pickFile = (mode: "image" | "stamp") => {
@@ -1759,12 +1784,7 @@ export default function DocumentEditor({
             >
               <MenuItem label="Upload image…" hint="PNG, JPG or WebP" onClick={() => pickFile("image")} />
               <MenuItem label="Upload stamp or signature…" hint="White paper becomes transparent" onClick={() => pickFile("stamp")} />
-              {assets?.stamp.available && (
-                <MenuItem label="Insert my stamp" thumb={assets.stamp.url} onClick={() => void insertAsset("stamp")} />
-              )}
-              {assets?.logo.available && (
-                <MenuItem label="Insert my logo" thumb={assets.logo.url} onClick={() => void insertAsset("logo")} />
-              )}
+              <MenuItem label="From media…" hint="Your stamps and logos, on this page or every page" icon="media" onClick={openMediaPicker} />
               <div className="px-3 pt-1.5 pb-1 text-[10px] font-normal tracking-normal" style={{ color: "#9a9178" }}>
                 Goes after the paragraph you clicked. Drag it anywhere afterwards, or drop and paste pictures straight onto the page.
               </div>
@@ -1776,10 +1796,13 @@ export default function DocumentEditor({
                   onToggle={(on) => void updatePageStamp({ enabled: on })}
                   onAlign={(align) => void updatePageStamp({ align })}
                   onWidth={changeStampWidth}
+                  onPick={(id) => void updatePageStamp({ asset_id: id, enabled: true })}
                 />
               )}
             </div>
           )}
+
+          {mediaOpen && <MediaPicker projectId={projectId} busy={busy !== null} onPlace={placeMedia} onClose={closeMedia} />}
 
           {certOpen && cert?.present && (
             <div
@@ -2190,7 +2213,32 @@ export default function DocumentEditor({
   )
 }
 
-function MenuItem({ label, hint, thumb, onClick }: { label: string; hint?: string; thumb?: string | null; onClick: () => void }) {
+// Pages as the editor renders them (docx-preview makes one section.docx per page break or section), up to the certification page.
+function translatedPages(idoc: Document): HTMLElement[] {
+  const pages = Array.from(idoc.querySelectorAll<HTMLElement>("section.docx"))
+  const certStart = idoc.getElementById(CERT_START_ID)?.closest("section.docx")
+  const certIndex = certStart ? pages.indexOf(certStart as HTMLElement) : -1
+  return certIndex >= 0 ? pages.slice(0, certIndex) : pages
+}
+
+function firstParagraph(page: HTMLElement): HTMLElement | null {
+  const all = Array.from(page.querySelectorAll<HTMLElement>(`p[${BLOCK_ATTR}]`)).filter((p) => !p.closest("header, footer"))
+  return all.find((p) => !p.closest("td")) ?? all[0] ?? null
+}
+
+function MenuItem({
+  label,
+  hint,
+  thumb,
+  icon = "upload",
+  onClick,
+}: {
+  label: string
+  hint?: string
+  thumb?: string | null
+  icon?: "upload" | "media"
+  onClick: () => void
+}) {
   return (
     <button
       type="button"
@@ -2201,11 +2249,19 @@ function MenuItem({ label, hint, thumb, onClick }: { label: string; hint?: strin
     >
       {thumb ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={thumb} alt="" className="w-6 h-6 object-contain rounded" style={{ background: "#faf5ee" }} />
+        <img src={thumb} alt="" className="w-6 h-6 shrink-0 object-contain rounded" style={{ background: "#faf5ee" }} />
       ) : (
-        <span className="w-6 h-6 rounded flex items-center justify-center" style={{ background: "#e3f1ee", color: "#0a5e58" }}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M12 16V4M6 10l6-6 6 6M4 20h16" />
+        <span className="w-6 h-6 shrink-0 rounded flex items-center justify-center" style={{ background: "#e3f1ee", color: "#0a5e58" }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            {icon === "media" ? (
+              <>
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <circle cx="9" cy="10" r="2" />
+                <path d="m21 16-5-5-9 9" />
+              </>
+            ) : (
+              <path d="M12 16V4M6 10l6-6 6 6M4 20h16" />
+            )}
           </svg>
         </span>
       )}
@@ -2224,6 +2280,7 @@ function PageStampControls({
   onToggle,
   onAlign,
   onWidth,
+  onPick,
 }: {
   stamp: PageStamp
   widthMm: number
@@ -2231,6 +2288,7 @@ function PageStampControls({
   onToggle: (on: boolean) => void
   onAlign: (align: Align) => void
   onWidth: (mm: number) => void
+  onPick: (assetId: string) => void
 }) {
   if (!stamp.managed) {
     return (
@@ -2252,6 +2310,28 @@ function PageStampControls({
           className="accent-[#0a7870]"
         />
       </label>
+      {stamp.stamps.length > 1 || (stamp.stamps.length === 1 && stamp.enabled && stamp.asset_id !== stamp.stamps[0].id) ? (
+        <label className="mt-2 flex items-center gap-2 text-[11px]" style={{ color: "#6b6558" }}>
+          <span className="shrink-0">Stamp image</span>
+          <select
+            value={stamp.enabled ? (stamp.asset_id ?? "") : ""}
+            disabled={disabled}
+            onChange={(e) => e.target.value && onPick(e.target.value)}
+            className="flex-1 min-w-0 text-[11px] rounded-md px-1.5 py-1 bg-white"
+            style={{ border: "1px solid #e7ddc5", color: "#1f2a2e" }}
+          >
+            {(!stamp.enabled || !stamp.asset_id || !stamp.stamps.some((s) => s.id === stamp.asset_id)) && (
+              <option value="">{stamp.enabled ? "Current picture" : "Choose a stamp"}</option>
+            )}
+            {stamp.stamps.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+                {s.language ? ` (${s.language.toUpperCase()})` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       {stamp.enabled && (
         <div className="mt-2 space-y-2">
           <div className="flex gap-1" role="group" aria-label="Page stamp position">

@@ -379,9 +379,9 @@ def owner_project(db, storage, make_user, make_project):
 
 def test_template_check_preview_and_default(client, db, storage, owner_project, make_user):
     owner, project = owner_project
-    storage["objects"]["uploads/stamp.png"] = _png((0, 0, 0), (120, 120)).getvalue()
-    owner["team"].stamp_s3_key = "uploads/stamp.png"
-    db.commit()
+    from tests.test_media_library import add_media
+
+    add_media(db, storage, owner, "stamp", None, color=(0, 0, 0))
     cert = _upload(client, owner, _template(images=True, extras=True))
     assert cert["is_template"] and not cert["is_default"]
 

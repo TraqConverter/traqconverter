@@ -44,6 +44,9 @@ const IconBook = (
 const IconTemplate = (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
 )
+const IconImage = (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg>
+)
 const IconShield = (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6Z"/><path d="m9 12 2 2 4-4"/></svg>
 )
@@ -78,6 +81,7 @@ const NAV_GROUPS: NavGroup[] = [
       { name: "Translation Memory", path: "/translation-memory", match: "/translation-memory", icon: IconMemory, feature: "terminology_memory" },
       { name: "Glossary", path: "/settings/glossary", match: "/settings/glossary", icon: IconBook, feature: "glossaries" },
       { name: "Templates", path: "/templates", match: "/templates", icon: IconTemplate, feature: "templates" },
+      { name: "Media", path: "/media", match: "/media", icon: IconImage, feature: "media" },
       { name: "Certifications", path: "/certifications", match: "/certifications", icon: IconShield, feature: "certifications" },
     ],
   },

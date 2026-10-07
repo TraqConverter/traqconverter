@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { api } from "@/lib/api"
 import { clearToken, setToken, getRemembered } from "@/lib/auth"
 import { resetWallet } from "@/lib/plan"
@@ -15,7 +16,6 @@ type Me = {
   role: string
   subscription_plan?: string
   subscription_status?: string
-  logo_s3_key?: string | null
 }
 
 function initialsFor(p: { full_name: string | null; email: string }) {
@@ -47,141 +47,6 @@ export default function AccountSettingsPage() {
   const [showDelete, setShowDelete] = useState(false)
   const [deletePwd, setDeletePwd] = useState("")
   const [deleteConfirm, setDeleteConfirm] = useState("")
-
-  const [logoFile, setLogoFile] = useState<File | null>(null)
-  const [logoPreview, setLogoPreview] = useState<string | null>(null)
-
-  type StampInfo = {
-    has_stamp: boolean
-    url: string | null
-    alignment: "left" | "center" | "right"
-    can_edit?: boolean
-  }
-  const [stamp, setStamp] = useState<StampInfo | null>(null)
-  const [stampFile, setStampFile] = useState<File | null>(null)
-  const [stampPreview, setStampPreview] = useState<string | null>(null)
-
-  useEffect(() => {
-    api
-      .get("/settings/stamp")
-      .then((res) => setStamp(res.data))
-      .catch(() => setStamp(null))
-  }, [])
-
-  const onStampPicked = (file: File | null) => {
-    setStampFile(file)
-    if (!file) {
-      setStampPreview(null)
-      return
-    }
-    const reader = new FileReader()
-    reader.onload = () => setStampPreview(reader.result as string)
-    reader.readAsDataURL(file)
-  }
-
-  const uploadStamp = async () => {
-    if (!stampFile) return
-    try {
-      setBusy("stamp")
-      setError(null)
-      const fd = new FormData()
-      fd.append("file", stampFile)
-      await api.post("/settings/upload-stamp", fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-      })
-      const res = await api.get("/settings/stamp")
-      setStamp(res.data)
-      setStampFile(null)
-      setStampPreview(null)
-      flashSuccess("Stamp uploaded. New translations get it on every page.")
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || "Couldn't upload that stamp.")
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const removeStamp = async () => {
-    try {
-      setBusy("stamp")
-      setError(null)
-      await api.delete("/settings/stamp")
-      const res = await api.get("/settings/stamp")
-      setStamp(res.data)
-      setStampPreview(null)
-      setStampFile(null)
-      flashSuccess("Stamp removed.")
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || "Couldn't remove the stamp.")
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const setStampAlignment = async (alignment: "left" | "center" | "right") => {
-    if (!stamp) return
-    try {
-      setBusy("stamp-align")
-      setError(null)
-      await api.patch("/settings/stamp-alignment", { alignment })
-      setStamp({ ...stamp, alignment })
-    } catch (err: any) {
-      setError(
-        err?.response?.data?.detail || "Couldn't update stamp alignment."
-      )
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const onLogoPicked = (file: File | null) => {
-    setLogoFile(file)
-    if (!file) {
-      setLogoPreview(null)
-      return
-    }
-    const reader = new FileReader()
-    reader.onload = () => setLogoPreview(reader.result as string)
-    reader.readAsDataURL(file)
-  }
-
-  const uploadLogo = async () => {
-    if (!logoFile) return
-    try {
-      setBusy("logo")
-      setError(null)
-      const fd = new FormData()
-      fd.append("file", logoFile)
-      const res = await api.post("/settings/upload-logo", fd, {
-        headers: { "Content-Type": "multipart/form-data" },
-      })
-      setMe((m) =>
-        m ? { ...m, logo_s3_key: res.data?.logo_s3_key || null } : m
-      )
-      setLogoFile(null)
-      flashSuccess("Logo uploaded — it'll appear on the next export.")
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || "Couldn't upload that logo.")
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const removeLogo = async () => {
-    try {
-      setBusy("logo")
-      setError(null)
-      await api.delete("/settings/logo")
-      setMe((m) => (m ? { ...m, logo_s3_key: null } : m))
-      setLogoPreview(null)
-      setLogoFile(null)
-      flashSuccess("Logo removed.")
-    } catch (err: any) {
-      setError(err?.response?.data?.detail || "Couldn't remove the logo.")
-    } finally {
-      setBusy(null)
-    }
-  }
 
   useEffect(() => {
     fetchMe()
@@ -451,290 +316,20 @@ export default function AccountSettingsPage() {
 
       <PaymentsSection />
 
-      {}
       <section
-        className="rounded-2xl p-6"
+        className="rounded-2xl px-6 py-4 flex flex-wrap items-center justify-between gap-3"
         style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
       >
-        <SectionHeader
-          eyebrow="BRANDING"
-          title="Company logo / header"
-          subtitle="Placed at the top of the certification page by default. In the editor you can move, resize or remove it like any picture. PNG or JPG, 2MB max."
-        />
-
-        <div className="flex flex-wrap items-start gap-6">
-          <div
-            className="flex items-center justify-center rounded-xl"
-            style={{
-              width: 160,
-              height: 96,
-              background: "#faf5ee",
-              border: "1px dashed #e7ddc5",
-              overflow: "hidden",
-            }}
-          >
-            {logoPreview ? (
-              <img
-                src={logoPreview}
-                alt="Selected logo preview"
-                style={{ maxWidth: "100%", maxHeight: "100%" }}
-              />
-            ) : me.logo_s3_key ? (
-              <div
-                className="text-xs text-center px-3"
-                style={{ color: "#6b6558" }}
-              >
-                Current logo set
-                <div className="text-[10px] mt-1" style={{ color: "#9a9178" }}>
-                  (preview shows on the next upload)
-                </div>
-              </div>
-            ) : (
-              <div
-                className="text-xs text-center px-3"
-                style={{ color: "#9a9178" }}
-              >
-                No logo yet
-              </div>
-            )}
-          </div>
-
-          <div className="flex-1 min-w-[260px]">
-            <div className="flex items-center gap-2 flex-wrap">
-              <label
-                className="px-4 py-2 rounded-full text-sm font-semibold cursor-pointer transition"
-                style={{
-                  background: "#ffffff",
-                  color: "#0a7870",
-                  border: "1px solid #cfe6e2",
-                }}
-              >
-                Choose file
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/jpg"
-                  className="hidden"
-                  onChange={(e) =>
-                    onLogoPicked(e.target.files?.[0] || null)
-                  }
-                />
-              </label>
-
-              <button
-                type="button"
-                onClick={uploadLogo}
-                disabled={!logoFile || busy === "logo"}
-                className="px-4 py-2 rounded-full text-sm font-semibold transition"
-                style={{
-                  background:
-                    !logoFile || busy === "logo" ? "#9bc9c5" : "#0a7870",
-                  color: "#fff",
-                  cursor:
-                    !logoFile || busy === "logo" ? "not-allowed" : "pointer",
-                }}
-              >
-                {busy === "logo" ? "Uploading…" : "Save logo"}
-              </button>
-
-              {me.logo_s3_key && (
-                <button
-                  type="button"
-                  onClick={removeLogo}
-                  disabled={busy === "logo"}
-                  className="px-3 py-2 rounded-full text-sm font-semibold transition"
-                  style={{
-                    background: "#ffffff",
-                    color: "#7a2f24",
-                    border: "1px solid #f2d4cf",
-                  }}
-                >
-                  Remove
-                </button>
-              )}
-
-              {logoFile && (
-                <span className="text-xs" style={{ color: "#8a8270" }}>
-                  Selected: {logoFile.name}
-                </span>
-              )}
-            </div>
-            <div
-              className="text-xs mt-3"
-              style={{ color: "#8a8270" }}
-            >
-              Recommended: 600×200 px transparent PNG. The logo is scaled to
-              50mm wide on the certification page.
-            </div>
-          </div>
+        <div className="text-sm" style={{ color: "#4a4638" }}>
+          Logos and stamps now live in Media, one per language if you need them.
         </div>
-      </section>
-
-      {}
-      <section
-        className="rounded-2xl p-6"
-        style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
-      >
-        <SectionHeader
-          eyebrow="BRANDING"
-          title="Company stamp"
-          subtitle="Added at the bottom of every page of new translations by default. In the editor you can move, resize or remove it before you export (Image → Page stamp)."
-        />
-
-        <div className="flex flex-wrap items-start gap-6">
-          <div
-            className="flex items-center justify-center rounded-xl"
-            style={{
-              width: 160,
-              height: 96,
-              background: "#faf5ee",
-              border: "1px dashed #e7ddc5",
-              overflow: "hidden",
-            }}
-          >
-            {stampPreview ? (
-              <img
-                src={stampPreview}
-                alt="Selected stamp preview"
-                style={{ maxWidth: "100%", maxHeight: "100%" }}
-              />
-            ) : stamp?.url ? (
-              <img
-                src={stamp.url}
-                alt="Current stamp"
-                style={{ maxWidth: "100%", maxHeight: "100%" }}
-              />
-            ) : (
-              <div
-                className="text-xs text-center px-3"
-                style={{ color: "#9a9178" }}
-              >
-                No stamp yet
-              </div>
-            )}
-          </div>
-
-          <div className="flex-1 min-w-[240px]">
-            {stamp && !stamp.can_edit ? (
-              <p className="text-sm" style={{ color: "#6b6558" }}>
-                The team stamp is set by your team owner or an admin.
-                {stamp.has_stamp ? ` It sits ${stamp.alignment === "center" ? "in the centre" : `on the ${stamp.alignment}`} at the bottom of each translated page.` : ""}
-              </p>
-            ) : (
-            <>
-            <div className="flex items-center gap-2 flex-wrap">
-              <label
-                className="px-4 py-2 rounded-full text-sm font-semibold cursor-pointer transition"
-                style={{
-                  background: "#ffffff",
-                  color: "#0a7870",
-                  border: "1px solid #cfe6e2",
-                }}
-              >
-                Choose stamp
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/jpg"
-                  className="hidden"
-                  onChange={(e) =>
-                    onStampPicked(e.target.files?.[0] || null)
-                  }
-                />
-              </label>
-
-              <button
-                type="button"
-                onClick={uploadStamp}
-                disabled={!stampFile || busy === "stamp"}
-                className="px-4 py-2 rounded-full text-sm font-semibold transition"
-                style={{
-                  background:
-                    !stampFile || busy === "stamp" ? "#9bc9c5" : "#0a7870",
-                  color: "#fff",
-                  cursor:
-                    !stampFile || busy === "stamp" ? "not-allowed" : "pointer",
-                }}
-              >
-                {busy === "stamp" ? "Uploading…" : "Save stamp"}
-              </button>
-
-              {stamp?.has_stamp && (
-                <button
-                  type="button"
-                  onClick={removeStamp}
-                  disabled={busy === "stamp"}
-                  className="px-3 py-2 rounded-full text-sm font-semibold transition"
-                  style={{
-                    background: "#ffffff",
-                    color: "#7a2f24",
-                    border: "1px solid #f2d4cf",
-                  }}
-                >
-                  Remove
-                </button>
-              )}
-
-              {stampFile && (
-                <span className="text-xs" style={{ color: "#8a8270" }}>
-                  Selected: {stampFile.name}
-                </span>
-              )}
-            </div>
-
-            {}
-            {stamp?.has_stamp && (
-              <div className="mt-4">
-                <div
-                  className="text-[11px] font-semibold tracking-[0.14em] mb-2"
-                  style={{ color: "#9a9178" }}
-                >
-                  DEFAULT ALIGNMENT
-                </div>
-                <div
-                  className="inline-flex p-1 rounded-full"
-                  style={{
-                    background: "#f3ecdb",
-                    border: "1px solid #e7ddc5",
-                  }}
-                >
-                  {(["left", "center", "right"] as const).map((a) => {
-                    const active = stamp.alignment === a
-                    return (
-                      <button
-                        key={a}
-                        type="button"
-                        onClick={() => setStampAlignment(a)}
-                        disabled={busy === "stamp-align"}
-                        className="px-4 py-1.5 rounded-full text-sm font-semibold transition flex items-center gap-2"
-                        style={{
-                          background: active ? "#ffffff" : "transparent",
-                          color: active ? "#0a7870" : "#6b6558",
-                          boxShadow: active
-                            ? "0 1px 2px rgba(30,30,20,0.06)"
-                            : "none",
-                          cursor:
-                            busy === "stamp-align" ? "not-allowed" : "pointer",
-                        }}
-                      >
-                        {a === "left" && <AlignLeftIcon />}
-                        {a === "center" && <AlignCenterIcon />}
-                        {a === "right" && <AlignRightIcon />}
-                        <span className="capitalize">{a}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-            </>
-            )}
-
-            <div className="text-xs mt-3" style={{ color: "#8a8270" }}>
-              Recommended: 300×300 px transparent PNG. It starts 30 mm
-              wide with the alignment above; change both per document
-              in the editor. What the editor shows is what gets exported.
-            </div>
-          </div>
-        </div>
+        <Link
+          href="/media"
+          className="text-sm font-semibold px-4 py-2 rounded-full transition hover:bg-[#cfe6e2]"
+          style={{ border: "1px solid #b7dad4", color: "#0a5e58" }}
+        >
+          Open Media
+        </Link>
       </section>
 
       {}
@@ -1001,29 +596,6 @@ function SectionHeader({
         </p>
       )}
     </div>
-  )
-}
-
-function AlignLeftIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 6h18M3 12h12M3 18h18M3 18h9" />
-      <path d="M3 6h12M3 12h18M3 18h12" />
-    </svg>
-  )
-}
-function AlignCenterIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 6h18M6 12h12M3 18h18" />
-    </svg>
-  )
-}
-function AlignRightIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 6h18M9 12h12M3 18h18" />
-    </svg>
   )
 }
 

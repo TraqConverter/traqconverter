@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { api } from "@/lib/api"
 
 // Mirrors the flags in backend/app/core/plan_features.py.
-export type PlanFeature = "terminology_memory" | "glossaries" | "certifications" | "templates" | "team_collaboration"
+export type PlanFeature = "terminology_memory" | "glossaries" | "certifications" | "templates" | "media" | "team_collaboration"
 
 export type WalletInfo = {
   tier: string
@@ -85,5 +85,5 @@ export function useFeature(feature: PlanFeature): Access {
 
 // The cheapest plan that includes the feature.
 export function planFor(feature: PlanFeature): "Basic" | "Pro" {
-  return feature === "templates" || feature === "team_collaboration" ? "Basic" : "Pro"
+  return feature === "templates" || feature === "media" || feature === "team_collaboration" ? "Basic" : "Pro"
 }

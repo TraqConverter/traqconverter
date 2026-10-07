@@ -154,7 +154,7 @@ def test_page_stamp_goes_in_every_section_footer():
     assert _footer_stamps(data) == [("word/footer1.xml", "center")]
     refs = [s.find(f"{{{W}}}footerReference") for s in _body_xml(data).iter(f"{{{W}}}sectPr")]
     assert len(refs) == 2 and all(r is not None for r in refs)
-    assert docx_page_stamp.state(data) == {"managed": True, "enabled": True, "align": "center", "width_cm": 3.0}
+    assert docx_page_stamp.state(data) == {"managed": True, "enabled": True, "align": "center", "width_cm": 3.0, "asset_id": None}
     assert docx_images.list_images(data) == [], "the footer stamp isn't one of the body pictures"
     assert len(_footer_stamps(docx_page_stamp.install(data, _stamp_image()))) == 1
     Document(io.BytesIO(data))
@@ -183,22 +183,25 @@ def test_body_and_footer_share_the_stamp_file_safely():
     assert _media_files(docx_page_stamp.update(removed, enabled=False)) == []
 
 
-def _team_stamp(db, storage, owner, alignment="left"):
-    storage["objects"]["uploads/stamp.png"] = _png((200, 200), paper=True)
-    owner["team"].stamp_s3_key = "uploads/stamp.png"
-    owner["team"].stamp_alignment = alignment
-    db.commit()
+def _team_stamp(db, storage, owner):
+    from tests.test_media_library import add_media
+
+    return add_media(db, storage, owner, "stamp", None)
 
 
 def test_new_editor_document_gets_the_team_stamp_and_the_controls_change_it(client, db, storage, project_with_doc):
     owner, project = project_with_doc()
-    _team_stamp(db, storage, owner, "left")
+    stamp = _team_stamp(db, storage, owner)
     data, v = _get(client, owner, project)
     assert docx_page_stamp.is_marked(data)
-    assert [a for _, a in _footer_stamps(data)] == ["left"]
+    assert [a for _, a in _footer_stamps(data)] == ["right"]
     url = f"/projects/{project.id}/document/page-stamp"
     state = client.get(url, headers=owner["headers"]).json()
-    assert state == {"version": v, "available": True, "managed": True, "enabled": True, "align": "left", "width_cm": 3.0}
+    assert [s["id"] for s in state.pop("stamps")] == [str(stamp.id)]
+    assert state == {
+        "version": v, "available": True, "managed": True, "enabled": True, "align": "right", "width_cm": 3.0,
+        "asset_id": str(stamp.id),
+    }
 
     r = client.put(url, headers=owner["headers"], json={"version": v, "align": "right", "width_cm": 5})
     assert r.status_code == 200, r.text
@@ -344,9 +347,9 @@ def test_certification_template_switch_via_api_keeps_one_logo(client, db, storag
     from tests.test_document_media import ITALIAN, _cert_template
 
     owner, project = project_with_doc()
-    storage["objects"]["uploads/logo.png"] = _png()
-    owner["user"].logo_s3_key = "uploads/logo.png"
-    db.commit()
+    from tests.test_media_library import add_media
+
+    add_media(db, storage, owner, "logo", None)
     italian = _cert_template(db, storage, owner, *ITALIAN, name="italiano.docx")
     url = f"/projects/{project.id}/document/certification"
     _, v = _get(client, owner, project)

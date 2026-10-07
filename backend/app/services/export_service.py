@@ -326,46 +326,31 @@ def _resolve_cert_template(project, tmp_dir):
 
 
 def _resolve_team_stamp(project, tmp_dir):
-    """Fetch the team's company stamp image (if any) into the export's
-    temp dir. Returns (local_path, alignment) or (None, "right") when
-    no stamp is configured or the download fails.
+    """The stamp for a document without the editor's page stamp, saved into the export's temp dir.
 
-    Alignment values: "left" | "center" | "right". The default
-    matches the schema default — most letterheads keep stamps on the
-    right side of the page footer.
+    Returns (local_path, alignment), or (None, "right") with no stamp or when the download fails.
     """
     try:
         from app.database import SessionLocal
         from app.models.team import Team
-        from app.services.s3_service import generate_presigned_download_url
-        import requests as _req
+        from app.services import media_library
+        from app.services.document_editor import _download
         from pathlib import Path as _Path
 
         db = SessionLocal()
         try:
-            team = (
-                db.query(Team)
-                .filter(Team.id == project.team_id)
-                .first()
-            )
-            if not team or not team.stamp_s3_key:
+            key = media_library.export_stamp_key(db, project)
+            if not key:
                 return None, "right"
-            alignment = (team.stamp_alignment or "right").lower()
+            team = db.query(Team).filter(Team.id == project.team_id).first()
+            alignment = ((team.stamp_alignment if team else None) or "right").lower()
             if alignment not in {"left", "center", "right"}:
                 alignment = "right"
-
-            url = generate_presigned_download_url(team.stamp_s3_key)
-            r = _req.get(url, timeout=15)
-            if not r.ok:
-                logger.warning(
-                    "Couldn't fetch team stamp: HTTP %s", r.status_code
-                )
-                return None, alignment
-            ext = team.stamp_s3_key.rsplit(".", 1)[-1].lower()
+            ext = key.rsplit(".", 1)[-1].lower()
             if ext not in {"png", "jpg", "jpeg"}:
                 ext = "png"
             stamp_path = _Path(tmp_dir) / f"stamp.{ext}"
-            stamp_path.write_bytes(r.content)
+            stamp_path.write_bytes(_download(key))
             return str(stamp_path), alignment
         finally:
             db.close()
@@ -552,9 +537,9 @@ def generate_docx(segments, user_email, project=None, user=None):
     if project is not None:
         try:
             project._export_user_email = user_email
-            project._export_user_logo_key = (
-                getattr(user, "logo_s3_key", None) if user else None
-            )
+            from app.services.media_library import logo_key_for_export
+
+            project._export_user_logo_key = logo_key_for_export(project)
         except Exception:
             pass
 
@@ -785,9 +770,9 @@ def generate_pdf(segments, user_email, project=None, user=None):
     if project is not None:
         try:
             project._export_user_email = user_email
-            project._export_user_logo_key = (
-                getattr(user, "logo_s3_key", None) if user else None
-            )
+            from app.services.media_library import logo_key_for_export
+
+            project._export_user_logo_key = logo_key_for_export(project)
         except Exception:
             pass
         layout_pdf = _build_layout_pdf_live(segments, project)

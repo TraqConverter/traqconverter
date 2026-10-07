@@ -395,38 +395,14 @@ def test_image_upload_validation_and_tenancy(client, project_with_doc, make_user
     assert _upload(client, owner, project, v + 5, bid).status_code == 409
     other = make_user()
     assert _upload(client, other, project, v, bid).status_code == 404
-    assert client.get(f"/projects/{project.id}/document/assets", headers=other["headers"]).status_code == 404
-
-
-def test_saved_logo_and_stamp_can_be_inserted(client, db, storage, project_with_doc):
-    owner, project = project_with_doc()
-    url = f"/projects/{project.id}/document"
-    assert client.get(f"{url}/assets", headers=owner["headers"]).json() == {
-        "logo": {"available": False, "url": None},
-        "stamp": {"available": False, "url": None},
-    }
-    storage["objects"]["uploads/logo.png"] = _png()
-    storage["objects"]["uploads/stamp.png"] = _png((200, 200), paper=True)
-    owner["user"].logo_s3_key = "uploads/logo.png"
-    owner["team"].stamp_s3_key = "uploads/stamp.png"
-    db.commit()
-    assets = client.get(f"{url}/assets", headers=owner["headers"]).json()
-    assert assets["logo"]["available"] and assets["stamp"]["url"].endswith("stamp.png")
-
-    data, v = _get(client, owner, project)
-    bid = docx_blocks.block_ids(data)[2]
-    r = client.post(f"{url}/assets/stamp", headers=owner["headers"], json={"version": v, "block_id": bid, "position": "inline"})
-    assert r.status_code == 200, r.text
-    data, _ = _get(client, owner, project)
-    assert docx_images.list_images(data)[0]["width_cm"] == docx_certification.STAMP_WIDTH_CM
-    assert client.post(f"{url}/assets/signature", headers=owner["headers"], json={"version": 2, "block_id": bid}).status_code == 422
+    assert client.get(f"/projects/{project.id}/document/page-stamp", headers=other["headers"]).status_code == 404
 
 
 def test_certification_api(client, db, storage, project_with_doc):
     owner, project = project_with_doc()
-    storage["objects"]["uploads/stamp.png"] = _png((200, 200), paper=True)
-    owner["team"].stamp_s3_key = "uploads/stamp.png"
-    db.commit()
+    from tests.test_media_library import add_media
+
+    add_media(db, storage, owner, "stamp", None)
     url = f"/projects/{project.id}/document/certification"
     _, v = _get(client, owner, project)
     assert client.get(url, headers=owner["headers"]).json()["present"] is False
@@ -479,9 +455,9 @@ def _export(client, owner, project) -> bytes:
 
 def test_export_contains_exactly_one_certification_and_the_images(client, db, storage, project_with_doc):
     owner, project = project_with_doc()
-    storage["objects"]["uploads/logo.png"] = _png()
-    owner["user"].logo_s3_key = "uploads/logo.png"
-    db.commit()
+    from tests.test_media_library import add_media
+
+    add_media(db, storage, owner, "logo", None)
     data, v = _get(client, owner, project)
     r = _upload(client, owner, project, v, docx_blocks.block_ids(data)[2], position="inline")
     v = r.json()["version"]
