@@ -497,9 +497,11 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             wallet.subscription_credits = SUBSCRIPTION_GRANTS[plan]
             wallet.subscription_expires_at = expiry_date
             wallet.plan_type = plan
-            _record_grant(
-                db, wallet, "SUBSCRIPTION_GRANT", SUBSCRIPTION_GRANTS[plan], f"invoice_{invoice.get('id') or event_id}"
-            )
+            # The first invoice pays for the checkout that already recorded this grant; only renewals add a row.
+            if invoice.get("billing_reason") != "subscription_create":
+                _record_grant(
+                    db, wallet, "SUBSCRIPTION_GRANT", SUBSCRIPTION_GRANTS[plan], f"invoice_{invoice.get('id') or event_id}"
+                )
 
             # With nobody left holding the subscription, the owner takes it so the portal still finds it.
             members = team_users(db, team)
