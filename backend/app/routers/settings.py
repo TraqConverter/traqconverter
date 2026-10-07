@@ -163,8 +163,11 @@ def connect_stripe(
     except Exception as exc:
         db.rollback()
         logger.exception("Stripe Connect onboarding failed (team=%s)", team.id)
+        code = exc.code if isinstance(exc, stripe_connect.StripeV2Error) else None
+        if code in stripe_connect.COUNTRY_NOT_SUPPORTED:
+            raise HTTPException(status_code=422, detail="Card payments aren't available for accounts in this country yet.")
         # Stripe refuses connected accounts until the platform owner finishes the Connect questionnaire.
-        if "to use connect" in str(exc).lower():
+        if code in stripe_connect.PLATFORM_NOT_READY or "to use connect" in str(exc).lower():
             raise HTTPException(
                 status_code=503,
                 detail="Card payments aren't available yet: the platform's Stripe setup isn't finished. Use the PayPal option for now.",
