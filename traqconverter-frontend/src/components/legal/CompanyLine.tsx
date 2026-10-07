@@ -13,7 +13,7 @@ const DOT = (
 
 // The legal identity line every public page and the app shell carry.
 export default function CompanyLine({ compact = false }: { compact?: boolean }) {
-  const parts = [`© 2026 ${COMPANY.name}`, `P.IVA ${COMPANY.vat}`, COMPANY.address]
+  const parts = [`© 2026 ${COMPANY.name}`, `Company no. ${COMPANY.companyNumber}`, COMPANY.address]
   return (
     <div className="flex flex-wrap items-center gap-y-1" style={{ fontSize: compact ? 10.5 : 12, color: SUBTLE, lineHeight: 1.5 }}>
       {parts.map((p) => (
@@ -23,6 +23,12 @@ export default function CompanyLine({ compact = false }: { compact?: boolean }) 
           {DOT}
         </span>
       ))}
+      <span className="whitespace-nowrap">
+        <a href={`mailto:${COMPANY.email}`} className="hover:underline" style={{ color: TEXT }}>
+          {COMPANY.email}
+        </a>
+        {DOT}
+      </span>
       {LEGAL_LINKS.map(([label, href], i) => (
         <span key={href} className="whitespace-nowrap">
           <Link href={href} className="hover:underline" style={{ color: TEXT }}>

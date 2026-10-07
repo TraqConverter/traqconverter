@@ -1172,7 +1172,7 @@ function ValueStrip() {
     items.push({
       n: `${euro(cheapest.price_per_page_eur)} a page`,
       l: `on ${cheapest.name}`,
-      d: `Subscription pages cost ${euro(cheapest.price_per_page_eur)} to ${euro(dearest.price_per_page_eur)} each, depending on the plan. Plus VAT where applicable.`,
+      d: `Subscription pages cost ${euro(cheapest.price_per_page_eur)} to ${euro(dearest.price_per_page_eur)} each, depending on the plan. No VAT is added.`,
     })
   }
   if (catalog) {
@@ -1335,7 +1335,7 @@ function PlanFinder({ catalog }: { catalog: PlanCatalog }) {
         </table>
       </div>
       <p style={{ fontSize: 12, color: SUBTLE, marginTop: 14 }}>
-        Prices from the current plan list, before VAT. Extra page packs are sold to subscribers and don&apos;t expire, so
+        Prices from the current plan list, in EUR. No VAT is added. Extra page packs are sold to subscribers and don&apos;t expire, so
         unused pack pages carry over.
       </p>
     </div>
@@ -1734,9 +1734,7 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
                 >
                   {euroCents(pack.price_cents)}
                 </div>
-                <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>{packPerPage(pack)}</div>
-                <div style={{ fontSize: 11, color: SUBTLE, marginTop: 2 }}>+ VAT where applicable</div>
-              </div>
+                <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>{packPerPage(pack)}</div>              </div>
             )
           })}
         </div>
@@ -1828,9 +1826,6 @@ function PlanCard({
           /month
         </span>
       </div>
-      <div style={{ fontSize: 11, color: highlight ? "rgba(255,255,255,0.7)" : SUBTLE }}>
-        + VAT where applicable
-      </div>
       <div
         style={{
           fontSize: 14,
@@ -1903,7 +1898,7 @@ function FAQ() {
     },
     {
       q: "Do prices include VAT?",
-      a: VAT_NOTE,
+      a: "No VAT is added to our prices. All prices are in EUR, and the price you see is the price you pay.",
     },
     {
       q: "Can I cancel anytime?",

@@ -6,10 +6,10 @@ import { COMPANY } from "@/lib/company"
 
 export const metadata: Metadata = {
   title: "Privacy Policy · OnlineDocTranslator",
-  description: "How Espresso Translations S.r.l. handles personal data in OnlineDocTranslator.",
+  description: `How ${COMPANY.name} handles personal data in OnlineDocTranslator.`,
 }
 
-const mail = `mailto:${COMPANY.privacyEmail}`
+const mail = `mailto:${COMPANY.email}`
 
 export default function PrivacyPage() {
   return (
@@ -19,11 +19,17 @@ export default function PrivacyPage() {
     >
       <h2 id="who-we-are">1. Who we are</h2>
       <p>
-        OnlineDocTranslator ({COMPANY.site.replace("https://", "")}) is run by {COMPANY.name}, P.IVA and codice fiscale{" "}
-        {COMPANY.vat}, registered office {COMPANY.address}{" "}(&quot;we&quot;, &quot;us&quot;).
+        OnlineDocTranslator ({COMPANY.site.replace("https://", "")}) is run by {COMPANY.name}, a company registered
+        in England and Wales under company number {COMPANY.companyNumber}, registered office {COMPANY.address}{" "}
+        (&quot;we&quot;, &quot;us&quot;).
       </p>
       <p>
-        For any privacy question or request, write to <a href={mail}>{COMPANY.privacyEmail}</a>.
+        We handle personal data under the UK General Data Protection Regulation (UK GDPR) and the UK Data Protection
+        Act 2018 and, for users in the European Union, the EU General Data Protection Regulation (EU GDPR). In this
+        policy, &quot;GDPR&quot; means whichever of the two applies to you.
+      </p>
+      <p>
+        For any privacy question or request, write to <a href={mail}>{COMPANY.email}</a>.
       </p>
 
       <h2 id="roles">2. Our role: controller or processor</h2>
@@ -37,7 +43,7 @@ export default function PrivacyPage() {
           templates, certification files). You, or the client you work for, decide why these are processed, so you
           are the <strong>controller</strong>{" "}and we are your <strong>processor</strong>. We process them only to
           provide the service to you. A data processing agreement (DPA) is available on request at{" "}
-          <a href={mail}>{COMPANY.privacyEmail}</a>.
+          <a href={mail}>{COMPANY.email}</a>.
         </li>
       </ul>
       <p>
@@ -89,7 +95,7 @@ export default function PrivacyPage() {
         <li>
           Payment data is handled by Stripe. We never see or store your card number. We receive your Stripe customer
           and subscription identifiers and the status of your payments. At checkout Stripe also collects your billing
-          address and, if you are a business, your VAT number, to apply the right VAT.
+          address, which appears on your invoices.
         </li>
       </ul>
       <h3>Technical data</h3>
@@ -119,7 +125,7 @@ export default function PrivacyPage() {
               <td>Performance of a contract, Art. 6(1)(b)</td>
             </tr>
             <tr>
-              <td>Process payments, issue invoices, apply VAT, keep accounting records</td>
+              <td>Process payments, issue invoices, keep accounting records</td>
               <td>Contract, Art. 6(1)(b); legal obligation, Art. 6(1)(c)</td>
             </tr>
             <tr>
@@ -205,7 +211,7 @@ export default function PrivacyPage() {
             </tr>
             <tr>
               <td>Stripe</td>
-              <td>Payments, subscriptions, invoices and VAT calculation</td>
+              <td>Payment processing for {COMPANY.name}: payments, subscriptions and invoices</td>
               <td>EU and United States</td>
             </tr>
             <tr>
@@ -221,12 +227,14 @@ export default function PrivacyPage() {
         obligations; see Stripe&apos;s privacy policy. We will update this list before adding a new sub-processor.
       </p>
 
-      <h2 id="transfers">7. Transfers outside the EU</h2>
+      <h2 id="transfers">7. International transfers</h2>
       <p>
-        Your documents and account data are stored in the EU. Some providers above are based in, or process data in,
-        the United States. Where data leaves the European Economic Area, we rely on safeguards such as the European
-        Commission&apos;s Standard Contractual Clauses or the EU-US Data Privacy Framework, where the provider is
-        certified. You can ask us for more information about these safeguards.
+        Your documents and account data are stored in the EU (Ireland). We run the service from the United Kingdom,
+        which the European Commission recognises as giving adequate protection to personal data. Some providers above
+        are based in, or process data in, the United States. Where data leaves the UK or the European Economic Area,
+        we rely on safeguards such as the European Commission&apos;s Standard Contractual Clauses with the UK
+        Addendum, or the EU-US Data Privacy Framework and its UK Extension, where the provider is certified. You can
+        ask us for more information about these safeguards.
       </p>
 
       <h2 id="retention">8. How long we keep data</h2>
@@ -259,8 +267,8 @@ export default function PrivacyPage() {
           deleted, the link to it is removed.
         </li>
         <li>
-          <strong>Invoices and accounting records</strong>{" "}are kept for as long as tax law requires (in Italy,
-          generally 10 years).
+          <strong>Invoices and accounting records</strong>{" "}are kept for as long as company and tax law
+          requires (in the UK, generally 6 years from the end of the financial year).
         </li>
         <li>
           Deleted data can remain in our providers&apos; backups for a limited period before it is overwritten.
@@ -286,7 +294,7 @@ export default function PrivacyPage() {
       </ul>
       <p>
         You can change your name in Settings and delete projects or your whole account at any time.
-        For anything else, write to <a href={mail}>{COMPANY.privacyEmail}</a>. We answer within one month. We may
+        For anything else, write to <a href={mail}>{COMPANY.email}</a>. We answer within one month. We may
         ask you to confirm your identity first.
       </p>
       <p>
@@ -294,11 +302,11 @@ export default function PrivacyPage() {
         who uploaded them; we will help that customer respond.
       </p>
       <p>
-        You also have the right to lodge a complaint with a supervisory authority. In Italy this is the{" "}
-        <a href="https://www.garanteprivacy.it" target="_blank" rel="noopener noreferrer">
-          Garante per la protezione dei dati personali
+        You also have the right to lodge a complaint with a supervisory authority. In the UK this is the{" "}
+        <a href="https://ico.org.uk" target="_blank" rel="noopener noreferrer">
+          Information Commissioner&apos;s Office (ICO)
         </a>
-        , Piazza Venezia 11, 00187 Roma. You can also complain to the authority where you live or work.
+        . If you live in the EU, you can complain to the data protection authority of your country of residence.
       </p>
 
       <h2 id="children">11. Children</h2>
@@ -313,7 +321,7 @@ export default function PrivacyPage() {
       <h2 id="contact">13. Contact</h2>
       <p>
         {COMPANY.name}, {COMPANY.address}. Email for privacy requests:{" "}
-        <a href={mail}>{COMPANY.privacyEmail}</a>.
+        <a href={mail}>{COMPANY.email}</a>.
       </p>
     </LegalPage>
   )

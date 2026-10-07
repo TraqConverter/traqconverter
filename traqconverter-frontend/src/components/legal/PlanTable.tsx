@@ -22,7 +22,7 @@ export default function PlanTable() {
           <thead>
             <tr>
               <th>Plan</th>
-              <th>Price per month (excl. VAT)</th>
+              <th>Price per month (EUR)</th>
               <th>Credits per month</th>
               <th>Team size</th>
             </tr>
@@ -44,7 +44,7 @@ export default function PlanTable() {
           <thead>
             <tr>
               <th>Credit pack (subscribers only)</th>
-              <th>Price (excl. VAT)</th>
+              <th>Price (EUR)</th>
               <th>Price per credit</th>
             </tr>
           </thead>

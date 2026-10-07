@@ -3,11 +3,11 @@ import Link from "next/link"
 
 import LegalPage from "@/components/legal/LegalPage"
 import PlanTable from "@/components/legal/PlanTable"
-import { COMPANY, VAT_NOTE } from "@/lib/company"
+import { COMPANY } from "@/lib/company"
 
 export const metadata: Metadata = {
   title: "Terms of Service · OnlineDocTranslator",
-  description: "The terms for using OnlineDocTranslator, sold by Espresso Translations S.r.l.",
+  description: `The terms for using OnlineDocTranslator, sold by ${COMPANY.name}.`,
 }
 
 export default function TermsPage() {
@@ -18,8 +18,8 @@ export default function TermsPage() {
     >
       <h2 id="who">1. Who we are</h2>
       <p>
-        OnlineDocTranslator is provided by {COMPANY.name}, P.IVA and codice fiscale {COMPANY.vat}, registered office{" "}
-        {COMPANY.address}{" "}(&quot;we&quot;, &quot;us&quot;). By creating an account you accept these terms and
+        OnlineDocTranslator is provided by {COMPANY.name}, a company registered in England and Wales under company
+        number {COMPANY.companyNumber}, registered office {COMPANY.address}{" "}(&quot;we&quot;, &quot;us&quot;). By creating an account you accept these terms and
         confirm you have read our <Link href="/privacy">Privacy Policy</Link>.
       </p>
 
@@ -79,12 +79,12 @@ export default function TermsPage() {
 
       <h2 id="vat">6. Prices and VAT</h2>
       <p>
-        Prices are in euro and exclude VAT. VAT is added at checkout where it applies, based on your billing address
-        and VAT number. {VAT_NOTE}
+        Prices are in euro (EUR). We are not registered for VAT, so no VAT is added: the price you see is the price
+        you pay. Your bank may charge its own fees for paying in euro.
       </p>
       <p>
-        If you buy as a business, enter your VAT number at checkout. You are responsible for giving us correct billing
-        and tax details.
+        Checkout asks for your billing address, which appears on your invoices. You are responsible for giving us
+        correct billing details.
       </p>
 
       <h2 id="billing">7. Billing, renewal and cancellation</h2>
@@ -115,7 +115,7 @@ export default function TermsPage() {
         law requires it.
       </p>
       <p>
-        If you are a consumer in the EU, you have a 14-day right to withdraw from a purchase. By starting to use the
+        If you are a consumer in the UK or the EU, you have a 14-day right to withdraw from a purchase. By starting to use the
         service within those 14 days, for example by translating a page, you ask us to start providing it straight
         away. If you then withdraw, you pay for what you have already used, and the right of withdrawal no longer
         applies once the purchased service has been fully provided.
@@ -215,8 +215,8 @@ export default function TermsPage() {
 
       <h2 id="law">16. Governing law and courts</h2>
       <p>
-        These terms are governed by Italian law. The courts of Milan, Italy have exclusive jurisdiction over any
-        dispute.
+        These terms are governed by the law of England and Wales. The courts of England and Wales have jurisdiction
+        over any dispute.
       </p>
       <p>
         If you are a consumer, you keep the protection of the mandatory laws of the country where you live, and you
@@ -232,7 +232,9 @@ export default function TermsPage() {
 
       <h2 id="contact">18. Contact</h2>
       <p>
-        {COMPANY.name}, {COMPANY.address}. For questions about personal data, see the contact details in the{" "}
+        {COMPANY.name}, {COMPANY.address}. Email:{" "}
+        <a href={`mailto:${COMPANY.email}`}>{COMPANY.email}</a>. For questions about personal data, see the contact
+        details in the{" "}
         <Link href="/privacy#contact">Privacy Policy</Link>.
       </p>
     </LegalPage>

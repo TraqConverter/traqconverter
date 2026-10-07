@@ -662,9 +662,6 @@ function PlanCard({
           /month
         </div>
       </div>
-      <div className="text-[11px] -mt-2 mb-3" style={{ color: "#8a8270" }}>
-        + VAT where applicable
-      </div>
       <p className="text-sm mb-4" style={{ color: "#4a4638" }}>
         {plan.blurb}
       </p>
@@ -790,9 +787,6 @@ function CreditPackCard({
           <span className="text-sm tabular-nums" style={{ color: "#8a8270" }}>
             {packPerPage(pack)}
           </span>
-        </div>
-        <div className="text-[11px] mb-3" style={{ color: "#8a8270" }}>
-          + VAT where applicable
         </div>
         <div className="text-sm mb-5" style={{ color: "#4a4638" }}>
           {pack.note}
