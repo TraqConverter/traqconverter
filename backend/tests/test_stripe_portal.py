@@ -336,13 +336,14 @@ def test_renewal_invoice_uses_the_plan_line_not_the_proration(client, db, make_u
 class FakeStripe:
     """Records every write; reads come from the dicts given."""
 
-    def __init__(self, prices=None, lookup=None, products=None, portals=None):
+    def __init__(self, prices=None, lookup=None, products=None, portals=None, webhooks=None):
         self.writes = []
         fake = self
         prices = prices or {}
         lookup = lookup or {}
         products = products or []
         portals = portals or []
+        webhooks = webhooks or []
 
         def listing(items):
             return SimpleNamespace(data=list(items), auto_paging_iter=lambda: iter(items))
@@ -350,8 +351,15 @@ class FakeStripe:
         def write(name):
             def _w(*a, **kw):
                 fake.writes.append((name, a, kw))
-                return {"id": f"{name}_new_{len(fake.writes)}"}
+                obj = {"id": f"{name}_new_{len(fake.writes)}"}
+                if name == "we":
+                    obj["secret"] = f"whsec_secret_{len(fake.writes)}"
+                return obj
             return _w
+
+        self.WebhookEndpoint = SimpleNamespace(
+            list=lambda **kw: listing(webhooks), create=write("we"), modify=write("we_modify"),
+        )
 
         self.Price = SimpleNamespace(
             retrieve=lambda pid: prices[pid],
@@ -391,6 +399,7 @@ def test_setup_dry_run_creates_nothing_when_prices_exist():
         lookup={
             "traq_studio_monthly_eur": _price("price_studio", "prod_studio", 7900),
             "traq_agency_monthly_eur": _price("price_agency", "prod_agency", 24900),
+            "traq_credits_50_eur": _price("price_c50_lk", "prod_c50", 4000),
         },
         portals=[{"id": "bpc_existing", "metadata": {"traq_portal": "subscription"}}],
     )
@@ -399,6 +408,7 @@ def test_setup_dry_run_creates_nothing_when_prices_exist():
     assert fake.writes == []
     assert result == {
         "prices": {"BASIC": "price_basic", "PRO": "price_pro", "STUDIO": "price_studio", "AGENCY": "price_agency"},
+        "credit_packs": {10: "price_c10", 25: "price_c25", 50: "price_c50_lk"},
         "portal": "bpc_existing",
         "created": [],
     }
@@ -407,7 +417,8 @@ def test_setup_dry_run_creates_nothing_when_prices_exist():
     # The 25-credit pack is still on the old 25 EUR price in Stripe; it now costs 22.50.
     assert "STRIPE_PRICE_CREDITS_25: price_c25 = 2500 eur  <-- MISMATCH: expected 2250 eur" in text
     assert "STRIPE_PRICE_CREDITS_10: price_c10 = 1000 eur\n" in text + "\n"
-    assert "STRIPE_PRICE_CREDITS_50: not set" in text
+    assert "STRIPE_PRICE_CREDITS_50 (lookup_key traq_credits_50_eur): price_c50_lk = 4000 eur" in text
+    assert "STRIPE_PRICE_CREDITS_50=price_c50_lk" in text
 
 
 def test_setup_dry_run_plans_missing_prices_without_creating():
@@ -417,12 +428,14 @@ def test_setup_dry_run_plans_missing_prices_without_creating():
     out = []
     result = stripe_setup.run(fake, ENV, dry_run=True, say=out.append)
     assert fake.writes == []
-    assert result["created"] == ["STUDIO", "AGENCY"]
+    assert result["created"] == ["STUDIO", "AGENCY", "CREDITS_50"]
     assert result["portal"] == stripe_setup.PLANNED
     text = "\n".join(out)
     assert "STUDIO: would create price 7900 eur/month, lookup_key traq_studio_monthly_eur" in text
     assert "AGENCY: would create product 'OnlineDocTranslator Agency'" in text
     assert "STUDIO: would create product" not in text
+    assert "STRIPE_PRICE_CREDITS_50: would create product 'OnlineDocTranslator – 50 pages'" in text
+    assert "STRIPE_PRICE_CREDITS_50: would create one-time price 4000 eur, lookup_key traq_credits_50_eur" in text
 
 
 def test_portal_allows_plan_switches_but_never_quantity_changes():
@@ -444,12 +457,13 @@ def test_setup_creates_missing_prices_and_the_portal():
     fake = FakeStripe(prices=EXISTING, products=[{"id": "prod_studio", "metadata": {"plan_code": "STUDIO"}}])
     stripe_setup.run(fake, ENV, dry_run=False, say=lambda s: None)
     kinds = [w[0] for w in fake.writes]
-    assert kinds == ["price", "prod", "price", "bpc"]
+    # STUDIO price, AGENCY product + price, portal, then the 50-credit pack (product + price).
+    assert kinds == ["price", "prod", "price", "bpc", "prod", "price"]
     studio_price = fake.writes[0][2]
     assert (studio_price["product"], studio_price["unit_amount"], studio_price["currency"]) == ("prod_studio", 7900, "eur")
     assert studio_price["lookup_key"] == "traq_studio_monthly_eur"
     assert studio_price["recurring"] == {"interval": "month"}
-    portal = fake.writes[-1][2]
+    portal = fake.writes[3][2]
     update = portal["features"]["subscription_update"]
     assert update["enabled"] and update["proration_behavior"] == "create_prorations"
     assert {p["product"] for p in update["products"]} == {"prod_basic", "prod_pro", "prod_studio", "prod_new_2"}
@@ -480,3 +494,122 @@ def test_setup_flags_a_price_that_includes_vat():
     text = "\n".join(out)
     assert "tax_behavior is inclusive" in text
     assert text.count("tax_behavior is") == 1
+
+
+ALL_PACKS_MISSING = {k: v for k, v in ENV.items() if not k.startswith("STRIPE_PRICE_CREDITS_")}
+
+
+def test_setup_creates_the_three_credit_packs():
+    from scripts import stripe_setup
+
+    fake = FakeStripe(prices=EXISTING, portals=[{"id": "bpc_existing", "metadata": {"traq_portal": "subscription"}}])
+    out = []
+    result = stripe_setup.run(fake, ALL_PACKS_MISSING, dry_run=False, say=out.append)
+    pack_writes = [w for w in fake.writes if w[2].get("metadata", {}).get("credit_pack")]
+    products = [w[2] for w in pack_writes if w[0] == "prod"]
+    prices = [w[2] for w in pack_writes if w[0] == "price"]
+    assert [p["name"] for p in products] == [
+        "OnlineDocTranslator – 10 pages",
+        "OnlineDocTranslator – 25 pages",
+        "OnlineDocTranslator – 50 pages",
+    ]
+    assert [(p["unit_amount"], p["lookup_key"]) for p in prices] == [
+        (1000, "traq_credits_10_eur"),
+        (2250, "traq_credits_25_eur"),
+        (4000, "traq_credits_50_eur"),
+    ]
+    for p in prices:
+        assert p["currency"] == "eur" and p["tax_behavior"] == "exclusive"
+        assert "recurring" not in p
+    assert result["created"][-3:] == ["CREDITS_10", "CREDITS_25", "CREDITS_50"]
+    text = "\n".join(out)
+    for credits, price_id in result["credit_packs"].items():
+        assert f"STRIPE_PRICE_CREDITS_{credits}={price_id}" in text
+
+
+def test_setup_reuses_a_pack_product_found_by_metadata():
+    from scripts import stripe_setup
+
+    fake = FakeStripe(prices=EXISTING, products=[{"id": "prod_c10", "metadata": {"credit_pack": "10"}}])
+    stripe_setup.run(fake, ALL_PACKS_MISSING, dry_run=False, say=lambda s: None)
+    c10 = [w[2] for w in fake.writes if w[0] == "price" and w[2].get("lookup_key") == "traq_credits_10_eur"]
+    assert c10[0]["product"] == "prod_c10"
+    assert not any(w[0] == "prod" and w[2].get("name") == "OnlineDocTranslator – 10 pages" for w in fake.writes)
+
+
+def test_webhooks_are_created_with_secrets_only_in_the_file(tmp_path):
+    from scripts import stripe_setup
+
+    secrets_file = tmp_path / "secrets.env"
+    fake = FakeStripe(prices=EXISTING)
+    out = []
+    result = stripe_setup.run(fake, ENV, dry_run=False, say=out.append, webhooks=True, secrets_out=str(secrets_file))
+    created = [w[2] for w in fake.writes if w[0] == "we"]
+    assert created == [
+        {
+            "url": "https://api.onlinedoctranslator.ai/stripe/webhook",
+            "enabled_events": [
+                "checkout.session.completed",
+                "invoice.payment_succeeded",
+                "customer.subscription.updated",
+                "customer.subscription.deleted",
+            ],
+        },
+        {
+            "url": "https://api.onlinedoctranslator.ai/stripe/connect/webhook",
+            "enabled_events": [
+                "checkout.session.completed",
+                "checkout.session.async_payment_succeeded",
+                "account.updated",
+                "account.application.deauthorized",
+            ],
+            "connect": True,
+        },
+    ]
+    assert set(result["webhooks"]) == {"platform", "connect"}
+    content = secrets_file.read_text()
+    assert content.startswith("stripe_webhook_secret=whsec_secret_")
+    assert "\nSTRIPE_CONNECT_WEBHOOK_SECRET=whsec_secret_" in content
+    assert (secrets_file.stat().st_mode & 0o777) == 0o600
+    assert "whsec_" not in "\n".join(out)
+
+
+def test_webhooks_found_by_url_are_reused_and_missing_events_added(tmp_path):
+    from scripts import stripe_setup
+
+    existing = [
+        {"id": "we_platform", "url": "https://api.onlinedoctranslator.ai/stripe/webhook",
+         "enabled_events": ["checkout.session.completed", "invoice.payment_succeeded"], "status": "enabled"},
+        {"id": "we_connect", "url": "https://api.onlinedoctranslator.ai/stripe/connect/webhook", "application": "ca_1",
+         "enabled_events": stripe_setup.WEBHOOKS[1]["events"], "status": "enabled"},
+    ]
+    secrets_file = tmp_path / "secrets.env"
+    fake = FakeStripe(prices=EXISTING, webhooks=existing)
+    out = []
+    result = stripe_setup.run(fake, ENV, dry_run=False, say=out.append, webhooks=True, secrets_out=str(secrets_file))
+    assert result["webhooks"] == {"platform": "we_platform", "connect": "we_connect"}
+    assert not any(w[0] == "we" for w in fake.writes)
+    modified = [w for w in fake.writes if w[0] == "we_modify"]
+    assert len(modified) == 1 and modified[0][1] == ("we_platform",)
+    assert modified[0][2]["enabled_events"][-2:] == ["customer.subscription.updated", "customer.subscription.deleted"]
+    assert not secrets_file.exists()
+    assert "WRONG" not in "\n".join(out)
+
+
+def test_webhooks_dry_run_writes_nothing():
+    from scripts import stripe_setup
+
+    fake = FakeStripe(prices=EXISTING)
+    out = []
+    result = stripe_setup.run(fake, ENV, dry_run=True, say=out.append, webhooks=True)
+    assert fake.writes == []
+    assert result["webhooks"] == {"platform": stripe_setup.PLANNED, "connect": stripe_setup.PLANNED}
+    assert "platform webhook https://api.onlinedoctranslator.ai/stripe/webhook: would create (4 events)" in "\n".join(out)
+
+
+def test_with_webhooks_needs_a_secrets_file(monkeypatch):
+    from scripts import stripe_setup
+
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_x")
+    with pytest.raises(SystemExit):
+        stripe_setup.main(["--with-webhooks"])

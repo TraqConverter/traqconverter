@@ -1,4 +1,4 @@
-"""Stripe Tax on Checkout: VAT added on top, VAT IDs collected, billing address required. Stripe is mocked."""
+"""Checkout tax params: off by default (seller not VAT-registered), Stripe Tax when the flag is on. Stripe is mocked."""
 from types import SimpleNamespace
 
 import pytest
@@ -77,7 +77,7 @@ def test_existing_customer_gets_address_and_name_saved(client, db, make_user, ch
 
 
 @pytest.mark.parametrize("start", [_plan, _pack])
-def test_env_flag_turns_tax_off(client, db, make_user, checkout, monkeypatch, start):
+def test_tax_off_sends_no_tax_but_still_requires_the_billing_address(client, db, make_user, checkout, monkeypatch, start):
     from app.routers import subscription
 
     monkeypatch.setattr(subscription.settings, "STRIPE_AUTOMATIC_TAX", False)
@@ -85,12 +85,27 @@ def test_env_flag_turns_tax_off(client, db, make_user, checkout, monkeypatch, st
     _with_customer(db, who)
     assert start(client, who).status_code == 200
     kw = checkout[-1]
-    for key in (*TAX_ON, "customer_update", "customer_creation"):
+    for key in ("automatic_tax", "tax_id_collection", "customer_creation"):
         assert key not in kw
+    assert kw["billing_address_collection"] == "required"
     assert kw["customer"] == "cus_tax"
+    assert kw["customer_update"] == {"address": "auto", "name": "auto"}
 
 
-def test_setting_defaults_on():
+@pytest.mark.parametrize("start", [_plan, _pack])
+def test_tax_off_new_customer_gets_no_customer_update(client, make_user, checkout, monkeypatch, start):
+    from app.routers import subscription
+
+    monkeypatch.setattr(subscription.settings, "STRIPE_AUTOMATIC_TAX", False)
+    who = make_user(plan="BASIC")
+    assert start(client, who).status_code == 200
+    kw = checkout[-1]
+    for key in ("automatic_tax", "tax_id_collection", "customer_creation", "customer", "customer_update"):
+        assert key not in kw
+    assert kw["billing_address_collection"] == "required"
+
+
+def test_setting_defaults_off():
     from app.config import Settings
 
-    assert Settings.model_fields["STRIPE_AUTOMATIC_TAX"].default is True
+    assert Settings.model_fields["STRIPE_AUTOMATIC_TAX"].default is False

@@ -13,7 +13,7 @@ const MUTED = "#6b6558"
 const SUBTLE = "#8a8270"
 const BORDER = "#e7ddc5"
 
-export const LAST_UPDATED = "1 October 2026"
+export const LAST_UPDATED = "7 October 2026"
 
 const PROSE = [
   "[&_h2]:text-[21px] [&_h2]:font-bold [&_h2]:tracking-tight [&_h2]:mt-10 [&_h2]:mb-3 [&_h2]:scroll-mt-24",

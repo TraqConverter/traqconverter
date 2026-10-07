@@ -51,8 +51,8 @@ class Settings(BaseSettings):
     STRIPE_PRICE_AGENCY: Optional[str] = None
     # Billing portal configuration (bpc_...) printed by scripts/stripe_setup.py; unset uses Stripe's default.
     STRIPE_PORTAL_CONFIGURATION: Optional[str] = None
-    # Stripe Tax at checkout: VAT computed from the billing address, VAT IDs collected for reverse charge.
-    STRIPE_AUTOMATIC_TAX: bool = True
+    # Stripe Tax at checkout (automatic_tax + tax ID collection). Off: the seller is not VAT-registered.
+    STRIPE_AUTOMATIC_TAX: bool = False
 
     # Connect: signing secret of the webhook endpoint that listens to events on connected accounts.
     STRIPE_CONNECT_WEBHOOK_SECRET: Optional[str] = None

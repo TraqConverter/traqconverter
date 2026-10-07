@@ -38,6 +38,7 @@ One supported path:
    | `STRIPE_PRICE_BASIC`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_CREDITS_10/25/50` | Stripe price IDs |
    | `STRIPE_PRICE_STUDIO`, `STRIPE_PRICE_AGENCY` | Optional Stripe price IDs (€79/month and €249/month). Unset: the plan shows "Contact us" |
    | `STRIPE_PORTAL_CONFIGURATION` | `bpc_...` printed by `python scripts/stripe_setup.py` |
+   | `STRIPE_AUTOMATIC_TAX` | `false` (default). The seller, Lumax Digital LTD, is not VAT-registered, so checkout sends no `automatic_tax` or `tax_id_collection`; it still requires the billing address for invoices. Set `true` only after registering for VAT and enabling Stripe Tax |
    | `STRIPE_CONNECT_WEBHOOK_SECRET` | Signing secret of the Connect webhook (step 4) |
    | `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | `https://<vercel-domain>/success`, `/cancel` |
    | `FRONTEND_URL` | `https://<vercel-domain>`. Every link we send (password reset, invites, client links, Stripe return pages) starts with it; unset, they point at localhost |
@@ -73,9 +74,17 @@ python -m alembic upgrade head
    It is inlined at build time. A production build without it fails on purpose, so redeploy after changing it.
 3. Deploy, then set `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`, `FRONTEND_URL` and `CORS_ORIGINS` on Railway to the Vercel domain and redeploy the backend.
 
-## 4. Stripe webhooks
+## 4. Stripe products, portal and webhooks
 
-Two endpoints, each with its own signing secret.
+`scripts/stripe_setup.py` creates (or finds) the plan prices, the three credit-pack prices and the billing portal configuration, and prints the env vars to set. With `--with-webhooks` it also creates (or finds by URL) both webhook endpoints below on `https://api.onlinedoctranslator.ai`; new signing secrets go only to the `--secrets-out` file (mode 600), never to the terminal.
+
+```bash
+cd backend
+STRIPE_SECRET_KEY=sk_live_... venv/bin/python scripts/stripe_setup.py --with-webhooks --dry-run
+STRIPE_SECRET_KEY=sk_live_... venv/bin/python scripts/stripe_setup.py --with-webhooks --secrets-out ~/stripe-secrets.env
+```
+
+To set the webhooks up by hand instead: two endpoints, each with its own signing secret.
 
 1. **Developers → Webhooks → Add endpoint**: `https://<railway-api>/stripe/webhook`, listening to events on **your account**.
    Events: `checkout.session.completed`, `invoice.payment_succeeded`, `customer.subscription.updated`, `customer.subscription.deleted`.

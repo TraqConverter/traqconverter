@@ -72,8 +72,13 @@ PLAN_PRICE_MAP = {plan: plan_price_id(plan) for plan in PAID_PLANS}
 
 
 def checkout_customer_params(customer_id, mode: str) -> dict:
-    """Customer and Stripe Tax parameters shared by every Checkout Session."""
+    """Customer, billing address and (optional) Stripe Tax parameters shared by every Checkout Session."""
     params = {"customer": customer_id} if customer_id else {}
+    # The billing address goes on every invoice, taxed or not.
+    params["billing_address_collection"] = "required"
+    if customer_id:
+        # Saves the address and name entered at checkout onto the existing customer.
+        params["customer_update"] = {"address": "auto", "name": "auto"}
     if not settings.STRIPE_AUTOMATIC_TAX:
         return params
     if not customer_id and mode == "payment":
@@ -81,10 +86,6 @@ def checkout_customer_params(customer_id, mode: str) -> dict:
         params["customer_creation"] = "always"
     params["automatic_tax"] = {"enabled": True}
     params["tax_id_collection"] = {"enabled": True}
-    params["billing_address_collection"] = "required"
-    if customer_id:
-        # Saves the address and name entered at checkout onto the existing customer, which Stripe Tax requires.
-        params["customer_update"] = {"address": "auto", "name": "auto"}
     return params
 
 
