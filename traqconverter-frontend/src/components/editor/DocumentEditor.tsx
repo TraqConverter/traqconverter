@@ -1013,7 +1013,7 @@ export default function DocumentEditor({
         setChatError("The document changed elsewhere. Reloaded it; send again.")
         void reloadDocument()
       } else if (status === 402) {
-        setChatError(apiErrorDetail(err, "You've used the AI edits included with this document. 1 credit adds 10 more."))
+        setChatError(apiErrorDetail(err, "You've used the AI edits included with this document. Further edits use credits."))
       } else if (status === 429) {
         setChatError(apiErrorDetail(err, "Too many requests. Wait a moment and try again."))
       } else if (status === 502) {

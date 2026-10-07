@@ -8,9 +8,12 @@ type Allowance = {
   used: number
   remaining_included: number
   next_block_cost_credits: number
+  edits_per_extra_credit: number
   credits_charged: number
   regenerations_used: number
   regenerations_max: number
+  regenerations_free: number
+  next_regenerate_cost_credits: number
 }
 
 export default function AiAllowance({ projectId, remaining }: { projectId: string; remaining?: number }) {
@@ -35,10 +38,12 @@ export default function AiAllowance({ projectId, remaining }: { projectId: strin
 
   const left = remaining ?? allowance.remaining_included
   const cost = allowance.next_block_cost_credits
+  const block = allowance.edits_per_extra_credit
+  const costLabel = `${cost} credit${cost === 1 ? "" : "s"}`
   const label =
     left > 0
       ? `${left} of ${allowance.included} AI edits left`
-      : `Included edits used · ${cost} credit${cost === 1 ? "" : "s"} per 10 more`
+      : `Included edits used · ${costLabel} per ${block} more`
 
   return (
     <div
@@ -50,8 +55,8 @@ export default function AiAllowance({ projectId, remaining }: { projectId: strin
       }
       title={
         left > 0
-          ? "Each page credit includes 10 AI edits on this document"
-          : "The next AI edit uses 1 credit and adds 10 more"
+          ? `This document includes ${allowance.included} AI edits, then ${costLabel} per ${block} more`
+          : `The next AI edit uses ${costLabel} and adds ${block} more`
       }
     >
       {label}

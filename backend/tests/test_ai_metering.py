@@ -219,7 +219,7 @@ def _edit_charges(db, project):
 
 
 def test_included_edits_then_one_credit_per_block(client, db, doc_project, chat):
-    owner, project = doc_project(credits=5, pages=1, used=8)
+    owner, project = doc_project(credits=5, pages=1, used=3)
     r = chat(owner, project)
     assert r.status_code == 200, r.text
     assert r.json()["ai_edits_remaining"] == 1
@@ -227,28 +227,71 @@ def test_included_edits_then_one_credit_per_block(client, db, doc_project, chat)
     assert chat(owner, project).json()["ai_edits_remaining"] == 0
     assert _wallet(db, owner).subscription_credits == 5
 
+    # The 6th edit on a 1-page document opens the first paid block.
     r = chat(owner, project)
     assert r.status_code == 200 and r.json()["ai_edits_remaining"] == 0
     assert _edit_charges(db, project) == [f"{project.id}:ai-edits:0"]
     assert _wallet(db, owner).subscription_credits == 4
 
-    project_row = _project(db, project.id)
-    project_row.ai_edits_used = 20
-    db.commit()
-    chat(owner, project)
+    for _ in range(4):
+        assert chat(owner, project).status_code == 200
+    assert _project(db, project.id).ai_edits_used == 10
+    assert _wallet(db, owner).subscription_credits == 4
+
+    # The 11th opens the second.
+    assert chat(owner, project).status_code == 200
     assert _edit_charges(db, project) == [f"{project.id}:ai-edits:0", f"{project.id}:ai-edits:1"]
     assert _wallet(db, owner).subscription_credits == 3
 
     a = client.get(f"/projects/{project.id}/ai-allowance", headers=owner["headers"]).json()
     assert a == {
-        "included": 10,
-        "used": 21,
+        "included": 5,
+        "used": 11,
         "remaining_included": 0,
         "next_block_cost_credits": 1,
+        "edits_per_extra_credit": 5,
         "credits_charged": 2,
         "regenerations_used": 0,
-        "regenerations_max": 2,
+        "regenerations_max": 3,
+        "regenerations_free": 1,
+        "next_regenerate_cost_credits": 0,
     }
+
+
+@pytest.mark.parametrize("pages,included", [(1, 5), (3, 15)])
+def test_included_edits_scale_with_pages(pages, included):
+    from app.services import ai_allowance
+
+    project = TranslationProject(page_count=pages, ai_edits_used=0)
+    assert ai_allowance.included_edits(project) == included
+    assert ai_allowance._block_of(project, included) is None
+    assert ai_allowance._block_of(project, included + 1) == 0
+    assert ai_allowance._block_of(project, included + 5) == 0
+    assert ai_allowance._block_of(project, included + 6) == 1
+
+
+def test_edit_allowance_follows_settings(monkeypatch):
+    from app.config import settings
+    from app.services import ai_allowance
+
+    monkeypatch.setattr(settings, "AI_EDITS_PER_PAGE", 10)
+    monkeypatch.setattr(settings, "AI_EDITS_PER_EXTRA_CREDIT", 10)
+    project = TranslationProject(page_count=2, ai_edits_used=0)
+    assert ai_allowance.included_edits(project) == 20
+    assert ai_allowance._block_of(project, 30) == 0 and ai_allowance._block_of(project, 31) == 1
+    assert ai_allowance.out_of_edits_message().endswith("1 credit adds 10 more.")
+
+
+def test_existing_project_over_the_new_allowance_is_not_charged_retroactively(client, db, doc_project, chat):
+    owner, project = doc_project(credits=5, pages=1, used=8)
+    a = client.get(f"/projects/{project.id}/ai-allowance", headers=owner["headers"]).json()
+    assert (a["remaining_included"], a["credits_charged"]) == (0, 0)
+    assert _wallet(db, owner).subscription_credits == 5
+
+    # Only the next edit is charged: the 9th falls in the first paid block.
+    assert chat(owner, project).status_code == 200
+    assert _edit_charges(db, project) == [f"{project.id}:ai-edits:0"]
+    assert _wallet(db, owner).subscription_credits == 4
 
 
 def test_chat_usage_is_attributed_to_the_editing_user(db, doc_project, chat):
@@ -260,16 +303,16 @@ def test_chat_usage_is_attributed_to_the_editing_user(db, doc_project, chat):
 
 
 def test_out_of_edits_without_credits_is_402_before_calling_claude(db, doc_project, chat):
-    owner, project = doc_project(credits=0, pages=1, used=10)
+    owner, project = doc_project(credits=0, pages=1, used=5)
     r = chat(owner, project)
     assert r.status_code == 402
-    assert r.json()["detail"] == "You've used the AI edits included with this document. 1 credit adds 10 more."
-    assert _project(db, project.id).ai_edits_used == 10
+    assert r.json()["detail"] == "You've used the AI edits included with this document. 1 credit adds 5 more."
+    assert _project(db, project.id).ai_edits_used == 5
     assert _usage_rows(db) == []
 
 
 def test_failed_chat_is_not_counted_and_block_charge_is_idempotent(db, doc_project, chat, monkeypatch):
-    owner, project = doc_project(credits=5, pages=1, used=10)
+    owner, project = doc_project(credits=5, pages=1, used=5)
 
     def fail(*a, **k):
         raise document_editor.ChatEditError("The AI assistant couldn't complete that edit")
@@ -278,30 +321,30 @@ def test_failed_chat_is_not_counted_and_block_charge_is_idempotent(db, doc_proje
         m.setattr(document_editor, "chat_edit", fail)
         assert chat(owner, project).status_code == 502
         assert chat(owner, project).status_code == 502
-    assert _project(db, project.id).ai_edits_used == 10
+    assert _project(db, project.id).ai_edits_used == 5
     assert _wallet(db, owner).subscription_credits == 4
 
     assert chat(owner, project).status_code == 200
-    assert _project(db, project.id).ai_edits_used == 11
+    assert _project(db, project.id).ai_edits_used == 6
     assert _wallet(db, owner).subscription_credits == 4
     assert _edit_charges(db, project) == [f"{project.id}:ai-edits:0"]
 
 
 def test_staff_are_counted_but_never_charged(db, doc_project, chat):
-    owner, project = doc_project(credits=0, pages=1, used=10, role="ADMIN")
+    owner, project = doc_project(credits=0, pages=1, used=5, role="ADMIN")
     assert chat(owner, project).status_code == 200
-    assert _project(db, project.id).ai_edits_used == 11
+    assert _project(db, project.id).ai_edits_used == 6
     assert _edit_charges(db, project) == []
 
 
 def test_allowance_scales_with_pages_and_hides_other_tenants(client, doc_project, make_user):
     owner, project = doc_project(pages=3, used=4)
     a = client.get(f"/projects/{project.id}/ai-allowance", headers=owner["headers"]).json()
-    assert (a["included"], a["remaining_included"]) == (30, 26)
+    assert (a["included"], a["remaining_included"]) == (15, 11)
     assert client.get(f"/projects/{project.id}/ai-allowance", headers=make_user()["headers"]).status_code == 404
 
 
-# --- Regenerate hard cap -----------------------------------------------------
+# --- Regenerate: first free, then one credit per page, hard cap ------------
 
 
 @pytest.fixture()
@@ -318,25 +361,234 @@ def _finish_rebuild(db, project):
     db.commit()
 
 
-def test_regenerate_has_a_hard_limit_of_two(client, db, make_user, make_project, no_background_ai):
-    owner = make_user(credits=5)
-    project = make_project(owner, pages=2)
+def _regenerate(client, owner, project):
+    return client.post(f"/projects/{project.id}/rebuild-with-claude", headers=owner["headers"])
 
-    r = client.post(f"/projects/{project.id}/rebuild-with-claude", headers=owner["headers"])
-    assert r.status_code == 200 and r.json()["charged"] is False and r.json()["regenerations_left"] == 1
-    _finish_rebuild(db, project)
-    r = client.post(f"/projects/{project.id}/rebuild-with-claude", headers=owner["headers"])
-    assert r.status_code == 200, r.text
-    _finish_rebuild(db, project)
 
-    r = client.post(f"/projects/{project.id}/rebuild-with-claude", headers=owner["headers"])
-    assert r.status_code == 403
-    assert r.json()["detail"] == "Regenerate is limited to 2 per document"
+def _regen_rows(db, project):
+    db.expire_all()
+    return (
+        db.query(CreditTransaction)
+        .filter(CreditTransaction.reference_id.like(f"%regenerate:{project.id}:%"))
+        .order_by(CreditTransaction.created_at)
+        .all()
+    )
 
-    assert _wallet(db, owner).subscription_credits == 5
-    assert len(no_background_ai) == 2
+
+def _age_charge(db, reference, hours=2):
+    db.query(CreditTransaction).filter(CreditTransaction.reference_id == reference).update(
+        {"created_at": datetime.utcnow() - timedelta(hours=hours)}
+    )
+    db.commit()
+
+
+def test_first_regenerate_is_free_then_one_credit_per_page_up_to_three(client, db, make_user, make_project, no_background_ai):
+    owner = make_user(credits=10)
+    project = make_project(owner, pages=3)
     a = client.get(f"/projects/{project.id}/ai-allowance", headers=owner["headers"]).json()
-    assert (a["regenerations_used"], a["regenerations_max"]) == (2, 2)
+    assert (a["next_regenerate_cost_credits"], a["regenerations_max"], a["regenerations_free"]) == (0, 3, 1)
+
+    r = _regenerate(client, owner, project)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert (body["charged"], body["credits_charged"], body["regenerations_left"], body["next_regenerate_cost_credits"]) == (False, 0, 2, 3)
+    assert _wallet(db, owner).subscription_credits == 10 and _regen_rows(db, project) == []
+    _finish_rebuild(db, project)
+
+    r = _regenerate(client, owner, project)
+    assert r.status_code == 200, r.text
+    assert (r.json()["charged"], r.json()["credits_charged"], r.json()["regenerations_left"]) == (True, 3, 1)
+    [row] = _regen_rows(db, project)
+    assert (row.type, row.amount, row.reference_id) == ("USAGE", -3, f"regenerate:{project.id}:1")
+    assert (row.from_subscription, row.from_purchased) == (3, 0)
+    assert _wallet(db, owner).subscription_credits == 7
+    _finish_rebuild(db, project)
+
+    assert _regenerate(client, owner, project).status_code == 200
+    _finish_rebuild(db, project)
+    assert _wallet(db, owner).subscription_credits == 4
+
+    r = _regenerate(client, owner, project)
+    assert r.status_code == 403
+    assert r.json()["detail"] == "Regenerate is limited to 3 per document"
+    assert _wallet(db, owner).subscription_credits == 4
+    assert len(no_background_ai) == 3
+    a = client.get(f"/projects/{project.id}/ai-allowance", headers=owner["headers"]).json()
+    assert (a["regenerations_used"], a["regenerations_max"]) == (3, 3)
+
+
+def test_paid_regenerate_splits_subscription_and_purchased_credits(client, db, make_user, make_project, no_background_ai):
+    owner = make_user(credits=1)
+    project = make_project(owner, pages=3)
+    project.revision_count = 1
+    db.commit()
+    wallet = _wallet(db, owner)
+    wallet.purchased_credits = 5
+    db.commit()
+
+    assert _regenerate(client, owner, project).status_code == 200
+    [row] = _regen_rows(db, project)
+    assert (row.from_subscription, row.from_purchased) == (1, 2)
+    wallet = _wallet(db, owner)
+    assert (wallet.subscription_credits, wallet.purchased_credits) == (0, 3)
+
+
+def test_regenerate_without_enough_credits_is_402(client, db, make_user, make_project, no_background_ai):
+    owner = make_user(credits=2)
+    project = make_project(owner, pages=3)
+    project.revision_count = 1
+    db.commit()
+
+    r = _regenerate(client, owner, project)
+    assert r.status_code == 402
+    assert r.json()["detail"] == "Regenerating again costs 3 credits (one per page). Add credits in Billing."
+    row = _project(db, project.id)
+    assert row.revision_count == 1 and row.rebuild_status is None
+    assert no_background_ai == [] and _regen_rows(db, project) == []
+    assert _wallet(db, owner).subscription_credits == 2
+
+
+def test_failed_paid_regenerate_refunds_once_and_gives_the_attempt_back(client, db, make_user, make_project, monkeypatch):
+    from app.services import ai_actions
+
+    real_run_rebuild = ai_actions.run_rebuild
+    monkeypatch.setattr(ai_actions, "run_rebuild", lambda *a: None)
+    owner = make_user(credits=10)
+    project = make_project(owner, pages=2)
+    project.revision_count = 1
+    db.commit()
+    assert _regenerate(client, owner, project).status_code == 200
+    assert _wallet(db, owner).subscription_credits == 8
+
+    _project(db, project.id).file_path = "uploads/missing.pdf"
+    db.commit()
+    real_run_rebuild(str(project.id), None)
+    row = _project(db, project.id)
+    assert row.rebuild_status == "failed" and row.revision_count == 1
+    assert _wallet(db, owner).subscription_credits == 10
+
+    # A second give-back of the same attempt (the stale sweep) must not refund it again.
+    row.rebuild_status = "running"
+    row.revision_count = 2
+    row.rebuild_started_at = datetime.utcnow() - timedelta(hours=2)
+    db.commit()
+    _age_charge(db, f"regenerate:{project.id}:1")
+    assert ai_actions.expire_stale_rebuilds(db) == 1
+    db.commit()
+    assert _wallet(db, owner).subscription_credits == 10
+    refunds = [r for r in _regen_rows(db, project) if r.type == "REFUND"]
+    assert [(r.amount, r.reference_id) for r in refunds] == [(2, f"refund:regenerate:{project.id}:1")]
+
+    # The retry is a fresh charge under the next reference.
+    row = _project(db, project.id)
+    row.rebuild_status = "failed"
+    row.revision_count = 1
+    db.commit()
+    assert _regenerate(client, owner, project).status_code == 200
+    assert _wallet(db, owner).subscription_credits == 8
+    assert [r.reference_id for r in _regen_rows(db, project) if r.type == "USAGE"] == [
+        f"regenerate:{project.id}:1",
+        f"regenerate:{project.id}:2",
+    ]
+
+
+def test_stale_paid_regenerate_is_refunded(client, db, make_user, make_project, no_background_ai):
+    from app.services import ai_actions
+
+    owner = make_user(credits=10)
+    project = make_project(owner, pages=4)
+    project.revision_count = 1
+    db.commit()
+    assert _regenerate(client, owner, project).status_code == 200
+    assert _wallet(db, owner).subscription_credits == 6
+
+    _project(db, project.id).rebuild_started_at = datetime.utcnow() - timedelta(hours=2)
+    db.commit()
+    _age_charge(db, f"regenerate:{project.id}:1")
+    assert ai_actions.expire_stale_rebuilds(db) == 1
+    db.commit()
+    assert _project(db, project.id).revision_count == 1
+    assert _wallet(db, owner).subscription_credits == 10
+
+
+def test_failed_uncharged_regenerate_keeps_earlier_charges(db, make_user, make_project):
+    from app.services import ai_actions
+    from app.services.credit_service import CreditService
+
+    owner = make_user(credits=10)
+    project = make_project(owner, pages=2)
+    project.revision_count = 2
+    CreditService.deduct_credits(db, str(owner["team"].id), 2, f"regenerate:{project.id}:1")
+    db.commit()
+    _age_charge(db, f"regenerate:{project.id}:1", hours=24)
+    project = _project(db, project.id)
+    project.file_path = "uploads/missing.pdf"
+    project.rebuild_status = "running"
+    project.rebuild_started_at = datetime.utcnow()
+    db.commit()
+
+    ai_actions.run_rebuild(str(project.id), None)
+    row = _project(db, project.id)
+    assert row.rebuild_status == "failed" and row.revision_count == 1
+    assert _wallet(db, owner).subscription_credits == 8
+
+
+def test_staff_regenerate_for_free(client, db, make_user, make_project, no_background_ai):
+    staff = make_user(credits=0)
+    staff["user"].role = "SUPER_ADMIN"
+    project = make_project(staff, pages=5)
+    project.revision_count = 1
+    db.commit()
+    a = client.get(f"/projects/{project.id}/ai-allowance", headers=staff["headers"]).json()
+    assert a["next_regenerate_cost_credits"] == 0
+    r = _regenerate(client, staff, project)
+    assert r.status_code == 200, r.text
+    assert r.json()["charged"] is False
+    assert _regen_rows(db, project) == []
+
+
+def test_existing_project_with_two_old_free_regenerations_pays_for_the_third(client, db, make_user, make_project, no_background_ai):
+    owner = make_user(credits=10)
+    project = make_project(owner, pages=2)
+    project.revision_count = 2
+    db.commit()
+    a = client.get(f"/projects/{project.id}/ai-allowance", headers=owner["headers"]).json()
+    assert (a["regenerations_used"], a["next_regenerate_cost_credits"]) == (2, 2)
+    assert client.get(f"/projects/{project.id}", headers=owner["headers"]).json()["next_regenerate_cost_credits"] == 2
+    assert _wallet(db, owner).subscription_credits == 10
+
+    assert _regenerate(client, owner, project).status_code == 200
+    assert _wallet(db, owner).subscription_credits == 8
+    _finish_rebuild(db, project)
+    assert _regenerate(client, owner, project).status_code == 403
+
+
+def test_editable_copy_regenerate_follows_the_same_rules(client, db, make_user, make_project, no_background_ai):
+    from app.models.project import MODE_DTP
+
+    owner = make_user(credits=10)
+    project = make_project(owner, pages=2)
+    project.mode = MODE_DTP
+    db.commit()
+    assert _regenerate(client, owner, project).json()["charged"] is False
+    _finish_rebuild(db, project)
+    r = _regenerate(client, owner, project)
+    assert r.status_code == 200 and r.json()["credits_charged"] == 2
+    assert _wallet(db, owner).subscription_credits == 8
+
+
+def test_regenerate_rules_follow_settings(client, db, make_user, make_project, monkeypatch, no_background_ai):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "REGENERATE_FREE_PER_PROJECT", 2)
+    monkeypatch.setattr(settings, "REGENERATE_LIMIT_PER_PROJECT", 2)
+    owner = make_user(credits=10)
+    project = make_project(owner, pages=2)
+    for _ in range(2):
+        r = _regenerate(client, owner, project)
+        assert r.status_code == 200 and r.json()["charged"] is False
+        _finish_rebuild(db, project)
+    assert _regenerate(client, owner, project).json()["detail"] == "Regenerate is limited to 2 per document"
 
 
 def test_failed_rebuild_gives_the_attempt_back(client, db, make_user, make_project, monkeypatch):

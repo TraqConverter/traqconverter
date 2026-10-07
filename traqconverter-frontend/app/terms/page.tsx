@@ -57,8 +57,10 @@ export default function TermsPage() {
       <h2 id="credits">5. Plans and credits</h2>
       <ul>
         <li>
-          <strong>1 credit = 1 page.</strong>{" "}Translating a page uses one credit. A page credit also includes a set
-          number of AI edits on that document; further AI edits use credits, as shown in the app.
+          <strong>1 credit = 1 page.</strong>{" "}Translating a page uses one credit. Each page also includes 5 AI edits
+          on that document; every 5 further AI edits use 1 credit. The first Regenerate of a document is free; each
+          later one uses one credit per page, up to 3 per document. A Regenerate that fails is refunded. The app shows
+          the cost before you confirm.
         </li>
         <li>
           Each plan adds a monthly allowance of credits at the start of every billing period. Unused monthly credits

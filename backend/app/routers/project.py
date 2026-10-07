@@ -858,6 +858,8 @@ def get_project_status(
         "rebuild_error": project.rebuild_error,
         "revision_count": project.revision_count or 0,
         "free_revisions_left": ai_actions.regenerations_left(project),
+        "regenerations_left": ai_actions.regenerations_left(project),
+        "next_regenerate_cost_credits": ai_actions.next_regenerate_cost(project, current_user),
     }
 
 
@@ -1372,7 +1374,7 @@ def rebuild_with_claude(
     if (project.source_kind or "").upper() not in ai_actions.REGENERABLE_KINDS:
         raise HTTPException(status_code=400, detail="Regenerating only works for PDF and image source projects")
 
-    ai_actions.use_regeneration(project)
+    charged = ai_actions.use_regeneration(db, project, current_user)
     ai_actions.claim_rebuild(project)
     db.commit()
     background_tasks.add_task(
@@ -1385,7 +1387,9 @@ def rebuild_with_claude(
         "rebuild_status": "rebuild_in_progress",
         "revision_count": project.revision_count,
         "regenerations_left": ai_actions.regenerations_left(project),
-        "charged": False,
+        "charged": bool(charged),
+        "credits_charged": charged,
+        "next_regenerate_cost_credits": ai_actions.next_regenerate_cost(project, current_user),
     }
 
 

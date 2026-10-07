@@ -1,6 +1,5 @@
 """Billing, locking and background execution for user-triggered AI work on an existing project."""
 import logging
-import os
 import shutil
 import tempfile
 from datetime import datetime, timedelta
@@ -9,18 +8,20 @@ from pathlib import Path
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.config import settings
+from app.models.credit import CreditTransaction
 from app.models.project import TranslationProject, is_dtp
 from app.core.roles import is_staff
 from app.models.user import User
 from app.services.credit_service import (
     CreditService,
+    DuplicateTransactionError,
     InsufficientCreditsError,
     WalletNotFoundError,
 )
 
 logger = logging.getLogger(__name__)
 
-REGENERATE_LIMIT = int(os.getenv("REGENERATE_LIMIT_PER_PROJECT", "2"))
 REBUILD_LOCK_MINUTES = 30
 # Regenerate re-authors the layout from page images, so it needs a PDF or an image source.
 REGENERABLE_KINDS = ("PDF", "IMAGE")
@@ -44,20 +45,72 @@ def charge(db: Session, project: TranslationProject, user: User, reference: str)
     return True
 
 
+def regenerate_limit() -> int:
+    return settings.REGENERATE_LIMIT_PER_PROJECT
+
+
 def regenerations_left(project: TranslationProject) -> int:
-    return max(0, REGENERATE_LIMIT - (project.revision_count or 0))
+    return max(0, regenerate_limit() - (project.revision_count or 0))
 
 
-def use_regeneration(project: TranslationProject) -> None:
-    """Count a regenerate or revise against the per-document limit; they are never charged."""
+def next_regenerate_cost(project: TranslationProject, user: User | None = None) -> int:
+    """Credits the next regenerate costs: free for the first ones and for staff, then one per page."""
+    if user is not None and is_staff(user):
+        return 0
+    if (project.revision_count or 0) < settings.REGENERATE_FREE_PER_PROJECT:
+        return 0
+    return max(1, project.page_count or 1)
+
+
+def regenerate_costs_message(cost: int) -> str:
+    unit = "credit" if cost == 1 else "credits"
+    return f"Regenerating again costs {cost} {unit} (one per page). Add credits in Billing."
+
+
+def _regenerate_charges(db: Session, project_id):
+    return db.query(CreditTransaction).filter(
+        CreditTransaction.type == "USAGE",
+        CreditTransaction.reference_id.like(f"regenerate:{project_id}:%"),
+    )
+
+
+def use_regeneration(db: Session, project: TranslationProject, user: User) -> int:
+    """Count a regenerate against the per-document cap and charge it when it isn't free. Caller commits."""
     if regenerations_left(project) <= 0:
-        raise HTTPException(status_code=403, detail=f"Regenerate is limited to {REGENERATE_LIMIT} per document")
+        raise HTTPException(status_code=403, detail=f"Regenerate is limited to {regenerate_limit()} per document")
+    cost = next_regenerate_cost(project, user)
+    if cost:
+        attempt = _regenerate_charges(db, project.id).count() + 1
+        try:
+            CreditService.deduct_credits(
+                db=db,
+                team_id=str(project.team_id),
+                amount=cost,
+                reference_id=f"regenerate:{project.id}:{attempt}",
+            )
+        except (InsufficientCreditsError, WalletNotFoundError):
+            raise HTTPException(status_code=402, detail=regenerate_costs_message(cost))
+        except DuplicateTransactionError:
+            raise HTTPException(status_code=409, detail="A regenerate is already starting for this document")
     project.revision_count = (project.revision_count or 0) + 1
+    return cost
 
 
-def return_regeneration(project: TranslationProject) -> None:
-    """A failed attempt doesn't count against the limit."""
+def return_regeneration(db: Session, project: TranslationProject) -> None:
+    """A failed attempt doesn't count against the cap, and its charge, if any, is refunded. Caller commits."""
     project.revision_count = max(0, (project.revision_count or 0) - 1)
+    started = project.rebuild_started_at
+    if not started:
+        return
+    # The running attempt's charge is the newest one, made just before the rebuild was claimed.
+    latest = (
+        _regenerate_charges(db, project.id)
+        .filter(CreditTransaction.created_at >= started - timedelta(minutes=1))
+        .order_by(CreditTransaction.created_at.desc())
+        .first()
+    )
+    if latest:
+        CreditService.refund_usage(db, latest.reference_id)
 
 
 def claim_rebuild(project: TranslationProject) -> None:
@@ -136,8 +189,8 @@ def run_rebuild(project_id: str, instructions: str | None) -> None:
             db.rollback()
             logger.exception("Rebuild failed for project %s", project_id)
             project.rebuild_status = "failed"
-            project.rebuild_error = "The layout rebuild failed; it didn't count toward your regenerate limit"
-            return_regeneration(project)
+            project.rebuild_error = "The layout rebuild failed; it didn't count toward your regenerate limit, and any credits it used were refunded"
+            return_regeneration(db, project)
             db.commit()
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -158,5 +211,5 @@ def expire_stale_rebuilds(db: Session) -> int:
     for project in stale:
         project.rebuild_status = "failed"
         project.rebuild_error = "The layout rebuild was interrupted; try again"
-        return_regeneration(project)
+        return_regeneration(db, project)
     return len(stale)
