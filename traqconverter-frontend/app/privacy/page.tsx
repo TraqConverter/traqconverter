@@ -174,6 +174,11 @@ export default function PrivacyPage() {
         </li>
       </ul>
 
+      <p id="support-chat">
+        Questions you ask in the in-app Help chat are sent to Anthropic to generate the answers. We don&apos;t store
+        the questions or the answers; we keep only the number of messages and the tokens used.
+      </p>
+
       <h2 id="processors">6. Who processes data for us</h2>
       <p>We use these sub-processors. Each is bound by a data processing agreement.</p>
       <TableScroll>
