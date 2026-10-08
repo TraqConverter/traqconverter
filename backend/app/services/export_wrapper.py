@@ -5,13 +5,13 @@ path or the user's WYSIWYG edits) in the canonical certified-
 translation layout:
 
   [SOURCE PAGES — original PDF rendered as images, 1 page = 1 DOCX page]
-  [TRANSLATED CONTENT — merged in from the authored / edited DOCX]
+  [TRANSLATED CONTENT — the authored / edited DOCX itself, the base document]
   [CERTIFICATION PAGE — translator + date stamp, optionally via the
    project's selected certification template with {{token}} expansion]
 
 The editor document carries its own page stamp. An older one gets the
-team's stamp from Media (by target language) in the section footer, so
-Word repeats it on every page.
+team's stamp from Media (by target language) in every section footer of
+the translation, so Word repeats it on every page.
 
 This is invoked from `generate_docx` and `generate_pdf` in
 `export_service.py` whenever the project has an authored DOCX or
@@ -31,7 +31,6 @@ from typing import Optional
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.section import WD_SECTION
 from docx.oxml.ns import qn
 from docx.shared import Cm, Emu, Pt
 
@@ -81,43 +80,6 @@ def _render_source_pages_as_images(pdf_path: Path, work_dir: Path) -> list:
         except Exception:
             pass
     return out
-
-
-
-
-
-
-def _install_stamp_in_footer(section, stamp_path, alignment: str = "right", width=None):
-    """Insert the team stamp image into the section's footer. Word
-    auto-replicates section footers on every page of that section, so
-    the stamp shows up on every page without per-page code."""
-    try:
-        footer = section.footer
-
-        if footer.paragraphs:
-            p = footer.paragraphs[0]
-        else:
-            p = footer.add_paragraph()
-
-
-        for run in list(p.runs):
-            run.text = ""
-
-        align_map = {
-            "left": WD_ALIGN_PARAGRAPH.LEFT,
-            "center": WD_ALIGN_PARAGRAPH.CENTER,
-            "right": WD_ALIGN_PARAGRAPH.RIGHT,
-        }
-        p.alignment = align_map.get(alignment, WD_ALIGN_PARAGRAPH.RIGHT)
-
-        run = p.add_run()
-
-
-        source = stamp_path if hasattr(stamp_path, "read") else str(stamp_path)
-        run.add_picture(source, width=width or Cm(3))
-    except Exception:
-        logger.exception("Failed to install team stamp in footer")
-
 
 
 
@@ -408,6 +370,66 @@ def _append_certification(dst_doc: Document, project, user, work_dir: Path):
 
 
 
+def _w_el(tag: str, **attrs):
+    from docx.oxml import OxmlElement
+
+    el = OxmlElement(f"w:{tag}")
+    for name, value in attrs.items():
+        el.set(qn(f"w:{name}"), str(value))
+    return el
+
+
+def _source_page_sectpr(page_w, page_h, margin):
+    sect = _w_el("sectPr")
+    sect.append(_w_el("pgSz", w=int(page_w.twips), h=int(page_h.twips), **({"orient": "landscape"} if page_w > page_h else {})))
+    m = int(margin.twips)
+    sect.append(_w_el("pgMar", top=m, right=m, bottom=m, left=m, header=0, footer=0, gutter=0))
+    sect.append(_w_el("cols", space=720))
+    return sect
+
+
+def _source_image_width(img_path: Path, max_w, max_h):
+    try:
+        from PIL import Image
+
+        with Image.open(img_path) as im:
+            w, h = im.size
+        return Emu(int(min(max_w, max_h * w / max(1, h))))
+    except Exception:
+        return max_w
+
+
+def _prepend_source_pages(doc: Document, page_imgs: list, landscape: bool) -> None:
+    """One section per original page, ahead of the translation, which keeps its own page setup, header and footer.
+
+    These sections reference no header or footer, so the original's pages print without them.
+    """
+    page_w, page_h = (Cm(29.7), Cm(21)) if landscape else (Cm(21), Cm(29.7))
+    margin = Cm(1)
+    max_w = page_w - 2 * margin
+    # A little under the text height, so an image line never spills onto a blank page.
+    max_h = page_h - 2 * margin - Cm(0.5)
+    body = doc.element.body
+    first = next((c for c in body.iterchildren() if c.tag != qn("w:sectPr")), None)
+    first_sect = next(body.iter(qn("w:sectPr")), None)
+    for img in page_imgs:
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        fmt = p.paragraph_format
+        fmt.space_before = fmt.space_after = Pt(0)
+        fmt.line_spacing = 1.0
+        fmt.left_indent = fmt.right_indent = fmt.first_line_indent = Cm(0)
+        p.add_run().add_picture(str(img), width=_source_image_width(Path(img), max_w, max_h))
+        p._p.get_or_add_pPr().append(_source_page_sectpr(page_w, page_h, margin))
+        if first is not None:
+            first.addprevious(p._p)
+    # The translation's first section followed nothing before; now it must still start on its own page.
+    if page_imgs and first_sect is not None:
+        kind = first_sect.find(qn("w:type"))
+        if kind is not None:
+            first_sect.remove(kind)
+
+
 def build_full_export_docx(
     translated_docx_bytes: bytes,
     project,
@@ -420,41 +442,35 @@ def build_full_export_docx(
         [translated content]
         [certification page]
 
-    Team stamp (if configured) lives in the footer and repeats on
-    every page.
+    The translation is the base document, so its styles, defaults, theme, settings, page setup,
+    headers and footers reach the export and the PDF exactly as the editor shows them.
 
     Returns a BytesIO containing the finished DOCX, positioned at 0.
     """
     work_dir = Path(tempfile.mkdtemp(prefix="export_wrap_"))
     try:
-
-        out = Document()
-        section = out.sections[0]
-        section.top_margin = Cm(2)
-        section.bottom_margin = Cm(2.2)
-        section.left_margin = Cm(2)
-        section.right_margin = Cm(2)
-
-
         from app.services import docx_page_stamp
 
+        data = translated_docx_bytes
         # The editor document carries its own stamp, as the user placed (or removed) it.
-        editor_stamp = docx_page_stamp.is_marked(translated_docx_bytes)
-        try:
-            if not editor_stamp:
+        if not docx_page_stamp.is_marked(data):
+            try:
+                from app.services.docx_images import prepare_image
                 from app.services.export_service import _resolve_team_stamp
+
                 stamp_path, alignment = _resolve_team_stamp(project, work_dir)
                 if stamp_path:
-                    _install_stamp_in_footer(section, Path(stamp_path), alignment)
+                    image = prepare_image(Path(stamp_path).read_bytes())
+                    data = docx_page_stamp.add_export_stamp(data, image, alignment)
+            except Exception:
+                logger.exception("Team-stamp resolution failed — continuing without footer stamp")
+
+        try:
+            out = Document(BytesIO(data))
         except Exception:
-            logger.exception(
-                "Team-stamp resolution failed — continuing without footer stamp"
-            )
-
-
-
-
-
+            logger.exception("Translated document wouldn't open")
+            out = Document()
+            out.add_paragraph("Translation content could not be merged. Please contact support.")
 
         source_added = False
         try:
@@ -473,88 +489,21 @@ def build_full_export_docx(
                 and source_path.exists()
                 and str(source_path).lower().endswith(".pdf")
             ):
-
-
-                src_orient = _detect_source_page_orientation(source_path)
-                if src_orient == "landscape":
-
-                    pg_w, pg_h = Cm(29.7), Cm(21)
-                    src_img_w = Cm(27.7)
-                else:
-
-                    pg_w, pg_h = Cm(21), Cm(29.7)
-                    src_img_w = Cm(19)
                 page_imgs = _render_source_pages_as_images(source_path, work_dir)
                 if page_imgs:
-                    section.page_width = pg_w
-                    section.page_height = pg_h
-                    section.top_margin = Cm(1)
-                    section.bottom_margin = Cm(1)
-                    section.left_margin = Cm(1)
-                    section.right_margin = Cm(1)
-                for i, img in enumerate(page_imgs):
-                    if i > 0:
-                        new_sect = out.add_section(WD_SECTION.NEW_PAGE)
-                        new_sect.page_width = pg_w
-                        new_sect.page_height = pg_h
-                        new_sect.top_margin = Cm(1)
-                        new_sect.bottom_margin = Cm(1)
-                        new_sect.left_margin = Cm(1)
-                        new_sect.right_margin = Cm(1)
-                    p = out.add_paragraph()
-                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    p.paragraph_format.space_before = Pt(0)
-                    p.paragraph_format.space_after = Pt(0)
-                    run = p.add_run()
-
-                    run.add_picture(str(img), width=src_img_w)
-                if page_imgs:
+                    landscape = _detect_source_page_orientation(source_path) == "landscape"
+                    _prepend_source_pages(out, page_imgs, landscape)
                     source_added = True
-
-
-                    body_sect = out.add_section(WD_SECTION.NEW_PAGE)
-                    body_sect.page_width = pg_w
-                    body_sect.page_height = pg_h
-                    body_sect.top_margin = Cm(2)
-                    body_sect.bottom_margin = Cm(2.2)
-                    body_sect.left_margin = Cm(2)
-                    body_sect.right_margin = Cm(2)
         except Exception:
             logger.exception(
                 "Source-page embedding failed — continuing without source pages"
             )
-
-        if editor_stamp:
-            # Installed after the original's pages, whose sections then keep an empty footer as in the editor.
-            try:
-                shown = docx_page_stamp.export_stamp(translated_docx_bytes)
-                if shown:
-                    image, alignment, width_emu = shown
-                    # Otherwise python-docx writes the footer into the first (original page) section.
-                    section.footer.is_linked_to_previous = False
-                    _install_stamp_in_footer(section, BytesIO(image), alignment, Emu(width_emu))
-            except Exception:
-                logger.exception("Editor page stamp couldn't be placed in the export")
-
-
-        try:
-            translated_doc = Document(BytesIO(translated_docx_bytes))
-            _append_body_from(translated_doc, out)
-        except Exception:
-            logger.exception("Translated-body merge failed")
-
-
-            out.add_paragraph(
-                "Translation content could not be merged. Please contact support."
-            )
-
 
         if append_certification:
             try:
                 _append_certification(out, project, user, work_dir)
             except Exception:
                 logger.exception("Certification append failed")
-
 
         buf = BytesIO()
         out.save(buf)

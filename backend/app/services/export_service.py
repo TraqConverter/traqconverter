@@ -556,8 +556,15 @@ def generate_docx(segments, user_email, project=None, user=None):
                     build_full_export_docx,
                 )
 
+                from docx.shared import Cm as _Cm
+
                 parser = HtmlToDocx()
                 _doc = _Doc()
+                # The wrapper keeps the translation's page setup; python-docx's blank document is US Letter.
+                _sect = _doc.sections[0]
+                _sect.page_width, _sect.page_height = _Cm(21), _Cm(29.7)
+                _sect.top_margin = _sect.left_margin = _sect.right_margin = _Cm(2)
+                _sect.bottom_margin = _Cm(2.2)
                 parser.add_html_to_document(edited_html, _doc)
                 buf = _BIO()
                 _doc.save(buf)
