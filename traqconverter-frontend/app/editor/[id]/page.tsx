@@ -60,6 +60,8 @@ type ProjectInfo = {
   free_revisions_left?: number
   regenerations_left?: number
   next_regenerate_cost_credits?: number
+  // Owner, admin or PM: may certify, rerun and regenerate.
+  can_lead?: boolean
 }
 
 type DocStatus = {
@@ -633,8 +635,10 @@ export default function EditorPage() {
   // An editable copy is never certified.
   const isDtp = project.mode === "dtp"
   // The server only regenerates from page images; a Word source would always be refused.
-  const canRegenerate = REGENERABLE_KINDS.includes((project.source_kind || "").toUpperCase())
-  const reviewStatuses = isDtp ? REVIEW_STATUSES.filter((s) => s.value !== "CERTIFIED") : REVIEW_STATUSES
+  const canLead = project.can_lead !== false
+  const canRegenerate = canLead && REGENERABLE_KINDS.includes((project.source_kind || "").toUpperCase())
+  const canCertify = !isDtp && canLead
+  const reviewStatuses = canCertify ? REVIEW_STATUSES : REVIEW_STATUSES.filter((s) => s.value !== "CERTIFIED")
 
   return (
     <div className="max-w-[1400px] mx-auto pb-12" onClick={() => setShowStatusMenu(false)}>
@@ -954,7 +958,7 @@ export default function EditorPage() {
           onExport={(kind) => void exportFile(kind)}
           onShare={() => setShareOpen(true)}
         />
-        {!isDtp && (
+        {canCertify && (
           <button
             type="button"
             onClick={() => void certify()}

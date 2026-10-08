@@ -70,8 +70,9 @@ python -m alembic upgrade head
    | Variable | Value |
    |---|---|
    | `NEXT_PUBLIC_API_URL` | Railway API URL, no trailing slash |
+   | `NEXT_PUBLIC_STORAGE_ORIGIN` | Optional. Only if files are stored somewhere other than Supabase (`*.supabase.co` is always allowed), e.g. `https://my-bucket.s3.eu-west-1.amazonaws.com` |
 
-   It is inlined at build time. A production build without it fails on purpose, so redeploy after changing it.
+   They are inlined at build time, and the Content-Security-Policy is built from them: the API origin (and its `wss://`) and the storage origin are the only outside hosts pages may load from. A production build without it fails on purpose, so redeploy after changing it.
 3. Deploy, then set `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`, `FRONTEND_URL` and `CORS_ORIGINS` on Railway to the Vercel domain and redeploy the backend.
 
 ## 4. Stripe products, portal and webhooks

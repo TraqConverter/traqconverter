@@ -83,9 +83,17 @@ BUCKET_NAME = settings.S3_BUCKET_NAME
 
 
 
+def key_ref(key: str | None) -> str:
+    """A storage key for logs: older keys end in the uploaded file name, so only the prefix and uuid are kept."""
+    if not key:
+        return "-"
+    head, _, name = key.rpartition("/")
+    return f"{head}/{name[:36]}" if head else name[:36]
+
+
 def upload_file_to_s3(file_path: Path, prefix: str = "uploads") -> str:
-    """Upload a file and return the object key."""
-    key = f"{prefix}/{uuid.uuid4()}_{file_path.name}"
+    """Upload a file and return the object key: a uuid and the extension, never the file name."""
+    key = f"{prefix}/{uuid.uuid4()}{file_path.suffix.lower()}"
 
     try:
 
@@ -100,7 +108,7 @@ def upload_file_to_s3(file_path: Path, prefix: str = "uploads") -> str:
             key,
             ExtraArgs=extra_args or None,
         )
-        logger.info(f"Object upload successful: {key}")
+        logger.info("Object upload successful: %s", key_ref(key))
         return key
     except ClientError:
         logger.exception("Object upload failed")
@@ -115,7 +123,7 @@ def download_file_from_s3(key: str, destination: Path):
     """Download an object to local filesystem."""
     try:
         s3_client.download_file(BUCKET_NAME, key, str(destination))
-        logger.info(f"Object download successful: {key}")
+        logger.info("Object download successful: %s", key_ref(key))
     except ClientError:
         logger.exception("Object download failed")
         raise
@@ -182,7 +190,7 @@ def generate_presigned_download_url(
         )
         logger.info(
             "Generated signed URL for %s (%s)",
-            key,
+            key_ref(key),
             "inline" if inline else "attachment",
         )
         return url
@@ -200,10 +208,10 @@ def object_exists(key: str) -> bool:
         code = str(e.response.get("Error", {}).get("Code", ""))
         if code in {"404", "NoSuchKey", "NotFound"}:
             return False
-        logger.warning("head_object failed for %s: %s", key, code)
+        logger.warning("head_object failed for %s: %s", key_ref(key), code)
         return True
     except Exception:
-        logger.exception("head_object failed for %s", key)
+        logger.exception("head_object failed for %s", key_ref(key))
         return True
 
 
@@ -213,4 +221,4 @@ def delete_objects_from_s3(keys) -> None:
         try:
             s3_client.delete_object(Bucket=BUCKET_NAME, Key=key)
         except ClientError:
-            logger.exception("Object delete failed: %s", key)
+            logger.exception("Object delete failed: %s", key_ref(key))

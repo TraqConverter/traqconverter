@@ -129,15 +129,11 @@ export default function MembersPage() {
       })
       setInviteEmail("")
       setShowInvite(false)
-      if (res.data?.added) {
-        setFlash(`${email} was added to your team.`)
-      } else {
-        setFlash(
-          res.data?.email_delivered === false
-            ? `Invite created for ${email}, but the email couldn't be sent. Ask them to sign up with this address.`
-            : `Invite sent to ${email}. They join when they open the link in the email.`
-        )
-      }
+      setFlash(
+        res.data?.email_delivered === false
+          ? `Invite created for ${email}, but the email couldn't be sent. Try again later.`
+          : `Invite sent to ${email}. They join when they open the link in the email and accept.`
+      )
       setTimeout(() => setFlash(null), 5000)
       await fetchMembers()
     } catch (err: unknown) {
@@ -396,9 +392,9 @@ export default function MembersPage() {
             </button>
           </div>
           <p className="text-xs mt-4" style={{ color: "#8a8270" }}>
-            If they already have a OnlineDocTranslator account, they&apos;ll be added
-            instantly. Otherwise we email them an invite link and keep the
-            invite pending until they sign up or accept it.
+            We email them an invite link. They join only when they open it and
+            accept, signing in or creating an account. Until then the invite
+            stays pending.
           </p>
         </div>
       )}

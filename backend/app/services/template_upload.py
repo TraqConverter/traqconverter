@@ -102,7 +102,7 @@ def _delete_files(keys: list[str]) -> None:
     try:
         delete_objects_from_s3([k for k in keys if k])
     except Exception:
-        logger.warning("Couldn't delete pending template files %s", keys)
+        logger.warning("Couldn't delete %d pending template file(s)", len(keys))
 
 
 def clean_profile(fields: dict) -> dict:

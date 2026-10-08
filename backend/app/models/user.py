@@ -38,6 +38,11 @@ class User(Base):
 
     terms_accepted_at = Column(DateTime, nullable=True)
 
+    # Login lockout, kept in the DB so it holds across deploys and instances.
+    failed_login_count = Column(Integer, nullable=False, default=0, server_default="0")
+    failed_login_window_start = Column(DateTime, nullable=True)
+    login_locked_until = Column(DateTime, nullable=True)
+
 
 
 

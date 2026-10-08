@@ -42,6 +42,8 @@ export type BatchTerm = {
 export type BatchDetail = BatchSummary & {
   projects: BatchDoc[]
   batch_terms: BatchTerm[]
+  // Owner, admin or PM only.
+  can_certify?: boolean
 }
 
 const KIND_ORDER = ["person", "institution", "place", "degree", "term"]
@@ -252,7 +254,7 @@ const BatchGroup = forwardRef<HTMLDivElement, Props>(function BatchGroup(
               {busy === `zip:${f}` ? "Preparing…" : ZIP_LABELS[f].button}
             </button>
           ))}
-          {confirming ? (
+          {detail?.can_certify === false ? null : confirming ? (
             <>
               <button
                 type="button"

@@ -13,8 +13,6 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
 from app.models.saved_instruction import NAME_MAX, SavedInstruction
-from app.models.team import Team
-from app.models.team_member import TeamMember
 from app.models.user import User
 from app.services import project_instructions
 
@@ -37,12 +35,12 @@ class _Update(BaseModel):
 
 
 def _team_id(db: Session, user: User):
-    team = db.query(Team.id).filter(Team.owner_id == user.id).first()
-    if not team:
-        team = db.query(TeamMember.team_id).filter(TeamMember.user_id == user.id).first()
-    if not team:
+    from app.dependencies.tenant import active_team_id
+
+    team_id = active_team_id(db, user)
+    if not team_id:
         raise HTTPException(status_code=400, detail="Team not found")
-    return team[0]
+    return team_id
 
 
 def _serialize(row: SavedInstruction) -> dict:

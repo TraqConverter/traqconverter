@@ -289,7 +289,7 @@ def store_template(
             try:
                 delete_objects_from_s3([old_key])
             except Exception:
-                logger.warning("Couldn't delete replaced template file %s", old_key)
+                logger.warning("Couldn't delete replaced template file (team=%s)", team_id)
     else:
         template = DocumentTemplate(
             team_id=team_id,

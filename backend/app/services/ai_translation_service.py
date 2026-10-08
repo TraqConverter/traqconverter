@@ -280,7 +280,7 @@ def flush_glossary_usage(db, counts: dict[str, int]) -> None:
             )
         db.commit()
     except Exception as e:
-        print("GLOSSARY USAGE WRITE ERROR:", e)
+        logger.warning("Glossary usage write failed: %s", type(e).__name__)
         try:
             db.rollback()
         except Exception:
@@ -363,7 +363,7 @@ def translate_text(
             flush_glossary_usage(db, usage_counts)
 
         except Exception as e:
-            print("GLOSSARY ERROR:", e)
+            logger.warning("Glossary lookup failed: %s", type(e).__name__)
 
     src_name = humanize_lang(source_lang)
     tgt_name = humanize_lang(target_lang)
@@ -445,7 +445,7 @@ def translate_batch(
             }
 
         except Exception as e:
-            print("GLOSSARY ERROR:", e)
+            logger.warning("Glossary lookup failed: %s", type(e).__name__)
 
 
 

@@ -112,6 +112,21 @@ _ensure_schema_columns()
 
 
 
+def sentry_scrub(event, hint):
+    """Drops request bodies, cookies and auth headers from a Sentry event."""
+    request = event.get("request")
+    if isinstance(request, dict):
+        request.pop("data", None)
+        request.pop("cookies", None)
+        headers = request.get("headers")
+        if isinstance(headers, dict):
+            for name in list(headers):
+                if name.lower() in ("authorization", "cookie", "x-api-key"):
+                    headers[name] = "[Filtered]"
+    event.pop("user", None)
+    return event
+
+
 try:
     from app.config import settings as _bootstrap_settings
 
@@ -124,6 +139,11 @@ try:
             traces_sample_rate=_bootstrap_settings.SENTRY_TRACES_SAMPLE_RATE,
             environment=_bootstrap_settings.environment,
             integrations=[FastApiIntegration()],
+            # Documents, translations and emails must not leave in error reports.
+            send_default_pii=False,
+            include_local_variables=False,
+            max_request_body_size="never",
+            before_send=sentry_scrub,
         )
         logger.info(
             "Sentry initialised (env=%s)", _bootstrap_settings.environment

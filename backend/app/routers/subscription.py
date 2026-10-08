@@ -11,7 +11,6 @@ from app.dependencies.feature_guard import effective_plan
 from app.dependencies.tenant import can_manage_team
 from app.models.user import User
 from app.models.team import Team
-from app.models.team_member import TeamMember
 from app.models.credit import CreditTransaction, CreditWallet
 from app.models.stripe_event import StripeEvent
 from app.config import settings
@@ -31,17 +30,9 @@ def _resolve_user_team(db: Session, user: User):
     """Audit P1 #6: owner-or-member so invited members can buy
     credits and upgrade plans.
     """
-    team = db.query(Team).filter(Team.owner_id == user.id).first()
-    if team:
-        return team
-    membership = (
-        db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
-    )
-    if membership:
-        return (
-            db.query(Team).filter(Team.id == membership.team_id).first()
-        )
-    return None
+    from app.dependencies.tenant import active_team
+
+    return active_team(db, user)
 
 
 MANAGERS_ONLY = "Only the team owner or an admin can manage the subscription."

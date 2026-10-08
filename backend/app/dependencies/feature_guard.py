@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.user import User
 from app.models.team import Team
-from app.models.team_member import TeamMember
 from app.models.credit import CreditWallet
 from app.dependencies import get_current_user
 from app.core.plan_features import PAID_PLANS, PLAN_FEATURES, PLANS
@@ -18,15 +17,9 @@ _is_admin = is_staff
 
 
 def _resolve_team_id(db: Session, user: User):
-    team = db.query(Team).filter(Team.owner_id == user.id).first()
-    if team:
-        return team.id
-    membership = (
-        db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
-    )
-    if membership:
-        return membership.team_id
-    return None
+    from app.dependencies.tenant import active_team_id
+
+    return active_team_id(db, user)
 
 
 def _wallet_plan(db: Session, team_id) -> str:

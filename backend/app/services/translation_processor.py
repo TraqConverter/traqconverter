@@ -220,7 +220,7 @@ def _finish_template_fill(db, project, job, temp_dir) -> bool:
         logger.exception("Template fill failed; using the normal rebuild (project=%s)", project.id)
         return False
     from app.models.learning import DocumentTemplate
-    from app.services import s3_service
+    from app.services import s3_service, template_fill
 
     path = temp_dir / f"template_{project.id}.docx"
     path.write_bytes(docx_bytes)
@@ -231,7 +231,7 @@ def _finish_template_fill(db, project, job, temp_dir) -> bool:
         learning.mark_template_used(db, project, template)
     db.commit()
     project_files.delete_replaced(db, [replaced])
-    logger.info("Built from template (project=%s template=%s stats=%s)", project.id, template_id, stats)
+    logger.info("Built from template (project=%s template=%s stats=%s)", project.id, template_id, template_fill.loggable_stats(stats))
     return True
 
 

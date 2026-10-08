@@ -509,11 +509,11 @@ def ocr_image(image_path: str) -> list[dict[str, Any]] | None:
     raw_count = len(raw_elements)
     logger.info(
         "Claude Vision OCR (%s): model returned %d raw elements, "
-        "%d kept after validation (%d junk fragments dropped), from %s",
+        "%d kept after validation (%d junk fragments dropped)",
         _PROMPT_VERSION,
         raw_count,
         len(out),
         dropped_junk,
-        image_path,
+        
     )
     return out
