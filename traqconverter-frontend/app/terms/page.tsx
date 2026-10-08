@@ -213,13 +213,17 @@ export default function TermsPage() {
         </li>
       </ul>
 
-      <h2 id="indemnity">10. Claims by your clients</h2>
+      <h2 id="indemnity">10. You are responsible for your translations</h2>
       <p>
-        If one of your clients, or anyone else who relies on a translation you delivered, makes a claim against us
-        about that translation, its certification, the stamps or signatures on it, or a payment between you and
-        them, you agree to cover our reasonable losses and costs from that claim, including reasonable legal fees.
-        This doesn&apos;t apply to the extent the claim was caused by our own breach of these terms or our
-        negligence. We will tell you about the claim promptly and let you take part in handling it.
+        You, the translator or agency, are solely responsible to your clients for every translation you deliver: its
+        accuracy, its certification, the stamps and signatures on it, and any payment between you and your clients.
+        OnlineDocTranslator and Lumax Digital LTD are not responsible to your clients for any of these.
+      </p>
+      <p>
+        If one of your clients, or anyone else who relies on a translation you delivered, still makes a claim against
+        us about any of these, you agree to cover our reasonable losses and costs from that claim, including
+        reasonable legal fees. This doesn&apos;t apply to the extent the claim was caused by our own breach of these
+        terms or our negligence. We will tell you about the claim promptly and let you take part in handling it.
       </p>
 
       <h2 id="links">11. Client delivery links and payments</h2>
