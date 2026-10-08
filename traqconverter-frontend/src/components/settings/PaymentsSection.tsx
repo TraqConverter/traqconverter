@@ -298,7 +298,7 @@ export default function PaymentsSection() {
           )
           : data?.stripe_status === "active"
           ? "No PayPal.me name: clients pay through Stripe only."
-          : "No PayPal.me name yet: connect Stripe or add one to create protected links."}
+          : "No PayPal.me name yet. Protected links still work: clients pay you directly and you unlock them."}
       </div>
       {saved && (
         <div className="text-[13px] mt-1" style={{ color: "#2d5a24" }}>

@@ -82,11 +82,7 @@ def _protected_amount(db: Session, project: TranslationProject, data: _CreatePay
         cents = paypal.to_cents(data.amount)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    team = db.query(Team).filter(Team.id == project.team_id).first()
-    if not team or not (team.paypal_me or stripe_connect.is_active(team)):
-        raise HTTPException(
-            status_code=422, detail="Connect Stripe or add your PayPal.me name in Settings → Payments first"
-        )
+    # No Stripe or PayPal is fine: the client pays another way (bank transfer) and the team unlocks by hand.
     return cents
 
 

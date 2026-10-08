@@ -133,7 +133,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
   const canTakePayment = stripeActive || !!handle
   const parsedAmount = parseAmount(amount)
   const amountInvalid = !!amount.trim() && parsedAmount == null
-  const ready = !isProtected || (canTakePayment && parsedAmount != null)
+  const ready = !isProtected || parsedAmount != null
 
   const toggleProtected = () => {
     const next = !isProtected
@@ -295,22 +295,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
 
           {isProtected && (
             <div className="mt-3 pt-3" style={{ borderTop: "1px solid #efe6d0" }}>
-              {!canTakePayment ? (
-                <div className="text-[13px]" style={{ color: "#7a5a10" }}>
-                  {payments === null ? (
-                    "Checking your payment settings…"
-                  ) : (
-                    <>
-                      Connect Stripe or add your PayPal.me name first, in{" "}
-                      <Link href="/settings/account#payments" className="font-semibold underline" style={{ color: "#0a5e58" }}>
-                        Settings → Payments
-                      </Link>
-                      .
-                    </>
-                  )}
-                </div>
-              ) : (
-                <>
+              <>
                   <label className="block sm:w-1/2">
                     <span className="block text-[12px] font-semibold mb-1" style={{ color: "#4a4638" }}>
                       Amount (€)
@@ -333,10 +318,20 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                       ? `Enter an amount above 0 and up to ${MAX_AMOUNT}.`
                       : stripeActive
                       ? `Client pays ${parsedAmount != null ? money(parsedAmount, "EUR") : "the amount"} by card, wallet or PayPal on Stripe${handle ? ", or on PayPal.me" : ""}.`
-                      : `Client pays at paypal.me/${handle}/${parsedAmount != null ? amountText(parsedAmount) : "…"}EUR`}
+                      : handle
+                      ? `Client pays at paypal.me/${handle}/${parsedAmount != null ? amountText(parsedAmount) : "…"}EUR`
+                      : "Client pays you directly, e.g. by bank transfer. Unlock the link from this list once the money arrives."}
                   </div>
-                </>
-              )}
+                  {!canTakePayment && payments !== null && (
+                    <div className="text-[12px] mt-1" style={{ color: "#8a8270" }}>
+                      To take card or PayPal payments, set them up in{" "}
+                      <Link href="/settings/account#payments" className="font-semibold underline" style={{ color: "#0a5e58" }}>
+                        Settings → Payments
+                      </Link>
+                      .
+                    </div>
+                  )}
+              </>
             </div>
           )}
         </div>

@@ -249,7 +249,7 @@ function LockedPreview({
           ) : (
             !card && (
               <div className="text-sm text-center" style={{ color: "#6b6558" }}>
-                {info.company ? `Contact ${info.company} to pay.` : "Contact the translator to pay."}
+                {info.company ? `Contact ${info.company} to pay ${amount}.` : `Contact the translator to pay ${amount}.`}
               </div>
             )
           )}
