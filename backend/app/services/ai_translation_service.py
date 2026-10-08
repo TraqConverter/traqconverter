@@ -70,6 +70,20 @@ MODEL_OPTIONS: dict[str, dict] = {
 }
 
 
+# With this key Claude translates and rebuilds a PDF's layout itself.
+CLAUDE_AUTHORED = "claude-authored"
+
+# What the New project page offers; the first is the default.
+TRANSLATION_CHOICES: list[dict] = [
+    {"id": CLAUDE_AUTHORED, "label": "Claude", "provider": "anthropic", "recommended": True},
+    {"id": "gpt-4.1", "label": "GPT-4.1 (OpenAI)", "provider": "openai", "recommended": False},
+]
+
+
+def uses_openai(model_key: str | None) -> bool:
+    return _resolve_model(model_key)["provider"] == "openai"
+
+
 def _resolve_model(model_key: str | None) -> dict:
     """Return the catalog entry for the given key, falling back to
     'balanced' (Claude Sonnet 4.6) when the key is unknown / empty."""
@@ -320,10 +334,11 @@ def _batch_terms_prompt(db, project, text: str) -> str:
     return f"\n{block}" if block else ""
 
 
-def _instructions_prompt(project) -> str:
+def _instructions_prompt(project, extra: str = "") -> str:
     from app.services.project_instructions import prompt_block
 
-    block = prompt_block(getattr(project, "ai_instructions", None))
+    saved = getattr(project, "ai_instructions", None) or ""
+    block = prompt_block("\n".join(t for t in (saved.strip(), (extra or "").strip()) if t))
     return f"\n{block}" if block else ""
 
 
@@ -332,7 +347,8 @@ def translate_text(
     source_lang: str,
     target_lang: str,
     db=None,
-    project=None
+    project=None,
+    extra_instructions: str = "",
 ) -> str:
 
     glossary_prompt = ""
@@ -380,7 +396,7 @@ STRICT RULES:
 - The entire output must be in {tgt_name}.
 
 {glossary_prompt}
-{_batch_terms_prompt(db, project, text)}{_instructions_prompt(project)}
+{_batch_terms_prompt(db, project, text)}{_instructions_prompt(project, extra_instructions)}
 Return ONLY the translated text — no preamble, no quotes, no commentary."""
 
     return _call_model(
@@ -399,7 +415,8 @@ def translate_batch(
     source_lang: str,
     target_lang: str,
     db=None,
-    project=None
+    project=None,
+    extra_instructions: str = "",
 ):
 
     tm_context = ""
@@ -502,7 +519,7 @@ ABSOLUTE RULES — these are non-negotiable for legal and identity documents:
     )
 
     # Per-project text stays out of the cached rules.
-    prompt = _instructions_prompt(project)
+    prompt = _instructions_prompt(project, extra_instructions)
     if tm_context:
         prompt += (
             "\nREFERENCE TRANSLATIONS (use these verbatim if the segment matches):\n"

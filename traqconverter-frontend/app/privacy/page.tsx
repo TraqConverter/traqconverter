@@ -158,7 +158,9 @@ export default function PrivacyPage() {
       <p>
         To translate a document, read scanned pages, rebuild the layout and answer requests in the editor, the
         relevant text and page images are sent to our AI provider, Anthropic, through its commercial API. If you or a
-        team member choose an OpenAI engine in the editor, that request goes to OpenAI instead.
+        team member choose GPT-4.1 (OpenAI) when creating a project, the document&apos;s text is also sent to OpenAI,
+        through its commercial API, to write the translation. Anthropic still reads scanned pages and rebuilds the
+        layout for that project, so it receives the document as well. The editor assistant always uses Anthropic.
       </p>
       <ul>
         <li>
@@ -198,7 +200,7 @@ export default function PrivacyPage() {
             </tr>
             <tr>
               <td>OpenAI</td>
-              <td>AI processing, only when an OpenAI engine is chosen for a document</td>
+              <td>AI translation, only for projects where GPT-4.1 (OpenAI) is chosen</td>
               <td>United States</td>
             </tr>
             <tr>

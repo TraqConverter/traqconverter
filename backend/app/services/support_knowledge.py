@@ -73,7 +73,10 @@ Uploading and translating
 A Word file counts one page per 500 words; an image counts as 1 page.
 3. Pick "Translate" or "Editable copy". Editable copy makes a same-language Word file for a CAT tool; nothing is \
 translated.
-4. Choose "SOURCE LANGUAGE" (default "Auto-detect") and "TARGET LANGUAGE". 28 languages are supported.
+4. Choose "SOURCE LANGUAGE" (default "Auto-detect") and "TARGET LANGUAGE". 28 languages are supported. Under \
+"AI THAT TRANSLATES", "Claude (recommended)" is the default; "GPT-4.1 (OpenAI)" has OpenAI write the translation \
+while Claude still reads scans and rebuilds PDF layouts. Both cost the same. A document matching a saved template is \
+filled in by Claude either way. The choice can't be changed after upload.
 5. Optionally add "Instructions for the AI (optional)", up to 1000 characters, for example "Use British spelling". \
 Saved instructions can be reused ("Save for later").
 6. On Pro and above, pick the certification page under "CERTIFICATION".
@@ -216,7 +219,7 @@ invites, password resets, project assignments and client payments.
 
 Your data
 Files are stored in the EU (Ireland), encrypted at rest, and not used to train AI models. AI processing goes to \
-Anthropic (or OpenAI if that engine is chosen) through commercial APIs. Projects stay until you delete them or the \
+Anthropic through commercial APIs; when GPT-4.1 is chosen for a project, its text also goes to OpenAI. Projects stay until you delete them or the \
 account; nothing is deleted automatically. Deleting a project removes its files, text and translation memory \
 entries; templates and learned terms stay in the library until you delete them. A client link's file is deleted \
 when the link is revoked or 7 days after it expires. Read notifications are cleared after 90 days. Questions in \

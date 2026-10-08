@@ -146,40 +146,21 @@ def run_rebuild(project_id: str, instructions: str | None) -> None:
                 from app.services.translation_processor import _image_to_pdf
 
                 pdf_bytes = _image_to_pdf(pdf_bytes, project.file_name or "")
-            from app.services.learning import source_text_of, team_terminology
-            from app.services.translation_memory_service import with_memory
+            from app.services import authored_translation
 
             dtp = is_dtp(project)
             source_lang = project.target_language if dtp else project.source_language
-            if dtp:
-                terminology, saved = "", ""
-            else:
-                source_text = source_text_of(db, project)
-                terminology = with_memory(db, project, team_terminology(db, project, source_text), source_text)
-                saved = project.ai_instructions or ""
-            if instructions:
-                from app.services.claude_multiturn_rebuild import author_rebuild_docx_multiturn
-
-                docx_bytes = author_rebuild_docx_multiturn(
+            if not dtp and authored_translation.needs_separate_translation(project):
+                docx_bytes = authored_translation.rebuild_then_translate(
                     pdf_bytes,
-                    source_lang or "",
-                    project.target_language or "",
-                    extra_instructions=instructions,
-                    terminology=terminology,
-                    instructions=saved,
-                    reproduce=dtp,
-                )
-            else:
-                from app.services.claude_authored_rebuild import author_rebuild_docx
-
-                docx_bytes = author_rebuild_docx(
-                    pdf_bytes=pdf_bytes,
+                    db=db,
+                    project=project,
                     source_lang=source_lang or "",
                     target_lang=project.target_language or "",
-                    terminology=terminology,
-                    instructions=saved,
-                    reproduce=dtp,
+                    extra_instructions=instructions,
                 )
+            else:
+                docx_bytes = _claude_rebuild(db, project, pdf_bytes, source_lang, instructions)
             out_path = tmp_dir / f"authored_{project.id}.docx"
             out_path.write_bytes(docx_bytes)
             replaced = project.authored_docx_s3_key
@@ -198,6 +179,42 @@ def run_rebuild(project_id: str, instructions: str | None) -> None:
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         db.close()
+
+
+def _claude_rebuild(db: Session, project: TranslationProject, pdf_bytes: bytes, source_lang: str | None, instructions: str | None) -> bytes:
+    """Claude translates (or, for an editable copy, copies) and lays out the document in one pass."""
+    from app.services.learning import source_text_of, team_terminology
+    from app.services.translation_memory_service import with_memory
+
+    dtp = is_dtp(project)
+    if dtp:
+        terminology, saved = "", ""
+    else:
+        source_text = source_text_of(db, project)
+        terminology = with_memory(db, project, team_terminology(db, project, source_text), source_text)
+        saved = project.ai_instructions or ""
+    if instructions:
+        from app.services.claude_multiturn_rebuild import author_rebuild_docx_multiturn
+
+        return author_rebuild_docx_multiturn(
+            pdf_bytes,
+            source_lang or "",
+            project.target_language or "",
+            extra_instructions=instructions,
+            terminology=terminology,
+            instructions=saved,
+            reproduce=dtp,
+        )
+    from app.services.claude_authored_rebuild import author_rebuild_docx
+
+    return author_rebuild_docx(
+        pdf_bytes=pdf_bytes,
+        source_lang=source_lang or "",
+        target_lang=project.target_language or "",
+        terminology=terminology,
+        instructions=saved,
+        reproduce=dtp,
+    )
 
 
 def expire_stale_rebuilds(db: Session) -> int:

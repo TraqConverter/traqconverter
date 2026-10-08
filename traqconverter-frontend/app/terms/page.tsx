@@ -303,8 +303,8 @@ export default function TermsPage() {
       <h2 id="ai">14. AI providers and training</h2>
       <ul>
         <li>
-          The AI work is done by Anthropic, and by OpenAI when someone in your team chooses an OpenAI engine, through
-          their commercial APIs. Their output can be wrong, which is why section 9 applies.
+          The AI work is done by Anthropic, and also by OpenAI for projects where someone in your team chooses
+          GPT-4.1, through their commercial APIs. Their output can be wrong, which is why section 9 applies.
         </li>
         <li>
           We don&apos;t use your content to train AI models. Under the providers&apos; commercial API terms, they

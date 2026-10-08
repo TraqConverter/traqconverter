@@ -132,22 +132,9 @@ def _watermark_docx(docx_bytes: bytes) -> bytes:
 
 @router.get("/translation-models")
 def list_translation_models():
-    from app.services.ai_translation_service import MODEL_OPTIONS
+    from app.services.ai_translation_service import TRANSLATION_CHOICES
 
-    return {
-        "models": [
-            {
-                "id": key,
-                "label": cfg.get("label") or key,
-                "provider": cfg.get("provider"),
-            }
-            for key, cfg in MODEL_OPTIONS.items()
-
-
-
-            if key != "balanced"
-        ]
-    }
+    return {"models": [dict(choice) for choice in TRANSLATION_CHOICES]}
 
 
 
