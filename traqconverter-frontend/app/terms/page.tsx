@@ -325,9 +325,21 @@ export default function TermsPage() {
       <h2 id="data">17. Storing and deleting your files</h2>
       <ul>
         <li>
-          We don&apos;t delete projects automatically. A project and its files stay until you delete the project or
-          the account.
+          Projects are deleted automatically 90 days after the translation is completed. A project that never
+          completes is deleted 90 days after it was uploaded. Running a translation again starts the 90 days again.
+          Projects that already existed when automatic deletion began get the full 90 days from that date.
         </li>
+        <li>
+          Deletion covers the uploaded original, the translated and exported files, saved versions, page images,
+          certified copies, delivery links and their files, and the project&apos;s text, segments and comments. The
+          project and job pages show the date, and the uploader and the assignee get a notice 7 days before.
+        </li>
+        <li>
+          Your team&apos;s translation memory, glossary and saved templates are kept, because they are your
+          team&apos;s working assets. Memory entries and templates contain text from your documents. They stay until
+          you delete them or the account.
+        </li>
+        <li>You can delete a project yourself at any time before then.</li>
         <li>
           The file behind a delivery link is deleted when you revoke the link, or 7 days after it expires.
         </li>

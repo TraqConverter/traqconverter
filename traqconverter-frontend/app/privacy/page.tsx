@@ -242,13 +242,17 @@ export default function PrivacyPage() {
       <h2 id="retention">8. How long we keep data</h2>
       <ul>
         <li>
-          <strong>Projects</strong>{" "}(the uploaded document, its text, translations, versions, comments, and its
-          translation memory entries) stay until you delete the project or your account. We don&apos;t delete
-          projects automatically after a set period, including after a trial or a subscription ends.
+          <strong>Projects</strong>{" "}(the uploaded document, its text, translations and exported files, saved
+          versions, page images, certified copies, delivery files and comments) are deleted automatically 90 days
+          after the translation is completed, or 90 days after upload if it never completes. Running a translation
+          again starts the 90 days again. Projects that existed when automatic deletion began get the full 90 days
+          from that date. The date shows on the project, and we send a notice in the app 7 days before. You can
+          delete a project sooner yourself; doing so also deletes its translation memory entries.
         </li>
         <li>
-          <strong>Templates and learned terms</strong>{" "}built from a project stay in your team&apos;s library after the
-          project is deleted, until you delete them or the account.
+          <strong>Translation memory, glossary, learned terms and templates</strong>{" "}are not deleted with the
+          project when it expires. They are your team&apos;s working assets and stay in its library until you delete
+          them or the account. Memory entries and templates contain text from your documents.
         </li>
         <li>
           <strong>Delivery links</strong>{" "}expire after 1, 7 or 30 days, as you choose, or when you revoke them. The
