@@ -37,7 +37,7 @@ def test_plans_endpoint_is_public_and_lists_every_paid_plan(client):
     assert plans["PRO"]["available"] and not plans["STUDIO"]["available"] and not plans["AGENCY"]["available"]
     assert body["trial"]["credits"] == 3 and body["trial"]["days"] == 7
     assert body["trial"]["features"]["download_translation"] is False
-    assert body["contact_email"] == "info@traqworx.com"
+    assert body["contact_email"] == "info@lumaxdigital.co.uk"
     assert [p["credits"] for p in body["credit_packs"]] == [10, 25, 50]
 
 
@@ -177,7 +177,7 @@ def test_invite_stops_at_the_plan_seat_limit(client, make_user, plan, limit):
     detail = r.json()["detail"]
     assert f"up to {limit} team members" in detail
     if plan == "AGENCY":
-        assert "info@traqworx.com" in detail
+        assert "info@lumaxdigital.co.uk" in detail
     else:
         assert "Upgrade to" in detail
 
