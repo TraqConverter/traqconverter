@@ -8,6 +8,7 @@ import { clearToken } from "@/lib/auth"
 import { isOpenRoute, isPublicRoute } from "@/lib/routes"
 import CompanyLine from "@/components/legal/CompanyLine"
 import NotificationBell from "@/components/NotificationBell"
+import SupportChat from "@/components/SupportChat"
 import { isStaffRole } from "@/lib/staff"
 import { loadWallet, planFor, resetWallet, useWallet, type PlanFeature } from "@/lib/plan"
 import { findPlan, usePlans } from "@/lib/plans"
@@ -488,6 +489,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               />
             </div>
 
+            <SupportChat docked={pathname.startsWith("/editor/")} />
             <NotificationBell />
 
             <div className="flex items-center gap-2">

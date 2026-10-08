@@ -38,6 +38,9 @@ class Settings(BaseSettings):
 
     ANTHROPIC_API_KEY: Optional[str] = None
     ANTHROPIC_VISION_MODEL: str = "claude-sonnet-4-6"
+    # In-app Help chat.
+    SUPPORT_CHAT_MODEL: str = "claude-sonnet-5"
+    SUPPORT_CHAT_MAX_TOKENS: int = 1024
 
 
     stripe_secret_key: str

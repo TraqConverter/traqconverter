@@ -8,6 +8,8 @@ import { clearToken, setToken, getRemembered } from "@/lib/auth"
 import { resetWallet } from "@/lib/plan"
 import SavedInstructionsSection from "@/components/settings/SavedInstructionsSection"
 import PaymentsSection from "@/components/settings/PaymentsSection"
+import { OPEN_SUPPORT_CHAT } from "@/components/SupportChat"
+import { COMPANY } from "@/lib/company"
 
 type Me = {
   id: string
@@ -330,6 +332,29 @@ export default function AccountSettingsPage() {
         >
           Open Media
         </Link>
+      </section>
+
+      <section
+        className="rounded-2xl px-6 py-4 flex flex-wrap items-center justify-between gap-3"
+        style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
+      >
+        <div className="text-sm" style={{ color: "#4a4638" }}>
+          <span className="font-semibold" style={{ color: "#1f2a2e" }}>
+            Help &amp; support:
+          </span>{" "}
+          email {COMPANY.email}{" "}
+          <a href={`mailto:${COMPANY.email}`} className="font-medium hover:underline" style={{ color: "#0a7870" }}>
+            (write to us)
+          </a>
+        </div>
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new Event(OPEN_SUPPORT_CHAT))}
+          className="text-sm font-semibold px-4 py-2 rounded-full transition hover:bg-[#cfe6e2]"
+          style={{ border: "1px solid #b7dad4", color: "#0a5e58" }}
+        >
+          Ask the Help chat
+        </button>
       </section>
 
       {}

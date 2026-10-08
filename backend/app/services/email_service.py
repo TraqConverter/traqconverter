@@ -18,11 +18,19 @@ from typing import Optional
 import requests
 
 from app.config import settings
+from app.core.company import SUPPORT_EMAIL
 
 logger = logging.getLogger(__name__)
 
 
 RESEND_URL = "https://api.resend.com/emails"
+
+_FOOTER = (
+    '<p style="font-size:11px;color:#9a9178;margin-top:18px;line-height:1.6;">'
+    "Sent by OnlineDocTranslator · onlinedoctranslator.ai<br>"
+    f'Questions? Email <a href="mailto:{SUPPORT_EMAIL}" style="color:#0a7870;">{SUPPORT_EMAIL}</a>'
+    "</p>"
+)
 
 
 def is_configured() -> bool:
@@ -174,9 +182,7 @@ def render_invite_email(
           </p>
         </td></tr>
       </table>
-      <p style="font-size:11px;color:#9a9178;margin-top:18px;">
-        Sent by OnlineDocTranslator · onlinedoctranslator.ai
-      </p>
+      {_FOOTER}
     </td></tr>
   </table>
 </body>
@@ -234,9 +240,7 @@ def render_password_reset_email(*, name: str | None, link: str) -> tuple[str, st
           </p>
         </td></tr>
       </table>
-      <p style="font-size:11px;color:#9a9178;margin-top:18px;">
-        Sent by OnlineDocTranslator · onlinedoctranslator.ai
-      </p>
+      {_FOOTER}
     </td></tr>
   </table>
 </body>
@@ -330,9 +334,7 @@ def render_assignment_email(
           </p>
         </td></tr>
       </table>
-      <p style="font-size:11px;color:#9a9178;margin-top:18px;">
-        Sent by OnlineDocTranslator · onlinedoctranslator.ai
-      </p>
+      {_FOOTER}
     </td></tr>
   </table>
 </body>
