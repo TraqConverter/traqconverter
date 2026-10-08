@@ -132,6 +132,7 @@ export default function NewProjectPage() {
   }
   const sameLanguage = !dtp && source !== "auto" && source.split("-")[0] === target.split("-")[0]
   const [instructions, setInstructions] = useState("")
+  const [engine, setEngine] = useState<Engine>(CLAUDE)
   const saved = useSavedInstructions()
 
   // null until known; stays null on plans without certifications.
@@ -143,6 +144,7 @@ export default function NewProjectPage() {
 
   const certAccess = useFeature("certifications")
   const memoryAccess = useFeature("terminology_memory")
+  const templatesAccess = useFeature("templates")
 
   useEffect(() => {
     if (certAccess !== "allowed") return
@@ -206,7 +208,7 @@ export default function NewProjectPage() {
     formData.append("mode", mode)
     formData.append("source_language", source)
     formData.append("target_language", dtp ? source : target)
-    formData.append("model", "claude-authored")
+    formData.append("model", dtp ? CLAUDE : engine)
     formData.append("use_tm", String(!dtp))
     formData.append("apply_glossary", String(!dtp))
     formData.append("request_certification", String(!dtp && !!certsEnabled))
@@ -523,6 +525,15 @@ export default function NewProjectPage() {
             )}
 
             {!dtp && (
+              <EnginePicker
+                value={engine}
+                onChange={setEngine}
+                disabled={loading}
+                templates={templatesAccess === "allowed"}
+              />
+            )}
+
+            {!dtp && (
               <div className="mt-5">
                 <div className="flex items-baseline justify-between gap-3 mb-3">
                   <label
@@ -674,6 +685,74 @@ function IconUploadWhite() {
       <path d="m7 9 5-5 5 5" />
       <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
     </svg>
+  )
+}
+
+const CLAUDE = "claude-authored"
+type Engine = typeof CLAUDE | "gpt-4.1"
+
+const ENGINES: { value: Engine; label: string; hint: string }[] = [
+  { value: CLAUDE, label: "Claude (recommended)", hint: "Translates and rebuilds the layout" },
+  { value: "gpt-4.1", label: "GPT-4.1 (OpenAI)", hint: "Writes the translation; Claude still reads scans and rebuilds PDF layouts" },
+]
+
+function EnginePicker({
+  value,
+  onChange,
+  disabled,
+  templates,
+}: {
+  value: Engine
+  onChange: (v: Engine) => void
+  disabled: boolean
+  templates: boolean
+}) {
+  return (
+    <div className="mt-5">
+      <div
+        id="engine-label"
+        className="text-[11px] font-semibold tracking-[0.14em] uppercase mb-3"
+        style={{ color: "#9a9178" }}
+      >
+        AI that translates
+      </div>
+      <div role="radiogroup" aria-labelledby="engine-label" className="space-y-2">
+        {ENGINES.map((e) => {
+          const active = value === e.value
+          return (
+            <button
+              key={e.value}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              disabled={disabled}
+              onClick={() => onChange(e.value)}
+              className="w-full text-left rounded-xl px-4 py-2.5 transition"
+              style={{
+                background: active ? "#e1efec" : "#ffffff",
+                border: `1px solid ${active ? "#0a7870" : "#e7ddc5"}`,
+                cursor: disabled ? "not-allowed" : "pointer",
+              }}
+            >
+              <div className="text-sm font-semibold" style={{ color: active ? "#0a7870" : "#1f2a2e" }}>
+                {e.label}
+              </div>
+              <div className="text-xs" style={{ color: "#8a8270" }}>
+                {e.hint}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+      <div className="text-xs mt-2" style={{ color: "#8a8270" }}>
+        With GPT, your document&apos;s text is sent to OpenAI.
+      </div>
+      {value !== CLAUDE && templates && (
+        <div className="text-xs mt-1" style={{ color: "#8a8270" }}>
+          A document that matches one of your saved templates is still filled in by Claude.
+        </div>
+      )}
+    </div>
   )
 }
 

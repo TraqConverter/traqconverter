@@ -54,7 +54,8 @@ from app.services.s3_service import (
     download_file_from_s3,
     upload_file_to_s3
 )
-from app.services.ai_translation_service import translate_batch, translate_text
+from app.services.ai_translation_service import CLAUDE_AUTHORED, translate_batch, translate_text
+from app.services import authored_translation
 from app.services import tm_keys
 from app.services import translation_memory_service as tm_service
 from app.services.layout_translator import (
@@ -260,6 +261,40 @@ def _image_to_pdf(data: bytes, file_name: str) -> bytes:
         img.close()
 
 
+def translate_resilient(batch_texts, source_lang, target_lang, db, project, depth=0, extra_instructions=""):
+    """Translate a batch, splitting it in halves on a count mismatch down to single segments; a segment that still fails comes back empty."""
+    if not batch_texts:
+        return []
+    extra = {"extra_instructions": extra_instructions} if extra_instructions else {}
+
+    if len(batch_texts) == 1:
+        try:
+            return [translate_text(batch_texts[0], source_lang, target_lang, db=db, project=project, **extra) or ""]
+        except Exception as e:
+            logger.warning("Per-segment translation failed (depth=%d): %s", depth, e)
+            return [""]
+
+    try:
+        result = translate_batch(batch_texts, source_lang, target_lang, db=db, project=project, **extra)
+        if result and len(result) == len(batch_texts):
+            return result
+        logger.warning(
+            "Batch count mismatch (expected %d, got %d, depth=%d) — splitting",
+            len(batch_texts),
+            len(result) if result else 0,
+            depth,
+        )
+    except Exception as e:
+        logger.warning("Batch translation raised (depth=%d): %s — splitting", depth, e)
+
+    if depth > 6:
+        return [""] * len(batch_texts)
+
+    mid = max(1, len(batch_texts) // 2)
+    args = (source_lang, target_lang, db, project, depth + 1, extra_instructions)
+    return translate_resilient(batch_texts[:mid], *args) + translate_resilient(batch_texts[mid:], *args)
+
+
 @ai_usage.project_task("translation")
 def process_translation_job(project_id: str):
     logger.info(f"Worker starting processing for {project_id}")
@@ -455,68 +490,9 @@ def process_translation_job(project_id: str):
         if texts:
             progress(job_progress.TRANSLATING, project.translated_segments / max(project.total_segments, 1))
 
-        def _translate_resilient(batch_texts, depth=0):
-            """Translate a batch with automatic fall-back on count
-            mismatches. Splits failing batches in half, then in quarters,
-            etc., and finally falls back to per-segment translation. A
-            single segment that fails is left as empty rather than
-            blowing up the whole job — a partial result is much better
-            than zero translated content for the user.
-            """
-            if not batch_texts:
-                return []
-
-            if len(batch_texts) == 1:
-                try:
-                    return [
-                        translate_text(
-                            batch_texts[0],
-                            source_lang,
-                            target_lang,
-                            db=db,
-                            project=project,
-                        ) or ""
-                    ]
-                except Exception as e:
-                    logger.warning(
-                        "Per-segment translation failed (depth=%d): %s",
-                        depth, e,
-                    )
-                    return [""]
-
-            try:
-                result = translate_batch(
-                    batch_texts,
-                    source_lang,
-                    target_lang,
-                    db=db,
-                    project=project,
-                )
-                if result and len(result) == len(batch_texts):
-                    return result
-                logger.warning(
-                    "Batch count mismatch (expected %d, got %d, depth=%d) — splitting",
-                    len(batch_texts),
-                    len(result) if result else 0,
-                    depth,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Batch translation raised (depth=%d): %s — splitting",
-                    depth, e,
-                )
-
-            if depth > 6:
-                return [""] * len(batch_texts)
-
-            mid = max(1, len(batch_texts) // 2)
-            left = _translate_resilient(batch_texts[:mid], depth + 1)
-            right = _translate_resilient(batch_texts[mid:], depth + 1)
-            return left + right
-
         for i in range(0, len(texts), BATCH_SIZE):
             batch = texts[i:i + BATCH_SIZE]
-            translations = _translate_resilient(batch)
+            translations = translate_resilient(batch, source_lang, target_lang, db, project)
 
 
 
@@ -635,13 +611,14 @@ def process_translation_job(project_id: str):
         if template_job is not None:
             progress(job_progress.REBUILDING, 0.05, "Filling the saved template")
         used_template = _finish_template_fill(db, project, template_job, temp_dir)
+        separate_translation = not dtp and authored_translation.needs_separate_translation(project)
         if dtp:
             # The editable copy is the layout rebuild; scans uploaded as images get one too.
             wants_authored = source_kind in ("PDF", "IMAGE")
         else:
             wants_authored = (
                 source_kind == "PDF"
-                and (getattr(project, "model", "") or "") == "claude-authored"
+                and ((project.model or "") == CLAUDE_AUTHORED or separate_translation)
                 and not used_template
             )
         if wants_authored:
@@ -657,14 +634,19 @@ def process_translation_job(project_id: str):
                     pdf_bytes = _pdf_in.read()
                 if source_kind == "IMAGE":
                     pdf_bytes = _image_to_pdf(pdf_bytes, project.file_name or "")
-                authored_bytes = author_rebuild_docx(
-                    pdf_bytes=pdf_bytes,
-                    source_lang=source_lang,
-                    target_lang=target_lang,
-                    terminology=terminology,
-                    instructions="" if dtp else project.ai_instructions or "",
-                    reproduce=dtp,
-                )
+                if separate_translation:
+                    authored_bytes = authored_translation.rebuild_then_translate(
+                        pdf_bytes, db=db, project=project, source_lang=source_lang, target_lang=target_lang
+                    )
+                else:
+                    authored_bytes = author_rebuild_docx(
+                        pdf_bytes=pdf_bytes,
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                        terminology=terminology,
+                        instructions="" if dtp else project.ai_instructions or "",
+                        reproduce=dtp,
+                    )
                 authored_path = (
                     temp_dir / f"authored_{project.id}.docx"
                 )
@@ -685,7 +667,11 @@ def process_translation_job(project_id: str):
                     "segment-driven output (project=%s)",
                     project_id,
                 )
-                project.rebuild_error = "Claude layout rebuild failed; showing the segment-based layout"
+                project.rebuild_error = (
+                    "The layout rebuild or its GPT translation failed; showing the segment-based layout"
+                    if separate_translation
+                    else "Claude layout rebuild failed; showing the segment-based layout"
+                )
                 db.commit()
 
 
