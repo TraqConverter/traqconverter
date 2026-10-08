@@ -80,6 +80,8 @@ def _protected(client, owner, project, **extra):
         ("paypal.me/EspressoTranslations/", "EspressoTranslations"),
         ("https://www.paypal.com/paypalme/EspressoTranslations", "EspressoTranslations"),
         ("https://www.paypal.com/paypalme/EspressoTranslations?locale.x=it_IT", "EspressoTranslations"),
+        ("https://www.paypal.biz/danilocov", "danilocov"),
+        ("https://www.paypal.com/biz/profile/danilocov", "danilocov"),
         ("", None),
         (None, None),
     ],

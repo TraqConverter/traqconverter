@@ -10,13 +10,14 @@ _SYMBOLS = {"EUR": "€", "GBP": "£", "USD": "$"}
 
 _HANDLE_RE = re.compile(r"^[A-Za-z0-9._-]{1,20}$")
 _URL_RE = re.compile(
-    r"^(?:https?://)?(?:www\.)?(?:paypal\.me|paypal\.com/paypalme)/([^/?#\s]+)/?(?:[?#].*)?$",
+    r"^(?:https?://)?(?:www\.)?(?:paypal\.me|paypal\.biz|paypal\.com/paypalme|paypal\.com/biz/profile)/([^/?#\s]+)/?(?:[?#].*)?$",
     re.IGNORECASE,
 )
 
 
 def normalise_handle(value: str | None) -> str | None:
-    """'EspressoTranslations', '@EspressoTranslations' or a paypal.me / paypal.com/paypalme URL -> the handle.
+    """'EspressoTranslations', '@EspressoTranslations' or a paypal.me / paypal.biz / paypal.com/paypalme /
+    paypal.com/biz/profile URL -> the handle.
 
     None or blank clears it. Raises ValueError for anything else.
     """
