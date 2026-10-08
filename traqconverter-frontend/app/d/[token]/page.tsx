@@ -232,6 +232,7 @@ function LockedPreview({
             </div>
           )}
           {info.paypal_url ? (
+            <>
             <a
               href={info.paypal_url}
               target="_blank"
@@ -241,6 +242,10 @@ function LockedPreview({
             >
               {card ? "Or pay with PayPal.me" : `Pay ${amount} with PayPal`}
             </a>
+            <div className="text-[13px] text-center" style={{ color: "#6b6558" }}>
+              If PayPal asks for the amount, enter {amount}.
+            </div>
+            </>
           ) : (
             !card && (
               <div className="text-sm text-center" style={{ color: "#6b6558" }}>
