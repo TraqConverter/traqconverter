@@ -15,6 +15,7 @@ export default function PrivacyPage() {
   return (
     <LegalPage
       title="Privacy Policy"
+      updated="8 October 2026"
       intro="This policy explains what personal data OnlineDocTranslator handles, why, who else processes it, how long we keep it, and the rights you have."
     >
       <h2 id="who-we-are">1. Who we are</h2>
@@ -71,8 +72,9 @@ export default function PrivacyPage() {
         <li>
           For protected delivery links (paid before download): the amount, when the client said they had paid, when
           the link was paid or unlocked, and the download count. We also store your team&apos;s PayPal.me name. We
-          don&apos;t collect or store the names or email addresses of your clients. A client who pays on PayPal pays
-          you directly, so we never receive or store their payment details.
+          don&apos;t collect or store the names or email addresses of your clients. A client who pays on PayPal, or
+          by bank transfer or another method outside the service, pays you directly, so we never receive or store
+          their payment details. If the client tells us they have paid, we record when and email you.
         </li>
         <li>
           When a client pays a protected link through Stripe, Stripe collects the payment details on the
@@ -240,12 +242,17 @@ export default function PrivacyPage() {
       <h2 id="retention">8. How long we keep data</h2>
       <ul>
         <li>
-          <strong>Projects</strong>{" "}(the uploaded document, its text, translations, versions, comments, and its
-          translation memory entries) stay until you delete the project or your account.
+          <strong>Projects</strong>{" "}(the uploaded document, its text, translations and exported files, saved
+          versions, page images, certified copies, delivery files and comments) are deleted automatically 90 days
+          after the translation is completed, or 90 days after upload if it never completes. Running a translation
+          again starts the 90 days again. Projects that existed when automatic deletion began get the full 90 days
+          from that date. The date shows on the project, and we send a notice in the app 7 days before. You can
+          delete a project sooner yourself; doing so also deletes its translation memory entries.
         </li>
         <li>
-          <strong>Templates and learned terms</strong>{" "}built from a project stay in your team&apos;s library after the
-          project is deleted, until you delete them or the account.
+          <strong>Translation memory, glossary, learned terms and templates</strong>{" "}are not deleted with the
+          project when it expires. They are your team&apos;s working assets and stay in its library until you delete
+          them or the account. Memory entries and templates contain text from your documents.
         </li>
         <li>
           <strong>Delivery links</strong>{" "}expire after 1, 7 or 30 days, as you choose, or when you revoke them. The

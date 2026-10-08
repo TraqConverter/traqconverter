@@ -6,12 +6,17 @@ import io
 import json
 import logging
 import os
+import shutil
 import tempfile
 import threading
+import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+CACHE_MAX_AGE = timedelta(days=7)
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp")
 MAX_RENDER_EDGE = 4000
@@ -27,6 +32,30 @@ def cache_root() -> Path:
 def _dir(project) -> Path:
     digest = hashlib.sha1((project.file_path or "").encode()).hexdigest()[:16]
     return cache_root() / str(project.id) / digest
+
+
+def drop(project_id) -> None:
+    shutil.rmtree(cache_root() / str(project_id), ignore_errors=True)
+
+
+def purge_stale(max_age: timedelta = CACHE_MAX_AGE, now: Optional[float] = None) -> int:
+    """Remove project folders nothing was written to for max_age; each instance cleans its own disk."""
+    root = cache_root()
+    if not root.is_dir():
+        return 0
+    cutoff = (now or time.time()) - max_age.total_seconds()
+    removed = 0
+    for folder in root.iterdir():
+        try:
+            if not folder.is_dir():
+                continue
+            newest = max((p.stat().st_mtime for p in folder.rglob("*")), default=folder.stat().st_mtime)
+            if newest < cutoff:
+                shutil.rmtree(folder, ignore_errors=True)
+                removed += 1
+        except OSError:
+            logger.warning("Couldn't check cached pages in %s", folder)
+    return removed
 
 
 def _lock(key: str) -> threading.Lock:

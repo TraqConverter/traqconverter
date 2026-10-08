@@ -27,10 +27,12 @@ const PROSE = [
 export default function LegalPage({
   title,
   intro,
+  updated = LAST_UPDATED,
   children,
 }: {
   title: string
   intro?: ReactNode
+  updated?: string
   children: ReactNode
 }) {
   return (
@@ -91,7 +93,7 @@ export default function LegalPage({
           >
             {title}
           </h1>
-          <div style={{ fontSize: 13, color: SUBTLE, marginBottom: 28 }}>Last updated: {LAST_UPDATED}</div>
+          <div style={{ fontSize: 13, color: SUBTLE, marginBottom: 28 }}>Last updated: {updated}</div>
           {intro && (
             <div style={{ fontSize: 17, lineHeight: 1.6, color: MUTED, marginBottom: 12 }}>{intro}</div>
           )}
