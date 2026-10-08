@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi import Path as PathParam
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -40,6 +40,8 @@ BLOCK_ID = r"^_b[0-9a-f]{8}$"
 IMAGE_ID = r"^img_[0-9a-f]{8}$"
 Position = Literal["before", "after", "inline"]
 Align = Literal["left", "center", "right"]
+# "page": offsets from the page's top-left corner, so the picture sits where the editor showed it, whatever the text flow.
+Relative = Literal["paragraph", "page"]
 _cert_feature = [Depends(require_feature("certifications"))]
 _media_feature = [Depends(require_feature("media"))]
 _upload_limit = [Depends(user_rate_limit("doc_images", max_requests=120, per_seconds=3600))]
@@ -65,6 +67,7 @@ class _Float(BaseModel):
     target_block_id: str = Field(pattern=BLOCK_ID)
     x_emu: int = Field(ge=-21_600_000, le=21_600_000)
     y_emu: int = Field(ge=-21_600_000, le=21_600_000)
+    relative: Relative = "paragraph"
 
 
 class _Resize(BaseModel):
@@ -80,6 +83,15 @@ class _Align(BaseModel):
 class _Duplicate(BaseModel):
     version: int
     target_block_id: str = Field(pattern=BLOCK_ID)
+    x_emu: Optional[int] = Field(default=None, ge=-21_600_000, le=21_600_000)
+    y_emu: Optional[int] = Field(default=None, ge=-21_600_000, le=21_600_000)
+    relative: Relative = "paragraph"
+
+    @model_validator(mode="after")
+    def _both_or_neither(self):
+        if (self.x_emu is None) != (self.y_emu is None):
+            raise ValueError("Give both x_emu and y_emu, or neither")
+        return self
 
 
 class _PagePlacement(BaseModel):
@@ -91,6 +103,7 @@ class _PagePlacement(BaseModel):
 class _CopyToPages(BaseModel):
     version: int
     targets: list[_PagePlacement] = Field(min_length=1, max_length=500)
+    relative: Relative = "paragraph"
 
 
 class _PageStamp(BaseModel):
@@ -301,7 +314,9 @@ def position_image(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    change = lambda data, _p: docx_images.float_image(data, image_id, payload.target_block_id, payload.x_emu, payload.y_emu)
+    change = lambda data, _p: docx_images.float_image(
+        data, image_id, payload.target_block_id, payload.x_emu, payload.y_emu, payload.relative
+    )
     return {"version": _edit(db, project_id, user, payload.version, "Positioned an image", change)}
 
 
@@ -337,11 +352,13 @@ def duplicate_image(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """A copy at the target paragraph sharing the same picture file; floating offsets are kept."""
+    """A copy at the target paragraph sharing the same picture file, at x/y when given, else at the original's offsets."""
     made = {}
 
     def change(data, _p):
-        out, made["id"] = docx_images.duplicate_image(data, image_id, payload.target_block_id)
+        out, made["id"] = docx_images.duplicate_image(
+            data, image_id, payload.target_block_id, payload.x_emu, payload.y_emu, payload.relative
+        )
         return out
 
     new_version = _edit(db, project_id, user, payload.version, "Copied an image", change)
@@ -361,7 +378,7 @@ def copy_image_to_pages(
 
     def change(data, _p):
         placements = [(t.block_id, t.x_emu, t.y_emu) for t in payload.targets]
-        out, made["ids"] = docx_images.copy_to_blocks(data, image_id, placements)
+        out, made["ids"] = docx_images.copy_to_blocks(data, image_id, placements, payload.relative)
         return out
 
     note = "Copied an image to every page"

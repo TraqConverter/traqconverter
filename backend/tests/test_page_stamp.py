@@ -119,6 +119,162 @@ def test_duplicate_and_copy_to_pages_api_are_versioned_with_one_undo(client, pro
     assert [i["id"] for i in docx_images.list_images(data)] == [image_id]
 
 
+def _frame(data: bytes, image_id: str):
+    return next(d.getparent() for d in _body_xml(data).iter(f"{{{WP}}}docPr") if d.get("name") == image_id)
+
+
+def _position(frame) -> tuple[str, int, str, int]:
+    h, v = frame.find(f"{{{WP}}}positionH"), frame.find(f"{{{WP}}}positionV")
+    return (
+        h.get("relativeFrom"),
+        int(h.findtext(f"{{{WP}}}posOffset")),
+        v.get("relativeFrom"),
+        int(v.findtext(f"{{{WP}}}posOffset")),
+    )
+
+
+def _block_of(data: bytes, image_id: str) -> str:
+    return next(i["block_id"] for i in docx_images.list_images(data) if i["id"] == image_id)
+
+
+def _send_behind(data: bytes, image_id: str) -> bytes:
+    """What a picture from an outside DOCX can look like: behind the text, at the bottom of the stack."""
+    doc = docx_blocks._Doc.load(data)
+    for docpr in doc.trees["word/document.xml"].iter(f"{{{WP}}}docPr"):
+        if docpr.get("name") == image_id:
+            docpr.getparent().set("behindDoc", "1")
+            docpr.getparent().set("relativeHeight", "5")
+    return doc.dump()
+
+
+CM = docx_images.EMU_PER_CM
+
+
+def test_pasted_copy_sits_at_its_page_position_in_front_of_the_text():
+    data, ids = _tagged("Page one", "Middle", "Page two", "End")
+    data, image_id = docx_images.insert_image(data, docx_images.prepare_image(_png()), ids[0], "after", 3)
+    data = docx_images.float_image(data, image_id, ids[1], 2 * CM, 1 * CM)
+    data = _send_behind(data, image_id)
+    pasted, copy_id = docx_images.duplicate_image(data, image_id, ids[2], 11 * CM, 23 * CM, "page")
+    frame = _frame(pasted, copy_id)
+    assert _position(frame) == ("page", 11 * CM, "page", 23 * CM)
+    assert frame.get("behindDoc") == "0", "a copy is never hidden behind the text"
+    others = [a for a in frame.getroottree().iter(f"{{{WP}}}anchor") if a is not frame]
+    heights = [int(a.get("relativeHeight")) for a in others]
+    assert int(frame.get("relativeHeight")) > max(heights), "and is drawn over every other picture"
+    assert frame.get("layoutInCell") == "0"
+    assert _block_of(pasted, copy_id) == ids[2]
+    info = {i["id"]: i for i in docx_images.list_images(pasted)}
+    assert info[copy_id]["relative"] == "page" and info[image_id]["relative"] == "paragraph"
+    assert _position(_frame(pasted, image_id)) == ("column", 2 * CM, "paragraph", 1 * CM), "the original is untouched"
+    Document(io.BytesIO(pasted))
+
+
+def test_paste_onto_its_own_paragraph_is_nudged_and_off_page_positions_are_clamped():
+    data, ids = _tagged("Title", "Body")
+    data, image_id = docx_images.insert_image(data, docx_images.prepare_image(_png((100, 100))), ids[0], "after", 4)
+    data = docx_images.float_image(data, image_id, ids[1], 3 * CM, 5 * CM, "page")
+    own = _block_of(data, image_id)
+    same, copy_id = docx_images.duplicate_image(data, image_id, own, 3 * CM, 5 * CM, "page")
+    _, x, _, y = _position(_frame(same, copy_id))
+    assert x > 3 * CM and y > 5 * CM
+    doc = docx_blocks._Doc.load(data)
+    page_w = docx_images.section_geometry(doc, doc.find_block(ids[1]))["page_w"]
+    far, copy_id = docx_images.duplicate_image(data, image_id, ids[1], 40 * CM, -2 * CM, "page")
+    assert _position(_frame(far, copy_id)) == ("page", page_w - 4 * CM, "page", 0), "the whole 4 cm picture stays on the page"
+    with pytest.raises(docx_blocks.DocxEditError):
+        docx_images.duplicate_image(data, image_id, ids[1], 1, 1, "margin")
+    with pytest.raises(docx_blocks.DocxEditError):
+        docx_images.duplicate_image(data, image_id, ids[1], 1, None, "page")
+
+
+def test_paste_into_a_table_cell_is_placed_from_the_page_not_the_cell():
+    doc = Document()
+    doc.add_paragraph("Before")
+    table = doc.add_table(rows=1, cols=2)
+    table.cell(0, 1).paragraphs[0].add_run("Cell text")
+    doc.add_paragraph("After")
+    buf = io.BytesIO()
+    doc.save(buf)
+    data = docx_blocks.tag_blocks(buf.getvalue())
+    ids = docx_blocks.block_ids(data)
+    texts = docx_blocks.paragraph_texts(data, ids)
+    cell = next(b for b, t in texts.items() if t == "Cell text")
+    data, image_id = docx_images.insert_image(data, docx_images.prepare_image(_png()), ids[0], "after", 3)
+    pasted, copy_id = docx_images.duplicate_image(data, image_id, cell, 12 * CM, 4 * CM, "page")
+    frame = _frame(pasted, copy_id)
+    assert frame.getparent().getparent().getparent().getparent().tag == f"{{{W}}}tc"
+    assert _position(frame) == ("page", 12 * CM, "page", 4 * CM)
+    assert frame.get("layoutInCell") == "0", "Word and LibreOffice would otherwise measure from the cell"
+
+
+def test_copy_to_every_page_uses_the_same_page_position_everywhere():
+    data, ids = _tagged("Page one", "Page two", "Page three")
+    data, image_id = docx_images.insert_image(data, docx_images.prepare_image(_png()), ids[0], "inline", 3)
+    data = docx_images.float_image(data, image_id, ids[0], 14 * CM, 24 * CM, "page")
+    data = _send_behind(data, image_id)
+    out, made = docx_images.copy_to_blocks(data, image_id, [(b, 14 * CM, 24 * CM) for b in ids[1:]], "page")
+    assert [_block_of(out, m) for m in made] == ids[1:]
+    for m in made:
+        frame = _frame(out, m)
+        assert _position(frame) == ("page", 14 * CM, "page", 24 * CM)
+        assert frame.get("behindDoc") == "0" and frame.get("layoutInCell") == "0"
+    assert int(_frame(out, made[1]).get("relativeHeight")) > int(_frame(out, made[0]).get("relativeHeight"))
+    with pytest.raises(docx_blocks.DocxEditError):
+        docx_images.copy_to_blocks(data, image_id, [(ids[1], 0, 0)], "column")
+
+
+def test_dragging_to_a_page_position_and_back_into_the_text():
+    data, ids = _tagged("Title", "Body", "End")
+    data, image_id = docx_images.insert_image(data, docx_images.prepare_image(_png()), ids[0], "after", 3)
+    data = docx_images.float_image(data, image_id, ids[2], 5 * CM, 20 * CM, "page")
+    info = next(i for i in docx_images.list_images(data) if i["id"] == image_id)
+    assert info["floating"] and info["relative"] == "page" and info["block_id"] == ids[2]
+    assert (info["x_emu"], info["y_emu"]) == (5 * CM, 20 * CM)
+    data = docx_images.resize_image(data, image_id, 5)
+    assert _position(_frame(data, image_id)) == ("page", 5 * CM, "page", 20 * CM)
+    data = docx_images.float_image(data, image_id, ids[1], 100_000, -50_000)
+    assert _position(_frame(data, image_id)) == ("column", 100_000, "paragraph", -50_000)
+    assert _frame(data, image_id).get("layoutInCell") == "1"
+    data = docx_images.move_image(data, image_id, ids[0], "after")
+    assert not next(i for i in docx_images.list_images(data) if i["id"] == image_id)["floating"]
+
+
+def test_paste_and_copy_to_pages_api_take_page_positions(client, project_with_doc):
+    owner, project = project_with_doc()
+    data, v = _get(client, owner, project)
+    ids = docx_blocks.block_ids(data)
+    url = f"/projects/{project.id}/document"
+    r = _upload(client, owner, project, v, ids[0], position="inline", width_cm=3)
+    image_id, v = r.json()["image_id"], r.json()["version"]
+    r = client.post(
+        f"{url}/images/{image_id}/position",
+        headers=owner["headers"],
+        json={"version": v, "target_block_id": ids[0], "x_emu": 2 * CM, "y_emu": 3 * CM, "relative": "page"},
+    )
+    assert r.status_code == 200, r.text
+    v = r.json()["version"]
+    body = {"version": v, "target_block_id": ids[2], "x_emu": 2 * CM, "y_emu": 9 * CM, "relative": "page"}
+    r = client.post(f"{url}/images/{image_id}/duplicate", headers=owner["headers"], json=body)
+    assert r.status_code == 200, r.text
+    copy_id, v = r.json()["image_id"], r.json()["version"]
+    data, _ = _get(client, owner, project)
+    assert _position(_frame(data, copy_id)) == ("page", 2 * CM, "page", 9 * CM)
+    half = {"version": v, "target_block_id": ids[2], "x_emu": 1}
+    assert client.post(f"{url}/images/{image_id}/duplicate", headers=owner["headers"], json=half).status_code == 422
+
+    targets = [{"block_id": ids[1], "x_emu": 2 * CM, "y_emu": 3 * CM}]
+    r = client.post(
+        f"{url}/images/{image_id}/copy-to-pages",
+        headers=owner["headers"],
+        json={"version": v, "targets": targets, "relative": "page"},
+    )
+    assert r.status_code == 200, r.text
+    (made,) = r.json()["image_ids"]
+    data, _ = _get(client, owner, project)
+    assert _position(_frame(data, made)) == ("page", 2 * CM, "page", 3 * CM)
+
+
 # --- page stamp -------------------------------------------------------------------
 
 
