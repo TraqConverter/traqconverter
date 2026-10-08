@@ -511,14 +511,27 @@ class _Resp:
 
 
 def _v2_account(card_status="restricted", entries=()):
+    """Entries are (description, deadline status) or (description, deadline status, awaiting_action_from)."""
     return {
         "id": ACCOUNT,
         "object": "v2.core.account",
         "configuration": {"merchant": {"capabilities": {"card_payments": {"status": card_status}}}},
         "requirements": {"entries": [
-            {"description": d, "awaiting_action_from": "user", "minimum_deadline": {"status": s}} for d, s in entries
+            {"description": e[0], "awaiting_action_from": e[2] if len(e) > 2 else "user",
+             "minimum_deadline": {"status": e[1]}}
+            for e in entries
         ]},
     }
+
+
+# As Stripe test mode answers for a full-Dashboard account nobody has onboarded yet.
+FRESH = [
+    ("configuration.merchant.mcc", "past_due"),
+    ("defaults.profile.business_url", "past_due"),
+    ("external_account", "past_due"),
+    ("identity.attestations.terms_of_service.account.date", "past_due"),
+    ("identity.attestations.terms_of_service.account.ip", "past_due"),
+]
 
 
 @pytest.fixture()
@@ -527,7 +540,7 @@ def v2(monkeypatch):
     import requests
 
     log = []
-    state = {"account": _v2_account(entries=[("identity.verification", "currently_due")]), "error": None}
+    state = {"account": _v2_account(entries=FRESH), "error": None}
 
     def request(method, url, **kw):
         log.append({"method": method, "url": url, **kw})
@@ -575,10 +588,10 @@ def test_v2_connect_sends_the_account_and_link_requests(client, db, make_user, v
     back = "http://localhost:3000/settings/account?stripe=return#payments"
     assert (link["method"], link["url"]) == ("POST", "https://api.stripe.com/v2/core/account_links")
     assert link["json"] == {"account": ACCOUNT, "use_case": {"type": "account_onboarding", "account_onboarding": {
-        "configurations": ["merchant"], "return_url": back, "refresh_url": back}}}
+        "return_url": back, "refresh_url": back}}}
 
     db.refresh(owner["team"])
-    assert owner["team"].stripe_account_id == ACCOUNT and owner["team"].stripe_account_status == "restricted"
+    assert owner["team"].stripe_account_id == ACCOUNT and owner["team"].stripe_account_status == "pending"
 
     # Back again: the stored account is reused, only a new link is made.
     assert client.post("/settings/payments/stripe/connect", headers=owner["headers"]).status_code == 200
@@ -604,9 +617,14 @@ def test_v2_idempotency_key_is_fresh_per_attempt(client, make_user, v2):
 @pytest.mark.parametrize("card_status, entries, status, charges, submitted, due", [
     ("active", [], "active", True, True, 0),
     ("active", [("tax_id", "eventually_due")], "active", True, True, 0),
-    ("pending", [], "pending", False, True, 0),
-    ("pending", [("tax_id", "eventually_due")], "pending", False, True, 0),
-    (None, [], "pending", False, True, 0),
+    ("active", [("external_account", "past_due")], "active", True, False, 1),
+    # Never onboarded: Stripe's terms are still to accept.
+    ("restricted", FRESH, "pending", False, False, 5),
+    # Onboarded, Stripe still verifying: nothing for the translator to do.
+    ("pending", [("identity.individual.surname", "past_due", "stripe"),
+                 ("identity.individual.date_of_birth.year", "past_due", "stripe")], "restricted", False, True, 0),
+    ("pending", [("tax_id", "eventually_due")], "restricted", False, True, 0),
+    (None, [], "restricted", False, True, 0),
     ("restricted", [], "restricted", False, True, 0),
     ("pending", [("individual.id", "currently_due"), ("tos", "past_due")], "restricted", False, False, 2),
 ])

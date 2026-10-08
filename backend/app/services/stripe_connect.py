@@ -76,10 +76,20 @@ def _v2_request(method: str, path: str, json=None, params=None, idempotency_key:
     return body
 
 
+TOS_REQUIREMENT = "identity.attestations.terms_of_service"
+
+
+def _v2_entries(account: dict) -> list:
+    return (account.get("requirements") or {}).get("entries") or []
+
+
 def _v2_due(account: dict) -> dict:
     """v2 requirement entries bucketed like v1's requirements.currently_due / past_due."""
     due = {"currently_due": [], "past_due": []}
-    for entry in (account.get("requirements") or {}).get("entries") or []:
+    for entry in _v2_entries(account):
+        # Details Stripe is still verifying stay past_due, but there's nothing for the translator to do.
+        if entry.get("awaiting_action_from") == "stripe":
+            continue
         status = (entry.get("minimum_deadline") or {}).get("status")
         if status in due:
             due[status].append(entry.get("description") or "")
@@ -91,16 +101,18 @@ def from_v2(account: dict) -> dict:
     merchant = (account.get("configuration") or {}).get("merchant") or {}
     capability = ((merchant.get("capabilities") or {}).get("card_payments") or {}).get("status")
     due = _v2_due(account)
+    # Hosted onboarding ends with accepting Stripe's terms; until then the form was never submitted.
+    onboarded = not any((e.get("description") or "").startswith(TOS_REQUIREMENT) for e in _v2_entries(account))
     if capability == "active":
         status = "active"
-    elif capability == "restricted" or due["currently_due"] or due["past_due"]:
-        status = "restricted"
-    else:
+    elif not onboarded:
         status = "pending"
+    else:
+        status = "restricted"
     return {
         "id": account.get("id"),
         "charges_enabled": capability == "active",
-        "details_submitted": not (due["currently_due"] or due["past_due"]),
+        "details_submitted": onboarded and not (due["currently_due"] or due["past_due"]),
         "requirements": due,
         "status": status,
     }
@@ -195,7 +207,8 @@ def onboarding_url(account_id: str) -> str:
             "account": account_id,
             "use_case": {
                 "type": "account_onboarding",
-                "account_onboarding": {"configurations": ["merchant"], "return_url": back, "refresh_url": back},
+                # No "configurations" here: API version 2026-09-30.endive rejects it as an unknown field.
+                "account_onboarding": {"return_url": back, "refresh_url": back},
             },
         })
         return link["url"]
