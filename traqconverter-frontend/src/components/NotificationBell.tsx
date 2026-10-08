@@ -11,6 +11,7 @@ type Kind =
   | "client_paid"
   | "client_claimed_paid"
   | "client_downloaded"
+  | "files_expiring"
 
 type Notification = {
   id: string
@@ -60,6 +61,11 @@ const KIND_STYLE: Record<Kind, { icon: ReactNode; bg: string; fg: string }> = {
     icon: svg(<><path d="M12 4v11M7 10.5l5 5 5-5" /><path d="M5 20h14" /></>),
     bg: "#eaeef7",
     fg: "#3c5a99",
+  },
+  files_expiring: {
+    icon: svg(<><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13" /></>),
+    bg: "#fbf0dc",
+    fg: "#a86f0e",
   },
 }
 

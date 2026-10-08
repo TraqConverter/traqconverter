@@ -6,6 +6,7 @@ import { api, apiErrorDetail, fetchObjectUrl } from "@/lib/api"
 import LearningPanel from "@/components/learning/LearningPanel"
 import { useFeature } from "@/lib/plan"
 import { stageText } from "@/lib/jobProgress"
+import { deletionNotice } from "@/lib/retention"
 import { SavedInstructionPicker, useSavedInstructions } from "@/components/SavedInstructions"
 import DocumentEditor, {
   STANDARD_PAGE,
@@ -40,6 +41,7 @@ type ProjectInfo = {
   mode?: "translate" | "dtp"
   source_kind?: string | null
   ai_instructions?: string | null
+  deletes_on?: string | null
 
   model?: string | null
   stats: {
@@ -699,6 +701,11 @@ export default function EditorPage() {
                 </svg>
               </button>
             </div>
+            {deletionNotice(project.deletes_on) && (
+              <div className="text-xs mt-0.5" style={{ color: "#8a8270" }}>
+                {deletionNotice(project.deletes_on)}
+              </div>
+            )}
           </div>
         </div>
 

@@ -97,6 +97,9 @@ class Settings(BaseSettings):
     REGENERATE_FREE_PER_PROJECT: int = 1
     REGENERATE_LIMIT_PER_PROJECT: int = 3
 
+    # A project's files and rows are deleted this many days after its translation last completed; 0 turns it off.
+    DOCUMENT_RETENTION_DAYS: int = 90
+
 
     STRIPE_PRICE_CREDITS_10: Optional[str] = None
     STRIPE_PRICE_CREDITS_25: Optional[str] = None

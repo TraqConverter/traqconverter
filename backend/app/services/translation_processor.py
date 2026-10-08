@@ -62,7 +62,7 @@ from app.services.layout_translator import (
     rebuild_output,
 )
 from app.routers.ws import broadcast_progress
-from app.services import ai_usage, job_progress, learning, notifications
+from app.services import ai_usage, job_progress, learning, notifications, project_files
 from app.services.glossary_service import lang_key, language_name, project_source_language
 from app.services.project_lifecycle import SAME_LANGUAGE_REASON, mark_project_failed
 from app.dependencies.feature_guard import project_has_feature
@@ -224,11 +224,13 @@ def _finish_template_fill(db, project, job, temp_dir) -> bool:
 
     path = temp_dir / f"template_{project.id}.docx"
     path.write_bytes(docx_bytes)
+    replaced = project.authored_docx_s3_key
     project.authored_docx_s3_key = s3_service.upload_file_to_s3(path)
     template = db.query(DocumentTemplate).filter(DocumentTemplate.id == template_id).first()
     if template:
         learning.mark_template_used(db, project, template)
     db.commit()
+    project_files.delete_replaced(db, [replaced])
     logger.info("Built from template (project=%s template=%s stats=%s)", project.id, template_id, stats)
     return True
 
@@ -287,6 +289,7 @@ def process_translation_job(project_id: str):
         project.stage_started_at = datetime.utcnow()
         project.translated_segments = 0
         project.failure_reason = None
+        replaced_authored = project.authored_docx_s3_key
         project.authored_docx_s3_key = None
         project.template_id = None
         project.edited_html = None
@@ -294,6 +297,8 @@ def process_translation_job(project_id: str):
         project.last_heartbeat = datetime.utcnow()
 
         db.commit()
+        # Nothing reads the previous run's document once it's cleared, unless a saved version still holds it.
+        project_files.delete_replaced(db, [replaced_authored])
 
         safe_broadcast(project_id, 0, "PROCESSING", {"stage": project.progress_stage, "detail": project.progress_detail})
         progress = job_progress.ProjectProgress(db, project, safe_broadcast)
@@ -608,9 +613,11 @@ def process_translation_job(project_id: str):
 
         output_s3_key = upload_file_to_s3(output_to_upload)
 
+        replaced_output = project.output_file
         project.output_file = output_s3_key
 
         db.commit()
+        project_files.delete_replaced(db, [replaced_output])
 
 
 
@@ -664,8 +671,10 @@ def process_translation_job(project_id: str):
                 with open(authored_path, "wb") as f:
                     f.write(authored_bytes)
                 authored_key = upload_file_to_s3(authored_path)
+                replaced = project.authored_docx_s3_key
                 project.authored_docx_s3_key = authored_key
                 db.commit()
+                project_files.delete_replaced(db, [replaced])
                 logger.info(
                     "Authored rebuild OK (project=%s key=%s size=%d)",
                     project_id, authored_key, len(authored_bytes),
@@ -690,6 +699,7 @@ def process_translation_job(project_id: str):
         project.progress_detail = None
         project.stage_started_at = None
         project.status = ProjectStatus.COMPLETED
+        project.retention_from = datetime.utcnow()
         if (project.review_status or "DRAFT") == "DRAFT":
             project.review_status = "IN_REVIEW"
         notifications.translation_done(db, project)

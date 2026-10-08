@@ -25,7 +25,7 @@ from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature, user_has_feature
 from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import can_manage_project, get_user_project_or_404
-from app.services import ai_actions, ai_usage, job_progress, project_instructions
+from app.services import ai_actions, ai_usage, document_retention, job_progress, project_instructions
 from app.services.learning import capture_template_in_background
 from app.services.project_lifecycle import enqueue_job, failure_code, job_charge_reference
 from app.models.project import MODE_DTP, MODE_TRANSLATE, PROJECT_MODES, TranslationProject, ProjectStatus, is_dtp
@@ -546,6 +546,7 @@ def list_projects(
             "words": word_counts.get(str(p.id), 0),
             "credits_used": p.credits_used,
             "created_at": p.created_at,
+            "deletes_on": document_retention.deletes_on(p),
             "batch": {"id": str(p.batch_id), "name": batch_names.get(p.batch_id, "")} if p.batch_id else None,
             "assignee_id": str(p.assignee_id) if p.assignee_id else None,
             "assignee": (
@@ -837,6 +838,7 @@ def get_project_status(
         "page_count": project.page_count,
         "retry_count": project.retry_count,
         "created_at": project.created_at,
+        "deletes_on": document_retention.deletes_on(project),
         "file_name": project.file_name,
         "source_language": project.source_language,
         "target_language": project.target_language,
@@ -1440,102 +1442,18 @@ def delete_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Permanently delete a project and everything attached to it.
-
-    We explicitly remove dependent rows in the right order so the
-    delete works regardless of whether each FK has ON DELETE CASCADE
-    set in the schema. Previously the SQLAlchemy `db.delete(project)`
-    failed silently when any reference (segment comments, TM entries,
-    job rows on older schemas, etc) blocked the cascade.
-    """
-    from sqlalchemy import text
-    from app.models.translation_segment import TranslationSegment
-    from app.models.segment_comment import SegmentComment
-
+    """Permanently delete a project and everything attached to it."""
+    from app.services import project_files
 
     project = get_user_project_or_404(db, project_id, current_user)
     if not can_manage_project(db, project, current_user):
         raise HTTPException(status_code=403, detail="Only the uploader or a team admin can delete this project")
-    pid = str(project.id)
-    from app.models.delivery_link import DeliveryLink
-
-    stored_keys = [project.file_path, project.output_file, project.authored_docx_s3_key]
-    for file_key, preview_keys in db.query(DeliveryLink.file_key, DeliveryLink.preview_keys).filter(
-        DeliveryLink.project_id == project.id
-    ):
-        stored_keys += [file_key, *(preview_keys or [])]
-    # Every saved edit is its own file; they go with the project too.
-    from app.models.document_version import DocumentVersion
-
-    stored_keys += [
-        k for (k,) in db.query(DocumentVersion.s3_key).filter(DocumentVersion.project_id == project.id).all() if k
-    ]
-
     try:
-
-        segment_ids = [
-            row[0]
-            for row in db.query(TranslationSegment.id)
-            .filter(TranslationSegment.project_id == project.id)
-            .all()
-        ]
-        if segment_ids:
-            db.query(SegmentComment).filter(
-                SegmentComment.segment_id.in_(segment_ids)
-            ).delete(synchronize_session=False)
-
-
-        db.query(TranslationSegment).filter(
-            TranslationSegment.project_id == project.id
-        ).delete(synchronize_session=False)
-
-
-
-
-
-
-
-
-
-        sp = db.begin_nested()
-        try:
-            db.execute(
-                text(
-                    "DELETE FROM translation_memory WHERE project_id = :pid"
-                ),
-                {"pid": pid},
-            )
-            sp.commit()
-        except Exception:
-            sp.rollback()
-
-
-
-
-        sp = db.begin_nested()
-        try:
-            db.execute(
-                text(
-                    "DELETE FROM translation_jobs WHERE project_id = :pid"
-                ),
-                {"pid": pid},
-            )
-            sp.commit()
-        except Exception:
-            sp.rollback()
-
-
-        db.delete(project)
-        db.commit()
+        project_files.delete_project(db, project)
     except Exception as e:
         logger.exception("Project delete failed: %s", e)
-        db.rollback()
         raise HTTPException(
             status_code=500,
             detail="Couldn't delete project",
         )
-
-    from app.services.s3_service import delete_objects_from_s3
-
-    delete_objects_from_s3(stored_keys)
     return {"message": "Project deleted successfully"}

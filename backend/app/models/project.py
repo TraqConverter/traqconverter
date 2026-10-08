@@ -173,6 +173,8 @@ class TranslationProject(Base):
 
 
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Files are deleted DOCUMENT_RETENTION_DAYS after this; null counts from created_at.
+    retention_from = Column(DateTime, nullable=True, index=True)
 
 
 

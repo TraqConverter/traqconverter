@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { useRouter, useSearchParams } from "next/navigation"
 import { api } from "@/lib/api"
 import { stageText } from "@/lib/jobProgress"
+import { deletionNotice } from "@/lib/retention"
 import { type BatchRef } from "@/components/BatchBadge"
 import BatchGroup, { type BatchDetail, type BatchDoc, type BatchSummary } from "./BatchGroup"
 
@@ -27,6 +28,7 @@ type Project = {
   page_count: number
   credits_used: number
   created_at: string
+  deletes_on?: string | null
   assignee_id: string | null
   assignee: Assignee | null
   batch?: BatchRef | null
@@ -782,6 +784,11 @@ function Jobs() {
               {meta}
               <span className="md:hidden"> · {relativeTime(p.created_at)}</span>
             </div>
+            {deletionNotice(p.deletes_on) && (
+              <div className="text-xs truncate" style={{ color: "#8a8270" }}>
+                {deletionNotice(p.deletes_on)}
+              </div>
+            )}
             {(p.status || "").toUpperCase() === "PROCESSING" && (
               <div className="text-xs truncate" style={{ color: "#0a7870" }}>
                 {stageText(p)}

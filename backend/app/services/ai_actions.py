@@ -13,6 +13,7 @@ from app.models.credit import CreditTransaction
 from app.models.project import TranslationProject, is_dtp
 from app.core.roles import is_staff
 from app.models.user import User
+from app.services import project_files
 from app.services.credit_service import (
     CreditService,
     DuplicateTransactionError,
@@ -181,10 +182,12 @@ def run_rebuild(project_id: str, instructions: str | None) -> None:
                 )
             out_path = tmp_dir / f"authored_{project.id}.docx"
             out_path.write_bytes(docx_bytes)
+            replaced = project.authored_docx_s3_key
             project.authored_docx_s3_key = upload_file_to_s3(out_path)
             project.edited_html = None
             project.rebuild_status = "done"
             db.commit()
+            project_files.delete_replaced(db, [replaced])
         except Exception:
             db.rollback()
             logger.exception("Rebuild failed for project %s", project_id)

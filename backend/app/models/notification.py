@@ -13,6 +13,7 @@ KINDS = (
     "client_paid",
     "client_claimed_paid",
     "client_downloaded",
+    "files_expiring",
 )
 
 
