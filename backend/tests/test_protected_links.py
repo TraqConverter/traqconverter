@@ -143,7 +143,7 @@ def test_payment_settings(client, db, make_user):
 # Creating protected links
 
 
-def test_protected_link_needs_the_handle_and_an_amount(client, db, shared):
+def test_protected_link_needs_an_amount(client, db, shared):
     owner, project = shared
     assert _create(client, owner, project, protected=True).status_code == 422
     for amount in (0, -5, 100000.01):
@@ -151,10 +151,11 @@ def test_protected_link_needs_the_handle_and_an_amount(client, db, shared):
 
     owner["team"].paypal_me = None
     db.commit()
-    r = _create(client, owner, project, protected=True, amount=45)
-    assert r.status_code == 422
-    assert r.json()["detail"] == "Connect Stripe or add your PayPal.me name in Settings → Payments first"
     assert db.query(DeliveryLink).count() == 0
+    # Without Stripe or PayPal the link still works: the client pays by bank transfer and the team unlocks it.
+    r = _create(client, owner, project, protected=True, amount=45)
+    assert r.status_code in (200, 201)
+    assert db.query(DeliveryLink).count() == 1
 
 
 def test_client_name_in_the_body_is_ignored_and_not_stored(client, db, shared):
