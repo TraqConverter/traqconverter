@@ -15,8 +15,6 @@ from app.dependencies.tenant import get_user_project_or_404, team_ids_for
 from app.models.glossary import Glossary
 from app.models.learning import DocumentTemplate
 from app.models.project import ProjectStatus, is_dtp
-from app.models.team import Team
-from app.models.team_member import TeamMember
 from app.models.user import User
 from app.services import learning, template_upload, tm_keys
 from app.services.glossary_service import lang_key, language_name
@@ -123,12 +121,11 @@ class _FromUpload(BaseModel):
 
 
 def _upload_team_id(db: Session, user: User):
-    team = db.query(Team).filter(Team.owner_id == user.id).first()
-    if team:
-        return team.id
-    membership = db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
-    if membership:
-        return membership.team_id
+    from app.dependencies.tenant import active_team_id
+
+    team_id = active_team_id(db, user)
+    if team_id:
+        return team_id
     raise HTTPException(status_code=404, detail="No team found")
 
 

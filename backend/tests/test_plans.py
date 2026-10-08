@@ -192,7 +192,7 @@ def test_existing_user_and_pending_invites_use_seats(client, db, make_user):
     owner = make_user(plan="BASIC")
     other = make_user()
     r = _invite(client, owner, other["user"].email)
-    assert r.json()["added"] is True
+    assert r.json()["invited"] is True
     assert _invite(client, owner).status_code == 403
     listing = client.get("/members", headers=owner["headers"]).json()
     assert listing["seats"] == {"used": 2, "limit": 2}

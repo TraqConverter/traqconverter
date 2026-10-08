@@ -57,10 +57,8 @@ def send_email(
     """
     if not is_configured():
         logger.info(
-            "Resend not configured (no RESEND_API_KEY) — skipping email "
-            "to %s (subject=%r)",
-            to,
-            subject,
+            "Resend not configured (no RESEND_API_KEY) — skipping an email to %d recipient(s)",
+            1 if isinstance(to, str) else len(to),
         )
         return False
 
@@ -108,16 +106,11 @@ def send_email(
         return False
 
     if resp.status_code >= 400:
-        logger.warning(
-            "Resend returned %s: %s",
-            resp.status_code,
-            (resp.text or "")[:300],
-        )
+        # The body can echo the recipient, so only the status is logged.
+        logger.warning("Resend returned %s", resp.status_code)
         return False
 
-    logger.info(
-        "Resend accepted email to %s (subject=%r)", to_list, subject
-    )
+    logger.info("Resend accepted an email to %d recipient(s)", len(to_list))
     return True
 
 
@@ -167,7 +160,7 @@ def render_invite_email(
           </p>
           <div style="margin:28px 0;">
             <a href="{register_url}" style="display:inline-block;background:#0a7870;color:#ffffff;padding:13px 26px;border-radius:999px;font-weight:600;font-size:14px;text-decoration:none;">
-              Accept invite &amp; create account
+              View invite
             </a>
           </div>
           <p style="font-size:13px;line-height:1.5;color:#8a8270;margin:0 0 8px;">
@@ -178,7 +171,7 @@ def render_invite_email(
           </p>
           <hr style="border:none;border-top:1px solid #f1e8d1;margin:20px 0;">
           <p style="font-size:12px;color:#8a8270;line-height:1.5;margin:0;">
-            Already have a OnlineDocTranslator account with this email? Just sign in — your invite will be accepted automatically and the team's projects will appear in your dashboard.
+            Already have an OnlineDocTranslator account with this email? Open the link, sign in, and choose Accept. You join the team only when you accept.
           </p>
         </td></tr>
       </table>

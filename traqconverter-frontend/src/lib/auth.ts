@@ -24,10 +24,21 @@ export function setToken(token: string, remember: boolean) {
   }
 }
 
+function isExpired(token: string): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")))
+    return typeof payload.exp === "number" && payload.exp * 1000 <= Date.now()
+  } catch {
+    return false
+  }
+}
+
+// An expired session reads as signed out, so protected pages go straight to the login page.
 export function getToken(): string | null {
   if (typeof window === "undefined") return null
   try {
-    return localStorage.getItem(KEY) || sessionStorage.getItem(KEY)
+    const token = localStorage.getItem(KEY) || sessionStorage.getItem(KEY)
+    return token && !isExpired(token) ? token : null
   } catch {
     return null
   }

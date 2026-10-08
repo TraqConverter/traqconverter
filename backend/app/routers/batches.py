@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.feature_guard import _resolve_team_id, require_feature
-from app.dependencies.tenant import team_ids_for
+from app.dependencies.tenant import is_team_lead, require_team_lead, team_ids_for
 from app.models.batch import Batch, BatchTerm
 from app.models.project import ProjectStatus, TranslationProject, is_dtp
 from app.models.user import User
@@ -124,6 +124,7 @@ def get_batch(batch_id: UUID, db: Session = Depends(get_db), current_user: User 
     )
     names = {p.id: p.file_name for p in projects}
     body = _summary(batch, _counts(db, [batch.id]).get(batch.id, {}))
+    body["can_certify"] = is_team_lead(db, batch.team_id, current_user)
     body["projects"] = [
         {
             "id": str(p.id),
@@ -227,6 +228,8 @@ def bulk_review_status(
     if new_status not in REVIEW_STATUSES:
         raise HTTPException(status_code=400, detail="Invalid review status")
     batch = _batch_or_404(db, batch_id, current_user)
+    if new_status == "CERTIFIED":
+        require_team_lead(db, batch.team_id, current_user, "certify a project")
     updated, skipped = [], 0
     for p in _projects(db, batch):
         # Unfinished documents keep their status; they can't be reviewed or certified yet. Editable copies are never certified.

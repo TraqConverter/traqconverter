@@ -252,7 +252,7 @@ _CREATOR_TEXT = {
     "client_paid": ("Your client paid {amount} for {file} — unlocked", "Paid by card; the clean file is theirs now"),
     "client_claimed_paid": (
         "Your client says they've paid {amount} for {file}",
-        "Check PayPal, then unlock it in Share with client",
+        "Check that the money has arrived, then unlock it in Share with client",
     ),
     "client_downloaded": ("Your client downloaded {file}", "First download of the link you shared"),
 }

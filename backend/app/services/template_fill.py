@@ -111,7 +111,7 @@ def source_block(data: bytes, file_name: str) -> dict:
     for ext, media in ((".png", "image/png"), (".jpg", "image/jpeg"), (".jpeg", "image/jpeg"), (".webp", "image/webp")):
         if name.endswith(ext):
             return {"type": "image", "source": {"type": "base64", "media_type": media, "data": b64}, "cache_control": cache}
-    raise TemplateFillError(f"Unsupported source for template fill: {file_name}")
+    raise TemplateFillError(f"Unsupported source for template fill: {os.path.splitext(name)[1] or 'no extension'}")
 
 
 def _template_text(template_docx: bytes, template_source: str, terminology: str, instructions: str = "") -> str:
@@ -131,6 +131,16 @@ def _template_text(template_docx: bytes, template_source: str, terminology: str,
     if block:
         parts.append(block)
     return "\n\n".join(parts)
+
+
+def loggable_stats(stats: dict) -> dict:
+    """The stats with document values reduced to counts and lengths."""
+    out = dict(stats)
+    if "leftovers" in out:
+        out["leftovers"] = len(out["leftovers"] or [])
+    if "notes" in out:
+        out["notes"] = len(out["notes"] or "")
+    return out
 
 
 def fill_from_template(
@@ -218,7 +228,7 @@ def fill_from_template(
             )
             if not coverage_failed(missing, total) and not leftovers:
                 stats["seconds"] = round(time.monotonic() - started, 1)
-                logger.info("Template fill OK: %s", stats)
+                logger.info("Template fill OK: %s", loggable_stats(stats))
                 return docx_blocks.tag_blocks(out), stats
             problem = "The result is not a faithful translation of the NEW source yet."
             if leftovers:
@@ -226,10 +236,10 @@ def fill_from_template(
             if coverage_failed(missing, total):
                 problem += f" These numbers of the new source are missing: {', '.join(missing[:30])}."
             problem += " Return the complete corrected list of operations, applied to the original template."
-        logger.warning("Template fill attempt %d rejected: %s", attempt + 1, problem[:300])
+        logger.warning("Template fill attempt %d rejected: %s", attempt + 1, loggable_stats(stats) if stats.get("ops") is not None else "operations didn't apply")
         messages = messages + [
             {"role": "assistant", "content": resp.content},
             {"role": "user", "content": problem},
         ]
     stats["seconds"] = round(time.monotonic() - started, 1)
-    raise TemplateFillError(f"Template fill rejected after retry ({problem[:200]}); stats={stats}")
+    raise TemplateFillError(f"Template fill rejected after retry; stats={loggable_stats(stats)}")

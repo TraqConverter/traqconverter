@@ -303,7 +303,7 @@ def test_paid_claim_is_recorded_once_and_emails_once(client, db, shared, emails)
     assert mail["subject"] == "Your client says they've paid €45.50"
     assert (
         "Your client says they've paid €45.50 for diploma - translation.pdf. "
-        "Check PayPal, then unlock it in the editor (Share with client)."
+        "Check that the money has arrived, then unlock it in the editor (Share with client)."
     ) in mail["text_fallback"]
     assert client.get(f"/public/delivery/{token}").json()["paid_claimed"] is True
     listed = client.get(f"/projects/{project.id}/delivery-links", headers=owner["headers"]).json()[0]
@@ -327,8 +327,17 @@ def test_other_team_cannot_unlock(client, db, shared, make_user):
     assert db.query(DeliveryLink).one().unlocked_at is None
     assert client.get(f"/public/delivery/{token}/file").status_code == 403
 
-    mate = make_user(team=owner["team"])
-    r = client.post(f"/projects/{project.id}/delivery-links/{body['id']}/unlock", headers=mate["headers"])
+    for role in ("REVIEWER", "MEMBER"):
+        mate = make_user(team=owner["team"], role=role)
+        r = client.post(f"/projects/{project.id}/delivery-links/{body['id']}/unlock", headers=mate["headers"])
+        assert r.status_code == 403
+    assert db.query(DeliveryLink).one().unlocked_at is None
+    links = client.get(f"/projects/{project.id}/delivery-links", headers=mate["headers"]).json()
+    assert links[0]["can_unlock"] is False
+
+    pm = make_user(team=owner["team"], role="PM")
+    assert client.get(f"/projects/{project.id}/delivery-links", headers=pm["headers"]).json()[0]["can_unlock"] is True
+    r = client.post(f"/projects/{project.id}/delivery-links/{body['id']}/unlock", headers=pm["headers"])
     assert r.status_code == 200
 
 

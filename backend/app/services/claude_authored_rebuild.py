@@ -897,7 +897,7 @@ def _extract_tables_from_batch(client, model: str, page_offset: int, images: lis
     try:
         data = _json.loads(payload)
     except Exception:
-        logger.warning("Vision table extraction returned non-JSON (%s): %r", label, raw[:300])
+        logger.warning("Vision table extraction returned non-JSON (%s, %d chars)", label, len(raw))
         return []
     return _clean_tables(data, page_offset, len(images))
 
@@ -1101,10 +1101,11 @@ def _run_script_in_sandbox(
         if proc.returncode != 0:
             stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
             stdout = (proc.stdout or b"").decode("utf-8", errors="replace")
+            # Output can quote the document's text, so only its size and the error type are logged.
+            last = stderr.strip().splitlines()[-1] if stderr.strip() else ""
             logger.error(
-                "Authored-rebuild script failed (rc=%d)\n"
-                "STDOUT:\n%s\n\nSTDERR:\n%s",
-                proc.returncode, stdout[-2000:], stderr[-2000:],
+                "Authored-rebuild script failed (rc=%d, stdout=%d chars, stderr=%d chars, error=%s)",
+                proc.returncode, len(stdout), len(stderr), last.split(":", 1)[0][:80] or "unknown",
             )
             raise RuntimeError(
                 f"Authored rebuild script exited with code {proc.returncode}: "

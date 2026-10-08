@@ -22,6 +22,8 @@ engine = create_engine(
     pool_size=10,
     max_overflow=20,
     future=True,
+    # Errors and logs show the SQL, never the values bound into it (segment text, emails).
+    hide_parameters=True,
 )
 
 SessionLocal = sessionmaker(

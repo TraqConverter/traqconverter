@@ -24,6 +24,8 @@ type DeliveryLink = {
   payment_status: PaymentStatus | null
   paid_claimed_at: string | null
   unlocked_at: string | null
+  // Owner, admin or PM only.
+  can_unlock?: boolean
   paid_at: string | null
 }
 
@@ -399,7 +401,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
             <ul className="flex flex-col gap-2">
               {links.map((l) => {
                 const claimed = l.payment_status === "claimed" && l.status === "active"
-                const canUnlock = l.status === "active" && l.protected && l.payment_status !== "unlocked" && l.payment_status !== "paid"
+                const canUnlock = l.can_unlock !== false && l.status === "active" && l.protected && l.payment_status !== "unlocked" && l.payment_status !== "paid"
                 return (
                   <li
                     key={l.id}
@@ -459,7 +461,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                     {confirmUnlock === l.id && (
                       <div className="mt-2 rounded-lg p-2.5" style={{ background: "#e1efec", border: "1px solid #cfe6e2" }}>
                         <div className="text-[13px] mb-2" style={{ color: "#1f2a2e" }}>
-                          Check PayPal first. Once unlocked, the client can download the clean file from the same link.
+                          Check that the money has arrived first. Once unlocked, the client can download the clean file from the same link.
                         </div>
                         <div className="flex gap-2 justify-end">
                           <button

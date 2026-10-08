@@ -9,8 +9,6 @@ from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
 from app.dependencies.tenant import team_ids_for
 from app.models.user import User
-from app.models.team import Team
-from app.models.team_member import TeamMember
 from app.models.glossary import Glossary
 
 router = APIRouter(
@@ -37,13 +35,9 @@ def _serialize(term: Glossary) -> dict:
 def _user_team_id(db: Session, user: User):
     """Glossary is team-scoped. The owner's team is canonical; members
     fall back to the team they joined."""
-    team = db.query(Team).filter(Team.owner_id == user.id).first()
-    if team:
-        return team.id
-    membership = (
-        db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
-    )
-    return membership.team_id if membership else None
+    from app.dependencies.tenant import active_team_id
+
+    return active_team_id(db, user)
 
 
 class GlossaryCreate(BaseModel):

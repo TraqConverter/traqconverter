@@ -15,7 +15,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
 from app.dependencies.rate_limit import rate_limit, user_rate_limit
-from app.dependencies.tenant import get_user_project_or_404
+from app.dependencies.tenant import get_user_project_or_404, is_team_lead, require_team_lead
 from app.models.delivery_link import DeliveryLink
 from app.models.project import ProjectStatus, TranslationProject
 from app.models.team import Team
@@ -145,7 +145,8 @@ def list_delivery_links(
         .limit(100)
         .all()
     )
-    return [_serialize(link) for link in links]
+    can_unlock = is_team_lead(db, project.team_id, current_user)
+    return [{**_serialize(link), "can_unlock": can_unlock} for link in links]
 
 
 @router.delete("/{project_id}/delivery-links/{link_id}")
@@ -175,6 +176,7 @@ def unlock_delivery_link(
     current_user: User = Depends(get_current_user),
 ):
     project = get_user_project_or_404(db, project_id, current_user)
+    require_team_lead(db, project.team_id, current_user, "unlock a client link")
     link = (
         db.query(DeliveryLink)
         .filter(DeliveryLink.id == link_id, DeliveryLink.project_id == project.id)
@@ -349,7 +351,7 @@ def _notify_paid(link_id) -> None:
         amount = paypal.display_amount(link.amount_cents or 0, link.currency or "EUR")
         message = (
             f"Your client says they've paid {amount} for {link.file_name}. "
-            "Check PayPal, then unlock it in the editor (Share with client)."
+            "Check that the money has arrived, then unlock it in the editor (Share with client)."
         )
         editor = f"{settings.FRONTEND_URL.rstrip('/')}/editor/{link.project_id}"
         email_service.send_email(

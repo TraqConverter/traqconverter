@@ -1,70 +1,25 @@
 import logging
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-import os
 
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
-from app.core.file_validation import validate_file_extension, validate_file_size
 from app.dependencies.tenant import can_manage_team
-from app.services.storage_service import save_certification_file
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
 
-@router.post("/upload-certification")
-async def upload_certification(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    validate_file_extension(file.filename)
-    validate_file_size(file)
-
-    file_path = None
-
-    try:
-        file_path = save_certification_file(file, str(current_user.id))
-
-        current_user.certification_file = file_path
-        db.commit()
-
-        return {
-            "message": "Certification uploaded successfully",
-            "file_path": file_path
-        }
-
-    except Exception:
-        db.rollback()
-
-        if file_path and os.path.exists(file_path):
-            os.remove(file_path)
-
-        raise HTTPException(
-            status_code=400,
-            detail="Certification upload failed"
-        )
-
-
 def _resolve_team(db: Session, user: User):
     """Look up the team this user owns or is a member of."""
-    from app.models.team import Team
-    from app.models.team_member import TeamMember
+    from app.dependencies.tenant import active_team
 
-    team = db.query(Team).filter(Team.owner_id == user.id).first()
+    team = active_team(db, user)
     if team:
         return team
-    membership = (
-        db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
-    )
-    if membership:
-        team = db.query(Team).filter(Team.id == membership.team_id).first()
-        if team:
-            return team
     raise HTTPException(status_code=404, detail="No team found")
 
 

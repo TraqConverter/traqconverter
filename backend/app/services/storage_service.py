@@ -65,18 +65,3 @@ def save_file_locally(file, team_id: str):
         f.write(file.file.read())
 
     return file_path, project_id
-
-
-def save_certification_file(file, user_id: str):
-    safe_user = safe_filename(str(user_id), fallback="user")
-    safe_name = safe_filename(file.filename, fallback="certification")
-
-    directory = os.path.join(BASE_UPLOAD_DIR, "certifications", safe_user)
-    os.makedirs(directory, exist_ok=True)
-
-    file_path = os.path.join(directory, safe_name)
-
-    with open(file_path, "wb") as f:
-        f.write(file.file.read())
-
-    return file_path

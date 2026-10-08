@@ -12,9 +12,9 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
+from app.dependencies.tenant import require_team_lead
 from app.models.project import TranslationProject
 from app.models.team import Team
-from app.models.team_member import TeamMember
 from app.models.translation_memory import TranslationMemory
 from app.models.user import User
 from app.services import tm_keys, tmx
@@ -23,18 +23,11 @@ from app.services.translation_memory_service import upsert_entries
 
 def _resolve_user_team(db: Session, user: User) -> Team:
     """Owner-or-member team lookup; TM is team-scoped."""
-    team = db.query(Team).filter(Team.owner_id == user.id).first()
+    from app.dependencies.tenant import active_team
+
+    team = active_team(db, user)
     if team:
         return team
-    membership = (
-        db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
-    )
-    if membership:
-        team = (
-            db.query(Team).filter(Team.id == membership.team_id).first()
-        )
-        if team:
-            return team
     raise HTTPException(status_code=404, detail="Team not found")
 
 
@@ -284,6 +277,7 @@ def bulk_delete_tm_entries(
     current_user: User = Depends(get_current_user),
 ):
     team = _resolve_user_team(db, current_user)
+    require_team_lead(db, team.id, current_user, "delete translation memory entries in bulk")
     deleted = (
         db.query(TranslationMemory)
         .filter(TranslationMemory.team_id == team.id, TranslationMemory.id.in_(data.ids))

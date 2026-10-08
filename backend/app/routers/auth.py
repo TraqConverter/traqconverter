@@ -216,6 +216,8 @@ def reset_password(payload: ResetPassword, db: Session = Depends(get_db)):
     user.password_hash = hash_password(payload.new_password)
     # Signs out every existing session (JWTs carry the token version).
     user.token_version = int(user.token_version or 0) + 1
+    # The emailed link proves who they are, so a lockout from someone else's guessing ends here.
+    _clear_login_failures(user)
     _invalidate_reset_tokens(db, user.id, now)
     db.commit()
     return {"status": "password_updated"}
@@ -640,6 +642,33 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
 
 
 
+LOGIN_MAX_FAILURES = 10
+LOGIN_FAILURE_WINDOW = timedelta(minutes=15)
+LOGIN_LOCKOUT = timedelta(minutes=15)
+
+
+def _clear_login_failures(user: User) -> None:
+    user.failed_login_count = 0
+    user.failed_login_window_start = None
+    user.login_locked_until = None
+
+
+def _record_failed_login(db: Session, user_id, now: datetime) -> None:
+    # Row-locked so parallel guesses can't each read the same count.
+    user = db.query(User).filter(User.id == user_id).with_for_update().populate_existing().one()
+    start = user.failed_login_window_start
+    if start is None or now - start > LOGIN_FAILURE_WINDOW:
+        user.failed_login_window_start = now
+        user.failed_login_count = 1
+    else:
+        user.failed_login_count = int(user.failed_login_count or 0) + 1
+    if user.failed_login_count >= LOGIN_MAX_FAILURES:
+        user.login_locked_until = now + LOGIN_LOCKOUT
+        user.failed_login_count = 0
+        user.failed_login_window_start = None
+    db.commit()
+
+
 @router.post(
     "/login",
     response_model=TokenResponse,
@@ -650,8 +679,17 @@ def login(user_data: UserLogin, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=400, detail="Invalid credentials")
 
-    if not verify_password(user_data.password, user.password_hash):
+    now = datetime.utcnow()
+    password_ok = verify_password(user_data.password, user.password_hash)
+    # A locked account gets the wrong-password answer even with the right password, so the lock reveals nothing.
+    if user.login_locked_until and user.login_locked_until > now:
         raise HTTPException(status_code=400, detail="Invalid credentials")
+    if not password_ok:
+        _record_failed_login(db, user.id, now)
+        raise HTTPException(status_code=400, detail="Invalid credentials")
+    if user.failed_login_count or user.login_locked_until:
+        _clear_login_failures(user)
+        db.commit()
 
     # Same answer as a wrong password, so a deactivated account can't be told apart.
     if user.is_active is False:

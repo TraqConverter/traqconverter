@@ -41,10 +41,15 @@ def test_sign_in_still_works_for_an_older_mixed_case_account(client, db, make_us
 
 
 def test_inviting_an_existing_user_ignores_email_case(client, db, make_user):
+    from app.models.team_member import TeamInvite
+
     owner = make_user(plan="PRO")
-    make_user(email="Colleague@traqtest.io")
-    r = client.post("/members/invite", headers=owner["headers"], json={"email": "colleague@traqtest.io"})
-    assert r.json().get("added") is True
+    colleague = make_user(email="Colleague@traqtest.io")
+    r = client.post("/members/invite", headers=owner["headers"], json={"email": "Colleague@TraqTest.io"})
+    assert r.json().get("invited") is True
+    token = db.query(TeamInvite).one().token
+    r = client.post("/members/invites/accept", headers=colleague["headers"], json={"token": token})
+    assert r.status_code == 200
 
 
 def test_member_who_uploaded_and_commented_can_delete_their_account(client, db, make_user, make_project):

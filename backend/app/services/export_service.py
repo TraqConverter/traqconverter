@@ -59,7 +59,7 @@ def _try_layout_docx_from_project(project) -> BytesIO | None:
         r = requests.get(url, timeout=15)
         r.raise_for_status()
     except Exception as e:
-        logger.warning(f"Couldn't fetch rebuilt DOCX from S3: {e}")
+        logger.warning("Couldn't fetch rebuilt DOCX from storage: %s", type(e).__name__)
         return None
 
     try:
@@ -134,7 +134,7 @@ def _build_layout_pdf_live(segments, project):
         r = requests.get(url, timeout=20)
         r.raise_for_status()
     except Exception as e:
-        logger.warning(f"Couldn't fetch source from S3: {e}")
+        logger.warning("Couldn't fetch source from storage: %s", type(e).__name__)
         return None
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="traqexport_"))
@@ -180,7 +180,7 @@ def _build_layout_pdf_live(segments, project):
                         f.write(lr.content)
                     logo_path = str(user_logo_file)
             except Exception as e:
-                logger.warning("Couldn't fetch user logo: %s", e)
+                logger.warning("Couldn't fetch user logo: %s", type(e).__name__)
         if not logo_path:
             try:
                 from app.config import settings as _s
@@ -256,10 +256,8 @@ def _resolve_cert_template(project, tmp_dir):
                 return None
             if not (cert.file_name or "").lower().endswith(".docx"):
                 logger.info(
-                    "Cert template %s isn't a DOCX (%s) — skipping "
-                    "substitution",
+                    "Cert template %s isn't a DOCX — skipping substitution",
                     template_id,
-                    cert.file_name,
                 )
                 return None
 
@@ -285,10 +283,7 @@ def _resolve_cert_template(project, tmp_dir):
                     r.raise_for_status()
                     template_bytes = r.content
                 except Exception as e:
-                    logger.warning(
-                        "Couldn't fetch cert template from storage: %s",
-                        e,
-                    )
+                    logger.warning("Couldn't fetch cert template from storage: %s", type(e).__name__)
                     return None
             if not template_bytes:
                 return None
@@ -399,7 +394,7 @@ def _build_layout_docx_live(segments, project, preview_only: bool = False):
         r = requests.get(url, timeout=20)
         r.raise_for_status()
     except Exception as e:
-        logger.warning("Couldn't fetch source for DOCX export: %s", e)
+        logger.warning("Couldn't fetch source for DOCX export: %s", type(e).__name__)
         return None
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="traqexport_docx_"))
@@ -440,7 +435,7 @@ def _build_layout_docx_live(segments, project, preview_only: bool = False):
                         f.write(lr.content)
                     logo_path = str(user_logo_file)
             except Exception as e:
-                logger.warning("Couldn't fetch user logo: %s", e)
+                logger.warning("Couldn't fetch user logo: %s", type(e).__name__)
         if not logo_path:
             try:
                 from app.config import settings as _s
@@ -592,14 +587,11 @@ def generate_docx(segments, user_email, project=None, user=None):
 
                 tmp = _tf.NamedTemporaryFile(delete=False, suffix=".docx")
                 tmp.close()
-                download_file_from_s3(authored_key, _P(tmp.name))
-                with open(tmp.name, "rb") as f:
-                    authored_bytes = f.read()
                 try:
-                    import os as _os
-                    _os.unlink(tmp.name)
-                except Exception:
-                    pass
+                    download_file_from_s3(authored_key, _P(tmp.name))
+                    authored_bytes = _P(tmp.name).read_bytes()
+                finally:
+                    _P(tmp.name).unlink(missing_ok=True)
                 from app.services.docx_blocks import strip_blocks
                 from app.services.docx_certification import has_certification
 

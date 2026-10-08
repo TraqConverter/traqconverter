@@ -14,9 +14,8 @@ from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
 from app.models.user import User
 from app.models.team import Team
-from app.models.team_member import TeamMember
 from app.models.certification import Certification
-from app.core.file_validation import local_file_name, validate_file_extension, validate_file_size
+from app.core.file_validation import validate_file_extension, validate_file_size
 
 
 logger = logging.getLogger(__name__)
@@ -38,16 +37,11 @@ BASE_DIR = "uploads/certifications"
 
 
 def _resolve_team(db: Session, user: User) -> Team:
-    team = db.query(Team).filter(Team.owner_id == user.id).first()
+    from app.dependencies.tenant import active_team
+
+    team = active_team(db, user)
     if team:
         return team
-    membership = (
-        db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
-    )
-    if membership:
-        team = db.query(Team).filter(Team.id == membership.team_id).first()
-        if team:
-            return team
     raise HTTPException(status_code=404, detail="No team found")
 
 
@@ -158,14 +152,6 @@ async def upload_certification(
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp.write(raw)
             tmp_path = _Path(tmp.name)
-
-
-        renamed = tmp_path.with_name(local_file_name(file.filename or tmp_path.name))
-        try:
-            tmp_path.rename(renamed)
-            tmp_path = renamed
-        except Exception:
-            pass
         s3_key = upload_file_to_s3(tmp_path)
     except Exception:
         logger.exception("Request failed")

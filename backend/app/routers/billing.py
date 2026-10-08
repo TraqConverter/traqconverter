@@ -11,7 +11,6 @@ from app.services.stripe_billing import has_active_subscription
 from app.models.credit import CreditWallet, CreditTransaction
 from app.models.user import User
 from app.models.team import Team
-from app.models.team_member import TeamMember
 from app.config import settings
 from app.core.plan_features import (
     CREDIT_PACKS,
@@ -28,16 +27,11 @@ def _resolve_user_team(db: Session, user: User) -> Team:
     invited team members couldn't see the wallet/transactions and
     the sidebar wallet card was empty.
     """
-    team = db.query(Team).filter(Team.owner_id == user.id).first()
+    from app.dependencies.tenant import active_team
+
+    team = active_team(db, user)
     if team:
         return team
-    membership = (
-        db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
-    )
-    if membership:
-        t = db.query(Team).filter(Team.id == membership.team_id).first()
-        if t:
-            return t
     raise HTTPException(status_code=404, detail="Team not found")
 
 router = APIRouter(

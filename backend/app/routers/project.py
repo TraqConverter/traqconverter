@@ -24,14 +24,13 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature, user_has_feature
 from app.dependencies.rate_limit import user_rate_limit
-from app.dependencies.tenant import can_manage_project, get_user_project_or_404
+from app.dependencies.tenant import active_team, can_manage_project, get_user_project_or_404, is_team_lead, require_team_lead
 from app.services import ai_actions, ai_usage, document_retention, job_progress, project_instructions
 from app.services.learning import capture_template_in_background
 from app.services.project_lifecycle import enqueue_job, failure_code, job_charge_reference
 from app.models.project import MODE_DTP, MODE_TRANSLATE, PROJECT_MODES, TranslationProject, ProjectStatus, is_dtp
 from app.core.roles import is_staff
 from app.models.user import User
-from app.models.team import Team
 
 from app.core.file_validation import clean_file_name, local_file_name, validate_file_extension, validate_file_size
 from app.core.page_counter import get_page_count
@@ -173,7 +172,7 @@ def _discard_stored(key: Optional[str]) -> None:
     try:
         s3_service.delete_objects_from_s3([key])
     except Exception:
-        logger.exception("Couldn't delete orphaned upload %s", key)
+        logger.exception("Couldn't delete orphaned upload %s", s3_service.key_ref(key))
 
 
 @router.post("/upload")
@@ -246,25 +245,7 @@ async def upload_project(
 
 
 
-        team = (
-            db.query(Team)
-            .filter(Team.owner_id == current_user.id)
-            .first()
-        )
-        if not team:
-            from app.models.team_member import TeamMember
-            membership = (
-                db.query(TeamMember)
-                .filter(TeamMember.user_id == current_user.id)
-                .first()
-            )
-            if membership:
-                team = (
-                    db.query(Team)
-                    .filter(Team.id == membership.team_id)
-                    .first()
-                )
-
+        team = active_team(db, current_user)
         if not team:
             raise HTTPException(status_code=400, detail="Team not found")
 
@@ -284,7 +265,7 @@ async def upload_project(
         credits_required = max(1, page_count)
 
         s3_key = stored_key = upload_file_to_s3(Path(file_path))
-        logger.info(f"S3 upload successful: {s3_key}")
+        logger.info("Source upload stored (team=%s pages=%d)", team.id, page_count)
 
 
 
@@ -394,13 +375,8 @@ def _projects_scope(db: Session, user: User, assignee: str | None, q: str | None
     from sqlalchemy import or_
 
     from app.models.batch import Batch
-    from app.models.team_member import TeamMember
 
-    team = db.query(Team).filter(Team.owner_id == user.id).first()
-    if not team:
-        membership = db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
-        if membership:
-            team = db.query(Team).filter(Team.id == membership.team_id).first()
+    team = active_team(db, user)
 
     base = db.query(TranslationProject)
     if team:
@@ -638,7 +614,7 @@ def _send_assignment_email(to: str, **fields) -> None:
         subject, html, text = email_service.render_assignment_email(**fields)
         email_service.send_email(to=to, subject=subject, html=html, text_fallback=text)
     except Exception:
-        logger.exception("Couldn't send the assignment email to %s", to)
+        logger.exception("Couldn't send the assignment email")
 
 
 def _queue_assignment_email(background_tasks: BackgroundTasks, project, assignee: User, assigner: User) -> None:
@@ -862,6 +838,8 @@ def get_project_status(
         "free_revisions_left": ai_actions.regenerations_left(project),
         "regenerations_left": ai_actions.regenerations_left(project),
         "next_regenerate_cost_credits": ai_actions.next_regenerate_cost(project, current_user),
+        # Certify, rerun and regenerate: owner, admin or PM only.
+        "can_lead": is_team_lead(db, project.team_id, current_user),
     }
 
 
@@ -897,6 +875,7 @@ def update_review_status(
 
     project = get_user_project_or_404(db, project_id, current_user)
     if new_status == "CERTIFIED":
+        require_team_lead(db, project.team_id, current_user, "certify a project")
         refuse_dtp_certification(project)
         if project.status != ProjectStatus.COMPLETED:
             raise HTTPException(status_code=400, detail="The translation must finish before it can be certified.")
@@ -926,6 +905,7 @@ def certify_project(
 
 
     project = get_user_project_or_404(db, project_id, current_user)
+    require_team_lead(db, project.team_id, current_user, "certify a project")
     refuse_dtp_certification(project)
 
     if project.status != ProjectStatus.COMPLETED:
@@ -1184,14 +1164,11 @@ def _resolve_rebuild_docx_bytes(
             tmp.close()
             from pathlib import Path as _P
 
-            download_file_from_s3(authored_key, _P(tmp.name))
-            with open(tmp.name, "rb") as f:
-                data = f.read()
             try:
-                os.unlink(tmp.name)
-            except Exception:
-                pass
-            return data
+                download_file_from_s3(authored_key, _P(tmp.name))
+                return _P(tmp.name).read_bytes()
+            finally:
+                _P(tmp.name).unlink(missing_ok=True)
         except Exception:
             logger.exception(
                 "Authored DOCX download failed — falling back to "
@@ -1348,7 +1325,8 @@ def clear_edited_html(
 
 def _project_for_regenerate(db: Session, project_id: UUID, user: User) -> TranslationProject:
     """The project row-locked, so two clicks can't both pass the regenerate limit or the running-rebuild check."""
-    get_user_project_or_404(db, project_id, user)
+    visible = get_user_project_or_404(db, project_id, user)
+    require_team_lead(db, visible.team_id, user, "regenerate a project")
     project = (
         db.query(TranslationProject)
         .filter(TranslationProject.id == project_id)
@@ -1410,6 +1388,7 @@ def rerun_project(
     from app.models.credit import CreditTransaction
 
     project = get_user_project_or_404(db, project_id, current_user)
+    require_team_lead(db, project.team_id, current_user, "rerun a project")
     if project.status in (ProjectStatus.PENDING, ProjectStatus.PROCESSING):
         raise HTTPException(status_code=409, detail="This project is already being processed")
 

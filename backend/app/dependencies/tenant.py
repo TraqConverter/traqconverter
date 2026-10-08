@@ -14,11 +14,30 @@ from __future__ import annotations
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.roles import TEAM_MANAGER_ROLES, is_staff
+from app.core.roles import TEAM_LEAD_ROLES, TEAM_MANAGER_ROLES, is_staff
 from app.models.user import User
 from app.models.team import Team
 from app.models.team_member import TeamMember
 from app.models.project import TranslationProject
+
+
+def active_team(db: Session, user: User):
+    """The team the user works in: the one they own, else the team they joined first. Same answer every call."""
+    team = db.query(Team).filter(Team.owner_id == user.id).order_by(Team.id).first()
+    if team:
+        return team
+    return (
+        db.query(Team)
+        .join(TeamMember, TeamMember.team_id == Team.id)
+        .filter(TeamMember.user_id == user.id)
+        .order_by(TeamMember.created_at.asc(), TeamMember.id.asc())
+        .first()
+    )
+
+
+def active_team_id(db: Session, user: User):
+    team = active_team(db, user)
+    return team.id if team else None
 
 
 def team_ids_for(db: Session, user: User) -> set:
@@ -93,4 +112,26 @@ def can_manage_project(db: Session, project: TranslationProject, user: User) -> 
         .filter(TeamMember.team_id == project.team_id, TeamMember.user_id == user.id)
         .first()
     )
-    return bool(member and (member.role or "").upper() in ("ADMIN", "PM"))
+    return bool(member and (member.role or "").upper() in TEAM_LEAD_ROLES)
+
+
+def is_team_lead(db: Session, team_id, user: User) -> bool:
+    """The team owner, a team ADMIN or PM, or platform staff."""
+    if is_staff(user) or team_id is None:
+        return is_staff(user)
+    if db.query(Team.id).filter(Team.id == team_id, Team.owner_id == user.id).first():
+        return True
+    member = (
+        db.query(TeamMember.role)
+        .filter(TeamMember.team_id == team_id, TeamMember.user_id == user.id)
+        .first()
+    )
+    return bool(member and (member.role or "").upper() in TEAM_LEAD_ROLES)
+
+
+def require_team_lead(db: Session, team_id, user: User, action: str) -> None:
+    if not is_team_lead(db, team_id, user):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Only the team owner, an admin or a project manager can {action}.",
+        )

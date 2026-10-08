@@ -1344,9 +1344,8 @@ def _author_rebuild_docx_multiturn_core(
             if not tool_use_blocks:
                 if text_blocks:
                     logger.info(
-                        "Claude finished without further tool calls. "
-                        "Final text (first 200 chars): %s",
-                        "\n".join(text_blocks)[:200],
+                        "Claude finished without further tool calls (final text: %d chars)",
+                        sum(len(t) for t in text_blocks),
                     )
                 break
 

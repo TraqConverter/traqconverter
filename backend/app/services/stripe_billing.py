@@ -34,13 +34,9 @@ def team_users(db: Session, team: Team) -> list:
 
 
 def team_of_user(db: Session, user: User):
-    team = db.query(Team).filter(Team.owner_id == user.id).first()
-    if team:
-        return team
-    membership = db.query(TeamMember).filter(TeamMember.user_id == user.id).first()
-    if membership:
-        return db.query(Team).filter(Team.id == membership.team_id).first()
-    return None
+    from app.dependencies.tenant import active_team
+
+    return active_team(db, user)
 
 
 def team_for_subscription(db: Session, team_id, customer_id, subscription_id):
