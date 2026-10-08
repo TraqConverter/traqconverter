@@ -20,7 +20,7 @@ other table here is derived from it, and the frontend reads it through
 GET /billing/plans.
 """
 
-SALES_EMAIL = "info@traqworx.com"
+SALES_EMAIL = "info@lumaxdigital.co.uk"
 
 TRIAL_DAYS = 7
 TRIAL_CREDITS = 3
