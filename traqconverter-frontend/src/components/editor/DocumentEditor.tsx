@@ -26,6 +26,15 @@ import {
   type DocImage,
   type PageAnchor,
 } from "./docBlocks"
+import {
+  BREAK_LAYER_CLASS,
+  PAGE_LAYOUT_CSS,
+  drawPdfBreaks,
+  findPdfBreaks,
+  matchWordLineHeights,
+  officeFontFaces,
+  withNormalRunDefaults,
+} from "./pageLayout"
 import MediaPicker, { type Placement } from "./MediaPicker"
 import ReviewChecklist, { checksLabel, checksTone } from "./ReviewChecklist"
 import type { MediaAsset } from "@/lib/media"
@@ -784,6 +793,7 @@ export default function DocumentEditor({
     let cancelled = false
     let observer: ResizeObserver | null = null
     let mutations: MutationObserver | null = null
+    let breaksTimer: number | undefined
 
     ;(async () => {
       try {
@@ -814,17 +824,25 @@ export default function DocumentEditor({
         const idoc = iframe.contentDocument
         if (!idoc) throw new Error("Iframe document inaccessible")
         idoc.open()
-        idoc.write(IFRAME_HTML)
+        idoc.write(IFRAME_HTML.replace("<style>", `<style>${officeFontFaces(`${window.location.origin}/fonts/office`)}${PAGE_LAYOUT_CSS}`))
         idoc.close()
 
+        const shown = await withNormalRunDefaults(docxBuffer).catch(() => docxBuffer)
         const [pageAnchors] = await Promise.all([
           readPageAnchors(docxBuffer).catch(() => new Map<string, PageAnchor>()),
-          renderAsync(docxBuffer, idoc.body, undefined, RENDER_OPTIONS),
+          renderAsync(shown, idoc.body, undefined, RENDER_OPTIONS),
         ])
         if (cancelled) {
           iframe.remove()
           return
         }
+        // Line heights depend on the fonts' metrics, so measure once the fonts are in.
+        await idoc.fonts.ready
+        if (cancelled) {
+          iframe.remove()
+          return
+        }
+        matchWordLineHeights(idoc)
 
         tagBlocks(idoc.body)
         const images = findImages(idoc.body)
@@ -864,6 +882,11 @@ export default function DocumentEditor({
           if (anchor) placeOnPage(image, anchor, scale)
           else alignFloatingToColumn(image, scale)
         }
+        const showPdfBreaks = () => {
+          matchWordLineHeights(idoc)
+          drawPdfBreaks(idoc, findPdfBreaks(idoc).breaks)
+        }
+        showPdfBreaks()
 
         observer = new ResizeObserver(() => {
           applyZoom()
@@ -871,7 +894,13 @@ export default function DocumentEditor({
           if (selectedIdRef.current) updateImageBar()
         })
         observer.observe(host)
-        mutations = new MutationObserver(fitHeight)
+        mutations = new MutationObserver((records) => {
+          fitHeight()
+          // Redrawing the break lines is itself a mutation; only text and layout changes move them.
+          if (records.every((r) => (r.target as Element).closest?.(`.${BREAK_LAYER_CLASS}`))) return
+          window.clearTimeout(breaksTimer)
+          breaksTimer = window.setTimeout(showPdfBreaks, 400)
+        })
         mutations.observe(idoc.body, { childList: true, subtree: true, characterData: true })
 
         iframeRef.current = iframe
@@ -899,6 +928,7 @@ export default function DocumentEditor({
       cancelled = true
       observer?.disconnect()
       mutations?.disconnect()
+      window.clearTimeout(breaksTimer)
     }
   }, [docxBuffer, wireDocument, selectImage, updateImageBar])
 

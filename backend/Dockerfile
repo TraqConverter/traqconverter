@@ -14,9 +14,12 @@ FROM python:3.11-slim AS base
 #   * libreoffice + libreoffice-writer — DOCX→PDF conversion. Export PDF
 #     builds the layout-planned DOCX and shells out to `soffice --headless`
 #     so the PDF is visually identical to the DOCX.
-#   * fonts-liberation / fonts-dejavu-core — give LibreOffice acceptable
-#     fallback fonts so the converted PDF doesn't render in a default
-#     Type1 face.
+#   * fonts-liberation / fonts-crosextra-carlito / fonts-crosextra-caladea —
+#     same-width stand-ins for Times New Roman/Arial, Calibri and Cambria,
+#     the fonts the AI-built documents use. Without them LibreOffice picks
+#     a wider font and the PDF breaks pages where the editor doesn't. The
+#     editor serves the same Carlito/Caladea builds (public/fonts/office).
+#   * fonts-dejavu-core — fallback for scripts the others don't cover.
 #   * build-essential — for any Python wheels that don't ship binaries.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -30,6 +33,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-writer \
     fonts-dejavu-core \
     fonts-liberation \
+    fonts-crosextra-carlito \
+    fonts-crosextra-caladea \
     curl \
  && rm -rf /var/lib/apt/lists/*
 

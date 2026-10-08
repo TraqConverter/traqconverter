@@ -248,6 +248,13 @@ def install(
     return _finish(doc)
 
 
+def add_export_stamp(data: bytes, image: images.PreparedImage, align: str = "right") -> bytes:
+    """The team stamp in every section's footer of a document the editor doesn't manage (older editor documents)."""
+    doc = _Doc.load(data)
+    _add_stamps(doc, image, align if align in images.ALIGNS else "right", DEFAULT_WIDTH_CM)
+    return doc.dump()
+
+
 def state(data: bytes) -> dict:
     doc = _Doc.load(data)
     out = {"managed": _is_marked(doc), "enabled": False, "align": "right", "width_cm": DEFAULT_WIDTH_CM, "asset_id": None}
