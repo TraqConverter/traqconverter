@@ -7,22 +7,24 @@ import { useFeature } from "@/lib/plan"
 import {
   BLOCK_ATTR,
   CERT_START_ID,
-  EMU_PER_PX,
   IMAGE_ATTR,
   alignFloatingToColumn,
   anchorParagraphAt,
   blockParagraphOf,
   blocksInRange,
-  columnLeft,
   findImages,
   isAtParagraphEnd,
   isAtParagraphStart,
+  pageOffsets,
   pageScale,
   paragraphText,
+  placeOnPage,
+  readPageAnchors,
   selectionText,
   tagBlocks,
   widthCm,
   type DocImage,
+  type PageAnchor,
 } from "./docBlocks"
 import MediaPicker, { type Placement } from "./MediaPicker"
 import ReviewChecklist, { checksLabel, checksTone } from "./ReviewChecklist"
@@ -120,6 +122,8 @@ body { zoom: var(--docx-zoom, 0.65); }
 .docx-wrapper { padding: 0 !important; background: transparent !important; }
 section.docx, .docx { margin: 0 auto 16px !important; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10); }
 section.docx:focus { outline: none; }
+/* docx-preview stacks the footer over the body; Word draws body text and pictures over the footer. */
+section.docx > article { z-index: 2 !important; }
 table, thead, tbody, tfoot, tr, td, th { border-color: transparent !important; }
 p.tq-target { outline: 2px dashed rgba(10, 120, 112, 0.55); outline-offset: 2px; border-radius: 2px; }
 p.tq-changed { animation: tq-flash ${HIGHLIGHT_MS}ms ease-out forwards; border-radius: 2px; }
@@ -732,8 +736,7 @@ export default function DocumentEditor({
         const scale = pageScale(section, pageWidthPx(section))
         const left = current.rect.left + (e.clientX - current.x)
         const top = current.rect.top + (e.clientY - current.y)
-        const x = Math.round(((left - columnLeft(anchor, scale)) / scale) * EMU_PER_PX)
-        const y = Math.round(((top - anchor.getBoundingClientRect().top) / scale) * EMU_PER_PX)
+        const { x, y } = pageOffsets({ left, top }, section, scale)
         actionsRef.current?.placeImage(current.image.id, anchor.getAttribute(BLOCK_ATTR) as string, x, y)
       }
       idoc.addEventListener("pointerup", (e) => endDrag(e, false))
@@ -814,7 +817,10 @@ export default function DocumentEditor({
         idoc.write(IFRAME_HTML)
         idoc.close()
 
-        await renderAsync(docxBuffer, idoc.body, undefined, RENDER_OPTIONS)
+        const [pageAnchors] = await Promise.all([
+          readPageAnchors(docxBuffer).catch(() => new Map<string, PageAnchor>()),
+          renderAsync(docxBuffer, idoc.body, undefined, RENDER_OPTIONS),
+        ])
         if (cancelled) {
           iframe.remove()
           return
@@ -853,7 +859,11 @@ export default function DocumentEditor({
         if (scrollRef.current) scrollRef.current.scrollTop = scrollTop
         const page = idoc.querySelector<HTMLElement>("section.docx")
         const scale = page ? pageScale(page, pageWidthPx(page)) : 1
-        for (const image of images) alignFloatingToColumn(image, scale)
+        for (const image of images) {
+          const anchor = pageAnchors.get(image.id)
+          if (anchor) placeOnPage(image, anchor, scale)
+          else alignFloatingToColumn(image, scale)
+        }
 
         observer = new ResizeObserver(() => {
           applyZoom()
@@ -1174,7 +1184,7 @@ export default function DocumentEditor({
   }
 
   const placeImage = (id: string, blockId: string, x: number, y: number) => {
-    void imageAction(id, "position", { target_block_id: blockId, x_emu: x, y_emu: y }).then((ok) => {
+    void imageAction(id, "position", { target_block_id: blockId, x_emu: x, y_emu: y, relative: "page" }).then((ok) => {
       if (!ok) {
         const image = imagesRef.current.find((i) => i.id === id)
         if (image) image.frame.style.transform = ""
@@ -1182,14 +1192,30 @@ export default function DocumentEditor({
     })
   }
 
+  // A floating copy keeps the original's left edge and starts at the top of the paragraph it is pasted in.
+  const pastePlacement = (id: string, blockId: string): PageAnchor | null => {
+    const image = imagesRef.current.find((i) => i.id === id)
+    const target = docRef.current?.querySelector<HTMLElement>(blockSelector(blockId))
+    const page = target?.closest("section.docx") as HTMLElement | null
+    const source = image?.img.closest("section.docx") as HTMLElement | null
+    if (!image?.floating || !target || !page || !source) return null
+    const scale = pageScale(page, pageWidthPx(page))
+    const { x } = pageOffsets(image.img.getBoundingClientRect(), source, scale)
+    const { y } = pageOffsets(target.getBoundingClientRect(), page, scale)
+    return { x, y }
+  }
+
   const duplicateAt = async (id: string, blockId: string) => {
     let newId = ""
+    const at = pastePlacement(id, blockId)
     await runChange(
       "image",
       async (version) => {
         const res = await api.post<{ version: number; image_id: string }>(
           `/projects/${projectId}/document/images/${id}/duplicate`,
-          { version, target_block_id: blockId },
+          at
+            ? { version, target_block_id: blockId, x_emu: at.x, y_emu: at.y, relative: "page" }
+            : { version, target_block_id: blockId },
         )
         newId = res.data.image_id
         return res.data
@@ -1223,12 +1249,8 @@ export default function DocumentEditor({
     if (!idoc || !image) return
     const translated = translatedPages(idoc)
     const source = image.img.closest("section.docx") as HTMLElement | null
-    const anchor = source ? firstParagraph(source) : null
-    if (!source || !anchor) return
-    const scale = pageScale(source, pageWidthPx(source))
-    const r = image.img.getBoundingClientRect()
-    const x = Math.round(((r.left - columnLeft(anchor, scale)) / scale) * EMU_PER_PX)
-    const y = Math.round(((r.top - anchor.getBoundingClientRect().top) / scale) * EMU_PER_PX)
+    if (!source) return
+    const { x, y } = pageOffsets(image.img.getBoundingClientRect(), source, pageScale(source, pageWidthPx(source)))
     const src = image.img.src
     const targets: PagePlacement[] = []
     for (const page of translated) {
@@ -1249,7 +1271,7 @@ export default function DocumentEditor({
       async (version) => {
         const res = await api.post<{ version: number; image_ids: string[] }>(
           `/projects/${projectId}/document/images/${image.id}/copy-to-pages`,
-          { version, targets },
+          { version, targets, relative: "page" },
         )
         added = res.data.image_ids.length
         return res.data

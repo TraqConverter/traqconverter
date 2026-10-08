@@ -157,6 +157,7 @@ export function isAtParagraphEnd(p: Element, node: Node, offset: number): boolea
 export const IMAGE_ATTR = "data-image-id"
 export const CERT_START_ID = "_cert_start"
 const IMAGE_MARKER_RE = /^_(img_[0-9a-f]{8})$/
+const IMAGE_ID_RE = /^img_[0-9a-f]{8}$/
 const PX_PER_CM = 96 / 2.54
 export const EMU_PER_PX = 9525
 
@@ -220,6 +221,51 @@ export function alignFloatingToColumn(image: DocImage, scale: number) {
   const delta = (origin - columnLeft(p, scale)) / scale
   frame.style.left = `${left - delta}px`
   frame.dataset.columnFixed = "1"
+}
+
+// Offsets in EMU from the page's top-left corner.
+export type PageAnchor = { x: number; y: number }
+
+const WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+
+// Pictures the file positions from the page corner; docx-preview ignores relativeFrom and hangs them off their paragraph.
+export async function readPageAnchors(docx: ArrayBuffer): Promise<Map<string, PageAnchor>> {
+  const out = new Map<string, PageAnchor>()
+  const { default: JSZip } = await import("jszip")
+  const xml = await (await JSZip.loadAsync(docx)).file("word/document.xml")?.async("string")
+  if (!xml) return out
+  const doc = new DOMParser().parseFromString(xml, "application/xml")
+  for (const anchor of Array.from(doc.getElementsByTagNameNS(WP_NS, "anchor"))) {
+    const child = (name: string) => Array.from(anchor.children).find((c) => c.namespaceURI === WP_NS && c.localName === name)
+    const h = child("positionH")
+    const v = child("positionV")
+    const id = child("docPr")?.getAttribute("name") ?? ""
+    if (!IMAGE_ID_RE.test(id) || h?.getAttribute("relativeFrom") !== "page" || v?.getAttribute("relativeFrom") !== "page") continue
+    const offset = (pos: Element) => parseInt(pos.getElementsByTagNameNS(WP_NS, "posOffset")[0]?.textContent ?? "0", 10) || 0
+    out.set(id, { x: offset(h), y: offset(v) })
+  }
+  return out
+}
+
+// Shift a floating picture so it sits at its page offsets, where Word and the PDF export put it.
+export function placeOnPage(image: DocImage, anchor: PageAnchor, scale: number) {
+  const { frame, img } = image
+  const page = frame.closest("section.docx") as HTMLElement | null
+  if (!image.floating || !page) return
+  const p = page.getBoundingClientRect()
+  const r = img.getBoundingClientRect()
+  frame.style.left = `${cssPx(frame.style.left || "0") + (p.left + (anchor.x / EMU_PER_PX) * scale - r.left) / scale}px`
+  frame.style.top = `${cssPx(frame.style.top || "0") + (p.top + (anchor.y / EMU_PER_PX) * scale - r.top) / scale}px`
+  frame.dataset.columnFixed = "1"
+}
+
+// Where a viewport rect sits on its page, in EMU from the page's top-left corner.
+export function pageOffsets(rect: { left: number; top: number }, page: HTMLElement, scale: number): PageAnchor {
+  const p = page.getBoundingClientRect()
+  return {
+    x: Math.round(((rect.left - p.left) / scale) * EMU_PER_PX),
+    y: Math.round(((rect.top - p.top) / scale) * EMU_PER_PX),
+  }
 }
 
 export function widthCm(img: HTMLImageElement, scale: number): number {

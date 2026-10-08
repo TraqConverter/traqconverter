@@ -246,17 +246,28 @@ def _build_inline(image_id: str, docpr_id: int, cx: int, cy: int, graphic):
     return inline
 
 
-def _build_anchor(image_id: str, docpr_id: int, cx: int, cy: int, graphic, x: int, y: int):
+RELATIVE = ("paragraph", "page")
+_RELATIVE_FROM = {"paragraph": ("column", "paragraph"), "page": ("page", "page")}
+_BASE_HEIGHT = 251659264
+
+
+def _build_anchor(
+    image_id: str, docpr_id: int, cx: int, cy: int, graphic, x: int, y: int, relative: str = "paragraph", height: int = _BASE_HEIGHT
+):
+    rel_h, rel_v = _RELATIVE_FROM[relative]
     anchor = etree.Element(
         wp("anchor"),
         nsmap={"wp": WP_NS},
         distT="0", distB="0", distL="0", distR="0",
-        simplePos="0", relativeHeight="251659264", behindDoc="0", locked="0", layoutInCell="1", allowOverlap="1",
+        simplePos="0", relativeHeight=str(height), behindDoc="0", locked="0",
+        # A page position must not be read from a table cell's corner instead.
+        layoutInCell="0" if relative == "page" else "1",
+        allowOverlap="1",
     )
     etree.SubElement(anchor, wp("simplePos"), x="0", y="0")
-    h = etree.SubElement(anchor, wp("positionH"), relativeFrom="column")
+    h = etree.SubElement(anchor, wp("positionH"), relativeFrom=rel_h)
     etree.SubElement(h, wp("posOffset")).text = str(x)
-    v = etree.SubElement(anchor, wp("positionV"), relativeFrom="paragraph")
+    v = etree.SubElement(anchor, wp("positionV"), relativeFrom=rel_v)
     etree.SubElement(v, wp("posOffset")).text = str(y)
     etree.SubElement(anchor, wp("extent"), cx=str(cx), cy=str(cy))
     etree.SubElement(anchor, wp("effectExtent"), l="0", t="0", r="0", b="0")
@@ -395,7 +406,32 @@ def _size(frame) -> tuple[int, int]:
     return int(ext.get("cx")), int(ext.get("cy"))
 
 
-def _rebuild_frame(doc: _Doc, drawing, frame, *, floating: bool, x: int = 0, y: int = 0, cx: int | None = None, cy: int | None = None):
+def _top_height(doc: _Doc) -> int:
+    """A relativeHeight above every other floating picture, so the one placed last is drawn on top."""
+    top = _BASE_HEIGHT
+    for name, tree in doc.trees.items():
+        if not blocks.PART_RE.match(name):
+            continue
+        for anchor in tree.iter(wp("anchor")):
+            try:
+                top = max(top, int(anchor.get("relativeHeight") or 0))
+            except ValueError:
+                pass
+    return min(top + 1, 0xFFFFFFFF)
+
+
+def _rebuild_frame(
+    doc: _Doc,
+    drawing,
+    frame,
+    *,
+    floating: bool,
+    x: int = 0,
+    y: int = 0,
+    cx: int | None = None,
+    cy: int | None = None,
+    relative: str = "paragraph",
+):
     old_cx, old_cy = _size(frame)
     cx, cy = cx or old_cx, cy or old_cy
     docpr = frame.find(wp("docPr"))
@@ -405,7 +441,7 @@ def _rebuild_frame(doc: _Doc, drawing, frame, *, floating: bool, x: int = 0, y: 
         ext.set("cy", str(cy))
     image_id, docpr_id = docpr.get("name"), int(docpr.get("id", "1"))
     new = (
-        _build_anchor(image_id, docpr_id, cx, cy, graphic, x, y)
+        _build_anchor(image_id, docpr_id, cx, cy, graphic, x, y, relative, _top_height(doc))
         if floating
         else _build_inline(image_id, docpr_id, cx, cy, graphic)
     )
@@ -481,14 +517,31 @@ def align_image(data: bytes, image_id: str, align: str) -> bytes:
     return _finish(doc)
 
 
-def float_image(data: bytes, image_id: str, target_block_id: str, x_emu: int, y_emu: int) -> bytes:
-    """Anchor the picture to a paragraph at an offset (x from the column's left, y from the paragraph's top)."""
-    x = max(-_MAX_OFFSET_EMU, min(_MAX_OFFSET_EMU, int(x_emu)))
-    y = max(-_MAX_OFFSET_EMU, min(_MAX_OFFSET_EMU, int(y_emu)))
+def _check_relative(relative: str) -> None:
+    if relative not in RELATIVE:
+        raise DocxEditError("relative must be paragraph or page")
+
+
+def _offsets(doc: _Doc, target, cx: int, cy: int, x: int, y: int, relative: str) -> tuple[int, int]:
+    """Clamped offsets; a page position keeps the whole picture on the page of `target`."""
+    if relative == "page":
+        g = section_geometry(doc, target)
+        return (
+            max(0, min(int(x), max(0, g["page_w"] - cx))),
+            max(0, min(int(y), max(0, g["page_h"] - cy))),
+        )
+    clamp = lambda v: max(-_MAX_OFFSET_EMU, min(_MAX_OFFSET_EMU, int(v)))  # noqa: E731
+    return clamp(x), clamp(y)
+
+
+def float_image(data: bytes, image_id: str, target_block_id: str, x_emu: int, y_emu: int, relative: str = "paragraph") -> bytes:
+    """Anchor the picture to a paragraph: x/y from the column's left and the paragraph's top, or from the page's corner."""
+    _check_relative(relative)
     doc = _Doc.load(data)
     target = _block_paragraph(doc, target_block_id)
     drawing, frame, run = _find_image(doc, image_id)
-    _rebuild_frame(doc, drawing, frame, floating=True, x=x, y=y)
+    x, y = _offsets(doc, target, *_size(frame), x_emu, y_emu, relative)
+    _rebuild_frame(doc, drawing, frame, floating=True, x=x, y=y, relative=relative)
     # Dropping a picture onto its own empty paragraph must not delete the paragraph it goes back into.
     _detach(doc, run, keep=target)
     target.insert(_insertion_index(target), run)
@@ -532,13 +585,19 @@ def _align_of(p) -> str:
     return {"start": "left", "end": "right"}.get(val, val if val in ALIGNS else "left")
 
 
-def _set_offsets(frame, x: int, y: int) -> None:
-    for tag, rel, value in (("positionH", "column", x), ("positionV", "paragraph", y)):
+def _set_offsets(frame, x: int, y: int, relative: str = "paragraph") -> None:
+    for tag, rel, value in zip(("positionH", "positionV"), _RELATIVE_FROM[relative], (x, y)):
         pos = frame.find(wp(tag))
         for child in list(pos):
             pos.remove(child)
         pos.set("relativeFrom", rel)
-        etree.SubElement(pos, wp("posOffset")).text = str(max(-_MAX_OFFSET_EMU, min(_MAX_OFFSET_EMU, int(value))))
+        etree.SubElement(pos, wp("posOffset")).text = str(int(value))
+    frame.set("layoutInCell", "0" if relative == "page" else "1")
+
+
+def _relative_of(frame) -> str:
+    pos = frame.find(wp("positionV"))
+    return "page" if pos is not None and pos.get("relativeFrom") == "page" else "paragraph"
 
 
 def _nudge(frame) -> None:
@@ -548,7 +607,9 @@ def _nudge(frame) -> None:
             off.text = str(min(_MAX_OFFSET_EMU, int(off.text or 0) + _NUDGE_EMU))
 
 
-def _clone(doc: _Doc, image_id: str, target, x: int | None = None, y: int | None = None) -> str:
+def _clone(
+    doc: _Doc, image_id: str, target, x: int | None = None, y: int | None = None, relative: str = "paragraph"
+) -> str:
     """Copy a picture next to `target`; the copy reuses the same media relationship."""
     _, frame, run = _find_image(doc, image_id)
     source_p = _paragraph_of(run)
@@ -557,6 +618,10 @@ def _clone(doc: _Doc, image_id: str, target, x: int | None = None, y: int | None
     for attr in list(new_frame.attrib):
         if attr.startswith(f"{{{blocks.WP14_NS}}}"):
             del new_frame.attrib[attr]
+    if new_frame.tag == wp("anchor"):
+        # A copy goes in front of the text and of every picture already there, whatever the original was set to.
+        new_frame.set("behindDoc", "0")
+        new_frame.set("relativeHeight", str(_top_height(doc)))
     docpr = new_frame.find(wp("docPr"))
     docpr.set("name", new_id)
     docpr.set("id", str(_next_docpr_id(doc)))
@@ -571,10 +636,13 @@ def _clone(doc: _Doc, image_id: str, target, x: int | None = None, y: int | None
     drawing = etree.SubElement(new_run, w("drawing"))
     drawing.append(new_frame)
     if x is not None and y is not None:
+        if target is source_p:
+            x, y = x + _NUDGE_EMU, y + _NUDGE_EMU
+        x, y = _offsets(doc, target, *_size(new_frame), x, y, relative)
         if new_frame.tag != wp("anchor"):
-            new_frame = _rebuild_frame(doc, drawing, new_frame, floating=True, x=x, y=y)
+            new_frame = _rebuild_frame(doc, drawing, new_frame, floating=True, x=x, y=y, relative=relative)
         else:
-            _set_offsets(new_frame, x, y)
+            _set_offsets(new_frame, x, y, relative)
         target.insert(_insertion_index(target), new_run)
     elif new_frame.tag == wp("anchor"):
         if target is source_p:
@@ -587,11 +655,22 @@ def _clone(doc: _Doc, image_id: str, target, x: int | None = None, y: int | None
     return new_id
 
 
-def duplicate_image(data: bytes, image_id: str, target_block_id: str) -> tuple[bytes, str]:
-    """Copy at a paragraph: a floating picture keeps its offsets there, an inline one goes in a paragraph after it."""
+def duplicate_image(
+    data: bytes,
+    image_id: str,
+    target_block_id: str,
+    x_emu: int | None = None,
+    y_emu: int | None = None,
+    relative: str = "paragraph",
+) -> tuple[bytes, str]:
+    """Copy at a paragraph: floating at x/y when given, else a floating picture keeps its offsets there
+    and an inline one goes in a paragraph after it."""
+    _check_relative(relative)
+    if (x_emu is None) != (y_emu is None):
+        raise DocxEditError("Give both x and y, or neither")
     doc = _Doc.load(data)
     target = _block_paragraph(doc, target_block_id)
-    new_id = _clone(doc, image_id, target)
+    new_id = _clone(doc, image_id, target, x_emu, y_emu, relative)
     return _finish(doc), new_id
 
 
@@ -600,10 +679,13 @@ def _embed_targets(doc: _Doc, el) -> set[str]:
     return {rels.get(b.get(f"{{{R_NS}}}embed")) for b in el.iter(a("blip"))} - {None}
 
 
-def copy_to_blocks(data: bytes, image_id: str, placements: list[tuple[str, int, int]]) -> tuple[bytes, list[str]]:
+def copy_to_blocks(
+    data: bytes, image_id: str, placements: list[tuple[str, int, int]], relative: str = "paragraph"
+) -> tuple[bytes, list[str]]:
     """One floating copy per (block, x, y), skipping the certification page and paragraphs already showing the picture."""
     from app.services.docx_certification import _marker_units
 
+    _check_relative(relative)
     doc = _Doc.load(data)
     _, _, run = _find_image(doc, image_id)
     media = _embed_targets(doc, run)
@@ -617,7 +699,7 @@ def copy_to_blocks(data: bytes, image_id: str, placements: list[tuple[str, int, 
         target = _block_paragraph(doc, block_id)
         if target in cert or _embed_targets(doc, target) & media:
             continue
-        new_ids.append(_clone(doc, image_id, target, x, y))
+        new_ids.append(_clone(doc, image_id, target, x, y, relative))
     if not new_ids:
         return data, []
     return _finish(doc), new_ids
@@ -729,5 +811,6 @@ def list_images(data: bytes) -> list[dict]:
         if entry["floating"]:
             entry["x_emu"] = int(frame.findtext(f"{wp('positionH')}/{wp('posOffset')}") or 0)
             entry["y_emu"] = int(frame.findtext(f"{wp('positionV')}/{wp('posOffset')}") or 0)
+            entry["relative"] = _relative_of(frame)
         out.append(entry)
     return out
