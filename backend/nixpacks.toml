@@ -12,8 +12,11 @@
 # shutil.which).
 #
 # `tesseract-ocr` is the fallback OCR engine used when Claude Vision
-# isn't configured. Liberation + DejaVu fonts give LibreOffice
-# acceptable font fallbacks during DOCX→PDF rendering.
+# isn't configured. Liberation, Carlito and Caladea are same-width
+# stand-ins for Times New Roman/Arial, Calibri and Cambria (the fonts the
+# AI-built documents use); without them LibreOffice substitutes a wider
+# font and the PDF breaks pages where the editor doesn't. DejaVu covers
+# the scripts the others don't.
 
 [phases.setup]
 aptPkgs = [
@@ -21,5 +24,7 @@ aptPkgs = [
     "libreoffice-writer",
     "tesseract-ocr",
     "fonts-liberation",
+    "fonts-crosextra-carlito",
+    "fonts-crosextra-caladea",
     "fonts-dejavu-core",
 ]
