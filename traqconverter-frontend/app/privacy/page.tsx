@@ -15,6 +15,7 @@ export default function PrivacyPage() {
   return (
     <LegalPage
       title="Privacy Policy"
+      updated="8 October 2026"
       intro="This policy explains what personal data OnlineDocTranslator handles, why, who else processes it, how long we keep it, and the rights you have."
     >
       <h2 id="who-we-are">1. Who we are</h2>
@@ -71,8 +72,9 @@ export default function PrivacyPage() {
         <li>
           For protected delivery links (paid before download): the amount, when the client said they had paid, when
           the link was paid or unlocked, and the download count. We also store your team&apos;s PayPal.me name. We
-          don&apos;t collect or store the names or email addresses of your clients. A client who pays on PayPal pays
-          you directly, so we never receive or store their payment details.
+          don&apos;t collect or store the names or email addresses of your clients. A client who pays on PayPal, or
+          by bank transfer or another method outside the service, pays you directly, so we never receive or store
+          their payment details. If the client tells us they have paid, we record when and email you.
         </li>
         <li>
           When a client pays a protected link through Stripe, Stripe collects the payment details on the
@@ -241,7 +243,8 @@ export default function PrivacyPage() {
       <ul>
         <li>
           <strong>Projects</strong>{" "}(the uploaded document, its text, translations, versions, comments, and its
-          translation memory entries) stay until you delete the project or your account.
+          translation memory entries) stay until you delete the project or your account. We don&apos;t delete
+          projects automatically after a set period, including after a trial or a subscription ends.
         </li>
         <li>
           <strong>Templates and learned terms</strong>{" "}built from a project stay in your team&apos;s library after the
