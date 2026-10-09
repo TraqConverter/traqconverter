@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { api, apiErrorDetail } from "@/lib/api"
+import { PAYMENT_STYLE, amountText, money, paymentLabel, shortDate, type ProjectPaymentState } from "@/lib/payment"
 
 type LinkKind = "delivery_pdf" | "pdf" | "docx"
 
@@ -27,6 +28,8 @@ type DeliveryLink = {
   // Owner, admin or PM only.
   can_unlock?: boolean
   paid_at: string | null
+  // The team member who marked it as paid by hand.
+  marked_paid_by: string | null
 }
 
 type Payments = { paypal_me: string | null; stripe_status?: string | null }
@@ -43,39 +46,24 @@ const KIND_SHORT: Record<LinkKind, string> = { delivery_pdf: "Delivery PDF", pdf
 
 const MAX_AMOUNT = 100000
 
-const PAYMENT_LABEL: Record<PaymentStatus, string> = {
-  awaiting: "Awaiting payment",
-  claimed: "Client says paid",
-  unlocked: "Unlocked",
-  paid: "Paid ✓ (unlocked automatically)",
+const STATE: Record<PaymentStatus, ProjectPaymentState> = {
+  awaiting: "awaiting",
+  claimed: "claimed",
+  unlocked: "marked_paid",
+  paid: "paid_card",
 }
 
-const PAYMENT_STYLE: Record<PaymentStatus, { background: string; color: string }> = {
-  awaiting: { background: "#f3ecdb", color: "#6b6558" },
-  claimed: { background: "#f6e3b8", color: "#7a5a10" },
-  unlocked: { background: "#d8ead6", color: "#2d5a24" },
-  paid: { background: "#d8ead6", color: "#2d5a24" },
+function paymentWhen(l: DeliveryLink) {
+  if (l.payment_status === "paid") return shortDate(l.paid_at)
+  if (l.payment_status === "unlocked") return shortDate(l.unlocked_at)
+  if (l.payment_status === "claimed") return shortDate(l.paid_claimed_at)
+  return `Created ${shortDate(l.created_at)}`
 }
 
 function parseAmount(raw: string): number | null {
   const value = Number(raw.trim().replace(",", "."))
   if (!raw.trim() || !Number.isFinite(value) || value <= 0 || value > MAX_AMOUNT) return null
   return Math.round(value * 100) / 100
-}
-
-// 45 -> "45", 45.5 -> "45.50": the form a paypal.me link takes.
-function amountText(value: number) {
-  return Number.isInteger(value) ? String(value) : value.toFixed(2)
-}
-
-function money(value: number | null, currency: string) {
-  if (value == null) return ""
-  return currency === "EUR" ? `€${amountText(value)}` : `${amountText(value)} ${currency}`
-}
-
-function shortDate(iso: string | null) {
-  if (!iso) return ""
-  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
 }
 
 async function copyText(text: string) {
@@ -177,7 +165,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
       setConfirmUnlock(null)
       await load()
     } catch (err) {
-      setError(apiErrorDetail(err, "Couldn't unlock the link."))
+      setError(apiErrorDetail(err, "Couldn't mark it as paid."))
     } finally {
       setUnlocking(null)
     }
@@ -290,7 +278,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
               <span className="block text-[12px]" style={{ color: "#8a8270" }}>
                 {stripeActive
                   ? "The client sees a watermarked preview until they pay. The link unlocks by itself once Stripe confirms."
-                  : "The client sees a watermarked preview and a PayPal button until you unlock the link."}
+                  : "The client sees a watermarked preview and a PayPal button until you mark the link as paid."}
               </span>
             </span>
           </button>
@@ -322,7 +310,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                       ? `Client pays ${parsedAmount != null ? money(parsedAmount, "EUR") : "the amount"} by card, wallet or PayPal on Stripe${handle ? ", or on PayPal.me" : ""}.`
                       : handle
                       ? `Client pays at paypal.me/${handle}/${parsedAmount != null ? amountText(parsedAmount) : "…"}EUR`
-                      : "Client pays you directly, e.g. by bank transfer. Unlock the link from this list once the money arrives."}
+                      : "Client pays you directly, e.g. by bank transfer. Mark the link as paid in this list once the money arrives."}
                   </div>
                   {!canTakePayment && payments !== null && (
                     <div className="text-[12px] mt-1" style={{ color: "#8a8270" }}>
@@ -426,12 +414,15 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
                             <span
                               className="inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full"
-                              style={PAYMENT_STYLE[l.payment_status]}
+                              style={{
+                                background: PAYMENT_STYLE[STATE[l.payment_status]].background,
+                                color: PAYMENT_STYLE[STATE[l.payment_status]].color,
+                              }}
                             >
-                              {PAYMENT_LABEL[l.payment_status]}
+                              {paymentLabel(STATE[l.payment_status], l.marked_paid_by)}
                             </span>
                             <span className="text-[12px]" style={{ color: "#8a8270" }}>
-                              {[money(l.amount, l.currency), `Created ${shortDate(l.created_at)}`].filter(Boolean).join(" · ")}
+                              {[money(l.amount, l.currency), paymentWhen(l)].filter(Boolean).join(" · ")}
                             </span>
                           </div>
                         )}
@@ -443,7 +434,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                           className="shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold"
                           style={{ background: "#0a7870", color: "#ffffff" }}
                         >
-                          Unlock
+                          Mark as paid
                         </button>
                       )}
                       {l.status === "active" && (
@@ -461,7 +452,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                     {confirmUnlock === l.id && (
                       <div className="mt-2 rounded-lg p-2.5" style={{ background: "#e1efec", border: "1px solid #cfe6e2" }}>
                         <div className="text-[13px] mb-2" style={{ color: "#1f2a2e" }}>
-                          Check that the money has arrived first. Once unlocked, the client can download the clean file from the same link.
+                          Check that the money has arrived first. Marking it as paid releases the document: the client can download the clean file from the same link straight away.
                         </div>
                         <div className="flex gap-2 justify-end">
                           <button
@@ -479,7 +470,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                             className="rounded-full px-3 py-1.5 text-xs font-semibold"
                             style={{ background: "#0a7870", color: "#ffffff", opacity: unlocking === l.id ? 0.7 : 1 }}
                           >
-                            {unlocking === l.id ? "Unlocking…" : "Yes, unlock"}
+                            {unlocking === l.id ? "Marking as paid…" : "Yes, mark as paid and release"}
                           </button>
                         </div>
                       </div>

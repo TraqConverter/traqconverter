@@ -105,6 +105,98 @@ def payment_status(link: DeliveryLink) -> Optional[str]:
     return "claimed" if link.paid_claimed_at is not None else "awaiting"
 
 
+# The Jobs page payment filter: "paid" covers both a card payment and a manual mark-as-paid.
+PROJECT_PAYMENT_FILTERS = ("claimed", "awaiting", "paid")
+
+
+def _project_payment_state():
+    from sqlalchemy import case
+
+    return case(
+        (DeliveryLink.paid_at.isnot(None), "paid_card"),
+        (DeliveryLink.unlocked_at.isnot(None), "marked_paid"),
+        (DeliveryLink.paid_claimed_at.isnot(None), "claimed"),
+        else_="awaiting",
+    )
+
+
+def _deciding_links(db: Session, now: Optional[datetime] = None):
+    """Per project, the protected link its payment status comes from: the latest unlocked one, else the newest active one."""
+    from sqlalchemy import and_, or_
+
+    now = now or datetime.utcnow()
+    return (
+        db.query(DeliveryLink)
+        .filter(
+            DeliveryLink.protected.is_(True),
+            DeliveryLink.revoked_at.is_(None),
+            or_(
+                DeliveryLink.unlocked_at.isnot(None),
+                and_(DeliveryLink.expires_at > now, DeliveryLink.file_key.isnot(None)),
+            ),
+        )
+        .distinct(DeliveryLink.project_id)
+        .order_by(DeliveryLink.project_id, DeliveryLink.unlocked_at.desc().nullslast(), DeliveryLink.created_at.desc())
+    )
+
+
+def deciding_links_for(db: Session, project_ids: list) -> dict:
+    """{project_id: link} in one query, for the projects that have a link deciding their payment status."""
+    if not project_ids:
+        return {}
+    links = _deciding_links(db).filter(DeliveryLink.project_id.in_(project_ids)).all()
+    return {link.project_id: link for link in links}
+
+
+def project_payment_states(db: Session):
+    """Subquery of (project_id, state) with state one of paid_card, marked_paid, claimed, awaiting."""
+    return (
+        _deciding_links(db)
+        .with_entities(DeliveryLink.project_id.label("project_id"), _project_payment_state().label("state"))
+        .subquery()
+    )
+
+
+def project_payment_filter(db: Session, wanted: str):
+    """SQL condition on TranslationProject for one of PROJECT_PAYMENT_FILTERS."""
+    from sqlalchemy import select
+
+    from app.models.project import TranslationProject
+
+    states = project_payment_states(db)
+    values = ("paid_card", "marked_paid") if wanted == "paid" else (wanted,)
+    return TranslationProject.id.in_(select(states.c.project_id).where(states.c.state.in_(values)))
+
+
+def member_name(user) -> Optional[str]:
+    if user is None:
+        return None
+    return (user.full_name or "").strip() or (user.email or "").split("@")[0] or None
+
+
+def project_payment(link: DeliveryLink, marked_by, can_mark_paid: bool) -> dict:
+    """The Jobs badge for a project. Team member names only; nothing about the client is stored or shown."""
+    state = payment_status(link)
+    state = {"paid": "paid_card", "unlocked": "marked_paid"}.get(state, state)
+    return {
+        "state": state,
+        "link_id": str(link.id),
+        "amount": link.amount_cents / 100 if link.amount_cents is not None else None,
+        "currency": link.currency or "EUR",
+        "sent_at": _iso(link.created_at),
+        "expires_at": _iso(link.expires_at),
+        "claimed_at": _iso(link.paid_claimed_at),
+        "paid_at": _iso(link.paid_at),
+        "unlocked_at": _iso(link.unlocked_at),
+        "marked_by": member_name(marked_by) if state == "marked_paid" else None,
+        "can_mark_paid": can_mark_paid and state in ("claimed", "awaiting"),
+    }
+
+
+def _iso(value: Optional[datetime]) -> Optional[str]:
+    return value.isoformat() + "Z" if value else None
+
+
 def create(
     db: Session,
     project,
@@ -252,7 +344,7 @@ _CREATOR_TEXT = {
     "client_paid": ("Your client paid {amount} for {file} — unlocked", "Paid by card; the clean file is theirs now"),
     "client_claimed_paid": (
         "Your client says they've paid {amount} for {file}",
-        "Check that the money has arrived, then unlock it in Share with client",
+        "Check that the money has arrived, then mark it as paid on Projects or in Share with client",
     ),
     "client_downloaded": ("Your client downloaded {file}", "First download of the link you shared"),
 }
