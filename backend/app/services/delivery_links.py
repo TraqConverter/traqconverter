@@ -222,6 +222,17 @@ def project_payment(link: DeliveryLink, marked_by, can_mark_paid: bool) -> dict:
     }
 
 
+def project_payment_for(db: Session, project, can_mark_paid: bool) -> Optional[dict]:
+    """The editor's payment bar: the same deciding link as Projects, plus its URL to copy."""
+    from app.models.user import User
+
+    link = deciding_links_for(db, [project.id]).get(project.id)
+    if link is None:
+        return None
+    marker = db.query(User).filter(User.id == link.unlocked_by).first() if link.unlocked_by else None
+    return {**project_payment(link, marker, can_mark_paid), "url": team_url(link)}
+
+
 def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat() + "Z" if value else None
 
@@ -271,17 +282,60 @@ def create(
 
 
 def revoke(db: Session, link: DeliveryLink) -> None:
+    _revoke_all(db, [link])
+
+
+def _revoke_all(db: Session, links: list) -> None:
     from app.services import s3_service
 
-    if link.revoked_at is None:
-        link.revoked_at = datetime.utcnow()
-    keys = [link.file_key, *(link.preview_keys or [])]
-    link.file_key = None
-    link.preview_keys = None
-    link.client_email = None
+    now = datetime.utcnow()
+    keys = []
+    for link in links:
+        if link.revoked_at is None:
+            link.revoked_at = now
+        keys += [link.file_key, *(link.preview_keys or [])]
+        link.file_key = None
+        link.preview_keys = None
+        link.client_email = None
     db.commit()
     if any(keys):
         s3_service.delete_objects_from_s3(keys)
+
+
+def open_payment_links(db: Session, project_id, now: Optional[datetime] = None):
+    """The project's protected links still waiting for payment: active, not paid and not unlocked."""
+    now = now or datetime.utcnow()
+    return db.query(DeliveryLink).filter(
+        DeliveryLink.project_id == project_id,
+        DeliveryLink.protected.is_(True),
+        DeliveryLink.revoked_at.is_(None),
+        DeliveryLink.unlocked_at.is_(None),
+        DeliveryLink.paid_at.is_(None),
+        DeliveryLink.expires_at > now,
+        DeliveryLink.file_key.isnot(None),
+    )
+
+
+def checkout_in_progress(db: Session, project_id, now: Optional[datetime] = None) -> bool:
+    """True while a client may still be paying an open link on Stripe Checkout, so it mustn't be replaced yet."""
+    from app.services.stripe_connect import CHECKOUT_MINUTES
+
+    now = now or datetime.utcnow()
+    since = now - timedelta(minutes=CHECKOUT_MINUTES + 1)
+    return db.query(
+        open_payment_links(db, project_id, now).filter(DeliveryLink.checkout_started_at > since).exists()
+    ).scalar()
+
+
+def replace_open_payment_links(db: Session, link: DeliveryLink) -> int:
+    """One open payment link per project: revoke the others still waiting. Paid or unlocked ones are never touched."""
+    # Locked, so a link unlocked or paid a moment earlier is re-checked and skipped.
+    older = open_payment_links(db, link.project_id).filter(DeliveryLink.id != link.id).with_for_update().all()
+    if older:
+        _revoke_all(db, older)
+    else:
+        db.commit()
+    return len(older)
 
 
 def unlock(db: Session, link: DeliveryLink, user) -> bool:

@@ -17,6 +17,9 @@ import DocumentEditor, {
 import SourceViewer from "@/components/editor/SourceViewer"
 import ExportMenu, { type ExportKind } from "@/components/editor/ExportMenu"
 import ShareWithClient from "@/components/editor/ShareWithClient"
+import PaymentBar from "@/components/editor/PaymentBar"
+import MarkPaidDialog from "@/components/MarkPaidDialog"
+import type { ProjectPayment } from "@/lib/payment"
 import { blocking, useReview, type CheckItem, type SourceRef } from "@/components/editor/useReview"
 
 type Assignee = {
@@ -62,6 +65,8 @@ type ProjectInfo = {
   next_regenerate_cost_credits?: number
   // Owner, admin or PM: may certify, rerun and regenerate.
   can_lead?: boolean
+  // The protected link deciding the payment status, as on Projects.
+  payment?: ProjectPayment | null
 }
 
 type DocStatus = {
@@ -170,6 +175,12 @@ export default function EditorPage() {
   const certLocked = useFeature("certifications") === "locked"
   const [showStatusMenu, setShowStatusMenu] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  const [payment, setPayment] = useState<ProjectPayment | null>(null)
+  const paymentRef = useRef<ProjectPayment | null>(null)
+  const [justPaid, setJustPaid] = useState(false)
+  const [markPaidOpen, setMarkPaidOpen] = useState(false)
+  const [markPaidBusy, setMarkPaidBusy] = useState(false)
+  const [markPaidError, setMarkPaidError] = useState<string | null>(null)
 
   const [chatOpen, setChatOpen] = useState(false)
   const [sourcePreview, setSourcePreview] = useState<{
@@ -352,10 +363,60 @@ export default function EditorPage() {
     }
   }
 
+  // A link going from waiting to paid while the page is open shows a short green confirmation.
+  const showPayment = useCallback((next: ProjectPayment | null) => {
+    const prev = paymentRef.current
+    const wasOpen = prev?.state === "awaiting" || prev?.state === "claimed"
+    const nowPaid = next?.state === "paid_card" || next?.state === "marked_paid"
+    paymentRef.current = next
+    setPayment(next)
+    if (wasOpen && nowPaid && prev?.link_id === next?.link_id) setJustPaid(true)
+  }, [])
+
+  const refreshPayment = useCallback(async () => {
+    try {
+      const res = await api.get<ProjectInfo>(`/projects/${id}`)
+      showPayment(res.data.payment ?? null)
+    } catch {
+      // The bar keeps what it had; the next refresh tries again.
+    }
+  }, [id, showPayment])
+
+  useEffect(() => {
+    if (!justPaid) return
+    const t = window.setTimeout(() => setJustPaid(false), 8000)
+    return () => window.clearTimeout(t)
+  }, [justPaid])
+
+  // The client may pay (Stripe) or say they've paid while the editor sits in another tab.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && paymentRef.current) void refreshPayment()
+    }
+    document.addEventListener("visibilitychange", onVisible)
+    return () => document.removeEventListener("visibilitychange", onVisible)
+  }, [refreshPayment])
+
+  const submitMarkPaid = async () => {
+    if (!payment) return
+    setMarkPaidBusy(true)
+    setMarkPaidError(null)
+    try {
+      await api.post(`/projects/${id}/delivery-links/${payment.link_id}/unlock`)
+      setMarkPaidOpen(false)
+      await refreshPayment()
+    } catch (err) {
+      setMarkPaidError(apiErrorDetail(err, "Couldn't mark it as paid. Please try again."))
+    } finally {
+      setMarkPaidBusy(false)
+    }
+  }
+
   const fetchProject = useCallback(async () => {
     try {
       const projRes = await api.get(`/projects/${id}`)
       setProject(projRes.data)
+      showPayment(projRes.data.payment ?? null)
     } catch (err: any) {
       console.error("EDITOR ERROR:", err)
       setError(
@@ -366,7 +427,7 @@ export default function EditorPage() {
     } finally {
       setLoading(false)
     }
-  }, [id])
+  }, [id, showPayment])
 
   useEffect(() => {
     if (!id) return
@@ -890,6 +951,16 @@ export default function EditorPage() {
         </div>
       )}
 
+      <PaymentBar
+        payment={payment}
+        justPaid={justPaid}
+        onMarkPaid={() => {
+          setMarkPaidError(null)
+          setMarkPaidOpen(true)
+        }}
+        onManage={() => setShareOpen(true)}
+      />
+
       {}
       <div
         className="flex items-center gap-4 px-5 py-3 rounded-2xl mb-4 flex-wrap"
@@ -1334,7 +1405,25 @@ export default function EditorPage() {
         />
       )}
 
-      {shareOpen && <ShareWithClient projectId={id}onClose={() => setShareOpen(false)} />}
+      {shareOpen && (
+        <ShareWithClient
+          projectId={id}
+          onClose={() => {
+            setShareOpen(false)
+            void refreshPayment()
+          }}
+        />
+      )}
+      {markPaidOpen && payment && (
+        <MarkPaidDialog
+          payment={payment}
+          fileName={project.file_name}
+          busy={markPaidBusy}
+          error={markPaidError}
+          onCancel={() => setMarkPaidOpen(false)}
+          onConfirm={() => void submitMarkPaid()}
+        />
+      )}
 
       {confirmState && (
         <ConfirmDialog

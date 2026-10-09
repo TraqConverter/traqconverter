@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { api, apiErrorDetail } from "@/lib/api"
-import { PAYMENT_STYLE, amountText, money, paymentLabel, shortDate, type ProjectPaymentState } from "@/lib/payment"
+import { PAYMENT_STYLE, amountText, dayMonth, money, paymentLabel, shortDate, type ProjectPaymentState } from "@/lib/payment"
 
 type LinkKind = "delivery_pdf" | "pdf" | "docx"
 
@@ -129,6 +129,12 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
   const parsedAmount = parseAmount(amount)
   const amountInvalid = !!amount.trim() && parsedAmount == null
   const ready = !isProtected || parsedAmount != null
+  // What the server revokes when a new protected link is made: active ones nobody has paid or unlocked. Newest first.
+  const openPayments = (links ?? []).filter(
+    (l) => l.protected && l.status === "active" && (l.payment_status === "awaiting" || l.payment_status === "claimed")
+  )
+  const replacing = isProtected ? openPayments[0] : undefined
+  const replacingClaimed = isProtected && openPayments.some((l) => l.payment_status === "claimed")
 
   const toggleProtected = () => {
     const next = !isProtected
@@ -330,6 +336,28 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
             </div>
           )}
         </div>
+
+        {replacing && (
+          <div
+            role="note"
+            data-testid="replace-warning"
+            className="rounded-xl px-3 py-2.5 mb-3 text-[13px]"
+            style={
+              replacingClaimed
+                ? { background: "#fbe3a6", color: "#6b4a06", border: "1px solid #e0a92e" }
+                : { background: "#ffffff", color: "#4a4638", border: "1px solid #e7ddc5" }
+            }
+          >
+            {replacingClaimed && (
+              <div className="font-bold mb-1">
+                Your client says they&apos;ve already paid on the current link — check before replacing it.
+              </div>
+            )}
+            Creating this link cancels the current payment link (
+            {[money(replacing.amount, replacing.currency), `sent ${dayMonth(replacing.created_at)}`].filter(Boolean).join(", ")}
+            ). Your client&apos;s old link will stop working.
+          </div>
+        )}
 
         <button
           type="button"

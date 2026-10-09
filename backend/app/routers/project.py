@@ -830,6 +830,10 @@ def get_project_status(
             }
 
 
+    from app.services import delivery_links
+
+    can_lead = is_team_lead(db, project.team_id, current_user)
+
     uploader_payload = None
     owner = db.query(User).filter(User.id == project.user_id).first()
     if owner:
@@ -873,7 +877,8 @@ def get_project_status(
         "regenerations_left": ai_actions.regenerations_left(project),
         "next_regenerate_cost_credits": ai_actions.next_regenerate_cost(project, current_user),
         # Certify, rerun and regenerate: owner, admin or PM only.
-        "can_lead": is_team_lead(db, project.team_id, current_user),
+        "can_lead": can_lead,
+        "payment": delivery_links.project_payment_for(db, project, can_lead),
     }
 
 
