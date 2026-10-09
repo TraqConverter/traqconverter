@@ -17,6 +17,8 @@ export type ProjectPayment = {
   can_mark_paid: boolean
   // The client left an email to hear when it's ready; the address itself is never sent here.
   client_will_be_emailed?: boolean
+  // Editor only: the link to copy again; null for old or revoked links.
+  url?: string | null
 }
 
 // 45 -> "45", 45.5 -> "45.50": the form a paypal.me link takes.
@@ -32,6 +34,12 @@ export function money(value: number | null, currency: string) {
 export function shortDate(iso: string | null) {
   if (!iso) return ""
   return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })
+}
+
+// "9 Oct": for dates inside the 30 days a payment link lives.
+export function dayMonth(iso: string | null) {
+  if (!iso) return ""
+  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" })
 }
 
 export const PAYMENT_STYLE: Record<ProjectPaymentState, { background: string; color: string; border: string; dot: string }> = {
