@@ -381,3 +381,17 @@ def test_deleting_the_project_deletes_link_files(client, db, storage, shared):
     assert client.delete(f"/projects/{project.id}", headers=owner["headers"]).status_code == 200
     assert key in storage["deleted"]
     assert db.query(DeliveryLink).count() == 0
+
+
+def test_oversized_original_pdf_pages_are_fitted_to_a4():
+    import fitz
+
+    from app.services.delivery_pdf import _fit_to_a4
+
+    src = fitz.open()
+    for w, h in ((2480, 3508), (595.28, 841.89), (3508, 2480)):  # first: a 300 dpi scan saved at pixel size
+        src.new_page(width=w, height=h).insert_text((50, 100), "Original", fontsize=40)
+    out = _fit_to_a4(src)
+    sizes = [(round(p.rect.width), round(p.rect.height)) for p in out]
+    assert sizes == [(595, 842), (595, 842), (842, 595)]
+    assert all("Original" in p.get_text() for p in out)

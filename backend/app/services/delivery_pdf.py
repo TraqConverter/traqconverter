@@ -110,7 +110,34 @@ def original_pdf(project):
     if doc.needs_pass:
         doc.close()
         raise DeliveryError("The original PDF is password-protected, so it can't be attached.")
-    return doc
+    return _fit_to_a4(doc)
+
+
+def _fit_to_a4(doc):
+    """Scans often come as PDFs whose page size is the scan's pixel size; put every page on A4 so the
+    original matches the translation's pages. Pages already about A4 or Letter are kept as they are."""
+    import fitz
+
+    def standard(rect) -> bool:
+        short, long_ = sorted((rect.width, rect.height))
+        return any(abs(short - a) / a < 0.05 and abs(long_ - b) / b < 0.05 for a, b in (_A4, (612, 792)))
+
+    if all(standard(page.rect) for page in doc):
+        return doc
+    out = fitz.open()
+    for i, page in enumerate(doc):
+        if standard(page.rect):
+            out.insert_pdf(doc, from_page=i, to_page=i)
+            continue
+        w, h = _A4 if page.rect.height >= page.rect.width else (_A4[1], _A4[0])
+        target = out.new_page(width=w, height=h)
+        box = fitz.Rect(_IMAGE_MARGIN, _IMAGE_MARGIN, w - _IMAGE_MARGIN, h - _IMAGE_MARGIN)
+        try:
+            target.show_pdf_page(box, doc, i, keep_proportion=True)
+        except ValueError:
+            pass  # a blank source page stays a blank A4 page
+    doc.close()
+    return out
 
 
 def _add_separator(doc, lang: str) -> None:
