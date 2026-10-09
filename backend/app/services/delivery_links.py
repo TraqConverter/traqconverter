@@ -316,6 +316,17 @@ def open_payment_links(db: Session, project_id, now: Optional[datetime] = None):
     )
 
 
+def checkout_in_progress(db: Session, project_id, now: Optional[datetime] = None) -> bool:
+    """True while a client may still be paying an open link on Stripe Checkout, so it mustn't be replaced yet."""
+    from app.services.stripe_connect import CHECKOUT_MINUTES
+
+    now = now or datetime.utcnow()
+    since = now - timedelta(minutes=CHECKOUT_MINUTES + 1)
+    return db.query(
+        open_payment_links(db, project_id, now).filter(DeliveryLink.checkout_started_at > since).exists()
+    ).scalar()
+
+
 def replace_open_payment_links(db: Session, link: DeliveryLink) -> int:
     """One open payment link per project: revoke the others still waiting. Paid or unlocked ones are never touched."""
     # Locked, so a link unlocked or paid a moment earlier is re-checked and skipped.

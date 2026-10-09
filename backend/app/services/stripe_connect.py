@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from typing import Optional
 
@@ -255,6 +256,9 @@ def fee_cents(amount_cents: int) -> int:
     return round(amount_cents * float(settings.PLATFORM_FEE_PERCENT or 0) / 100)
 
 
+CHECKOUT_MINUTES = 30  # Stripe's shortest session lifetime
+
+
 def checkout_url(link, team, token: str) -> str:
     """A Checkout Session on the team's own account (a direct charge). Payment methods are whatever that account enabled."""
     page = f"{settings.FRONTEND_URL.rstrip('/')}/d/{token}"
@@ -276,6 +280,7 @@ def checkout_url(link, team, token: str) -> str:
         payment_intent_data=intent,
         metadata=metadata,
         client_reference_id=str(link.id),
+        expires_at=int(time.time()) + CHECKOUT_MINUTES * 60,
         success_url=f"{page}?paid=1",
         cancel_url=page,
         stripe_account=team.stripe_account_id,

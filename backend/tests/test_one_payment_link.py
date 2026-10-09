@@ -167,3 +167,20 @@ def test_only_leads_can_mark_paid_from_the_editor(client, db, shared, make_user)
     assert r.status_code == 200, r.text
     payment = r.json()["payment"]
     assert payment["state"] == "awaiting" and payment["can_mark_paid"] is False
+
+
+def test_a_link_being_paid_on_stripe_is_not_replaced(client, db, shared):
+    owner, project = shared
+    paying = _add(db, project, checkout_started_at=datetime.utcnow() - timedelta(minutes=5))
+    r = client.post(
+        f"/projects/{project.id}/delivery-links", json={"protected": True, "amount": 45}, headers=owner["headers"]
+    )
+    assert r.status_code == 409
+    assert "paying on the current link" in r.json()["detail"]
+    db.refresh(paying)
+    assert paying.revoked_at is None
+
+    # Once that checkout can no longer be paid, the link can be replaced.
+    paying.checkout_started_at = datetime.utcnow() - timedelta(minutes=40)
+    db.commit()
+    assert _create(client, owner, project, protected=True, amount=45)["replaced"] == 1

@@ -21,6 +21,8 @@ class DeliveryLink(Base):
     token_prefix = Column(String(12), nullable=False)
     # The token encrypted with the app secret, so the team can copy the link again. Lookups still use token_hash.
     token_sealed = Column(String, nullable=True)
+    # When the client last opened Stripe Checkout; a new payment link can't replace this one while that checkout can still be paid.
+    checkout_started_at = Column(DateTime, nullable=True)
     kind = Column(String, nullable=False)
     file_name = Column(String, nullable=False)
     # Cleared once the snapshot is deleted from storage.

@@ -109,6 +109,11 @@ def create_delivery_link(
     if project.status != ProjectStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="The translation must finish before it can be shared.")
     cents = _protected_amount(db, project, data) if data.protected else None
+    if data.protected and delivery_links.checkout_in_progress(db, project.id):
+        raise HTTPException(
+            status_code=409,
+            detail="Your client is paying on the current link right now. Try again in about 30 minutes.",
+        )
     # The preview is rendered from the delivery PDF, so that's what a protected link always holds.
     kind = "delivery_pdf" if data.protected else data.kind
     days = data.expires_in_days or (delivery_links.PROTECTED_EXPIRY_DAYS if data.protected else 7)
@@ -282,6 +287,8 @@ def public_delivery_checkout(token: str, db: Session = Depends(get_db)):
         or not stripe_connect.is_active(team)
     ):
         raise HTTPException(status_code=409, detail="This link can't be paid online.", headers=_PUBLIC_HEADERS)
+    link.checkout_started_at = datetime.utcnow()
+    db.commit()
     try:
         url = stripe_connect.checkout_url(link, team, token)
     except Exception:
