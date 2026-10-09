@@ -2,6 +2,8 @@ from pydantic_settings import BaseSettings
 from pydantic import ConfigDict, field_validator
 from typing import List, Literal, Optional
 
+from app.core.company import SUPPORT_EMAIL
+
 
 class Settings(BaseSettings):
 
@@ -88,6 +90,9 @@ class Settings(BaseSettings):
         "OnlineDocTranslator <notifications@onlinedoctranslator.ai>"
     )
 
+
+    # Business inbox told about sign-ups, subscriptions, credit packs and cancellations; empty turns it off.
+    OWNER_NOTIFY_EMAIL: str = SUPPORT_EMAIL
 
     FRONTEND_URL: str = "http://localhost:3000"
 

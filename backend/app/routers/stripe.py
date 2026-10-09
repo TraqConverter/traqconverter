@@ -1,6 +1,6 @@
 import logging
 import uuid
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, BackgroundTasks, Request, HTTPException, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 import stripe
@@ -13,6 +13,7 @@ from app.models.stripe_event import StripeEvent
 from app.config import settings
 from app.core.plan_features import PAID_PLANS, SUBSCRIPTION_GRANTS, price_lookup_key
 from app.routers.subscription import plan_price_id
+from app.services import owner_notifications
 from app.services.stripe_billing import (
     is_current_subscription,
     stripe_id,
@@ -152,7 +153,14 @@ def _subscription_users(db: Session, team, subscription_id, user_id):
     return users
 
 
-def _handle_subscription_updated(db: Session, event):
+def _cancellation_just_scheduled(sub, previous) -> bool:
+    """True on the update that schedules the end, not on later ones while it stays scheduled."""
+    if sub.get("cancel_at_period_end") and previous.get("cancel_at_period_end") is False:
+        return True
+    return bool(sub.get("cancel_at")) and "cancel_at" in previous and not previous.get("cancel_at")
+
+
+def _handle_subscription_updated(db: Session, event, background_tasks: BackgroundTasks):
     sub = event["data"]["object"]
     previous = event["data"].get("previous_attributes") or {}
     sub_id = sub.get("id")
@@ -237,10 +245,19 @@ def _handle_subscription_updated(db: Session, event):
         result = "downgraded"
 
     db.commit()
+    if previous_price and old_plan in PAID_PLANS and old_plan != plan:
+        owner_notifications.notify(
+            background_tasks, "plan_change", owner_notifications.plan_change, db, team, old_plan, plan
+        )
+    if _cancellation_just_scheduled(sub, previous):
+        ends_at = _utc(sub.get("cancel_at")) or period_end
+        owner_notifications.notify(
+            background_tasks, "cancellation", owner_notifications.cancellation_scheduled, db, team, plan, ends_at
+        )
     return {"status": result}
 
 
-def _handle_subscription_deleted(db: Session, event):
+def _handle_subscription_deleted(db: Session, event, background_tasks: BackgroundTasks):
     sub = event["data"]["object"]
     sub_id = sub.get("id")
     metadata = sub.get("metadata") or {}
@@ -258,20 +275,27 @@ def _handle_subscription_deleted(db: Session, event):
         user.subscription_plan = "EXPIRED"
         user.stripe_subscription_id = None
 
+    ended_plan = _plan_for_price(_subscription_item(sub).get("price") or {})
+    ended_at = _utc(sub.get("ended_at")) or datetime.utcnow()
     if team:
         wallet = db.query(CreditWallet).filter(CreditWallet.team_id == team.id).first()
         if wallet:
+            ended_plan = ended_plan or wallet.plan_type
             wallet.subscription_status = "INACTIVE"
             wallet.subscription_credits = 0
             wallet.plan_type = "EXPIRED"
-            wallet.subscription_expires_at = _utc(sub.get("ended_at")) or datetime.utcnow()
+            wallet.subscription_expires_at = ended_at
 
     db.commit()
+    if team:
+        owner_notifications.notify(
+            background_tasks, "subscription_ended", owner_notifications.subscription_ended, db, team, ended_plan, ended_at
+        )
     return {"status": "success"}
 
 
 @router.post("/webhook")
-async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+async def stripe_webhook(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
 
@@ -335,8 +359,14 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                     StripeEvent.id == reference
                 ).first()
 
+                # The success page's sync may have granted it first; the purchase is still news to us.
+                notice = (
+                    "credit_pack", owner_notifications.credit_pack, db, team_id, credits,
+                    session.get("amount_total"), session.get("currency"),
+                )
                 if existing:
                     db.commit()
+                    owner_notifications.notify(background_tasks, *notice)
                     return {"status": "duplicate_skipped"}
 
                 wallet = db.query(CreditWallet)\
@@ -360,6 +390,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 db.add(StripeEvent(id=reference, event_type="credit_grant"))
 
                 db.commit()
+                owner_notifications.notify(background_tasks, *notice)
                 logger.info(f"Added {credits} credits")
                 return {"status": "success"}
 
@@ -385,8 +416,13 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 existing = db.query(StripeEvent).filter(
                     StripeEvent.id == reference
                 ).first()
+                notice = (
+                    "subscription", owner_notifications.new_subscription, db, team_id, plan,
+                    session.get("amount_total"), session.get("currency"),
+                )
                 if existing:
                     db.commit()
+                    owner_notifications.notify(background_tasks, *notice)
                     return {"status": "duplicate_skipped"}
 
                 wallet = (
@@ -424,6 +460,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
                 db.add(StripeEvent(id=reference, event_type="subscription_grant"))
                 db.commit()
+                owner_notifications.notify(background_tasks, *notice)
                 logger.info(f"Subscription activated: {plan}")
                 return {"status": "success"}
 
@@ -520,10 +557,10 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
 
         if event_type == "customer.subscription.updated":
-            return _handle_subscription_updated(db, event)
+            return _handle_subscription_updated(db, event, background_tasks)
 
         if event_type == "customer.subscription.deleted":
-            return _handle_subscription_deleted(db, event)
+            return _handle_subscription_deleted(db, event, background_tasks)
 
         db.commit()
         return {"status": "ignored"}
