@@ -463,3 +463,12 @@ def test_word_selection():
     assert _picked((0, 0, "it was Rossi. Mario then left")) == []
     # A lone capitalised word is left alone (places, sentence starts).
     assert _picked((0, 0, "born in Barletta yesterday")) == []
+
+
+def test_a_protected_link_renders_its_preview_straight_away(client, db, shared, monkeypatch):
+    warmed = []
+    monkeypatch.setattr(protected_preview, "warm_in_background", lambda link_id: warmed.append(link_id))
+    owner, project = shared
+    assert _create(client, owner, project, protected=True, amount=45).status_code in (200, 201)
+    assert _create(client, owner, project).status_code in (200, 201)
+    assert len(warmed) == 1
