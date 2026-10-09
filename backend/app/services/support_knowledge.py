@@ -127,7 +127,7 @@ with "Share with client…". A password-protected original PDF can't be attached
 
 Share with client (download links)
 In the editor: "Export" then "Share with client…". Choose the file ("Delivery PDF" by default, "PDF" or "DOCX") and \
-"Expires after" 1, 7 or 30 days, then "Create link". The link is copied and shown only once; the client needs no \
+"Expires after" 1, 7 or 30 days, then "Create link". The link is copied straight away, and "Copy link" on each active link in the list copies it again later; the client needs no \
 account. The file is frozen as it is now; later edits don't change it. The list under "LINKS FOR THIS PROJECT" shows \
 expiry and download counts, and "Revoke" withdraws a link at once. The bell tells you when the client first \
 downloads. Paid plans only, and the translation must be finished.

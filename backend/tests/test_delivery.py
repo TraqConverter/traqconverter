@@ -229,7 +229,7 @@ def shared(client, db, storage, make_user, make_project, stub_export):
     return owner, project
 
 
-def test_create_link_returns_url_once_and_stores_only_a_hash(client, db, shared):
+def test_create_link_stores_a_hash_and_the_token_only_encrypted(client, db, shared):
     from app.config import settings
 
     owner, project = shared
@@ -248,9 +248,22 @@ def test_create_link_returns_url_once_and_stores_only_a_hash(client, db, shared)
     assert token not in stored
     assert (row.expires_at - datetime.utcnow()).days in (6, 7)
 
+    # The team can copy the link again; the token is kept only encrypted.
     listed = client.get(f"/projects/{project.id}/delivery-links", headers=owner["headers"]).json()
-    assert len(listed) == 1 and "url" not in listed[0]
-    assert token not in str(listed)
+    assert len(listed) == 1 and listed[0]["url"] == body["url"]
+
+    client.delete(f"/projects/{project.id}/delivery-links/{row.id}", headers=owner["headers"])
+    listed = client.get(f"/projects/{project.id}/delivery-links", headers=owner["headers"]).json()
+    assert listed[0]["url"] is None
+
+
+def test_links_made_before_tokens_were_kept_have_no_url(client, db, shared):
+    owner, project = shared
+    assert _create(client, owner, project).status_code == 200
+    db.query(DeliveryLink).update({DeliveryLink.token_sealed: None})
+    db.commit()
+    listed = client.get(f"/projects/{project.id}/delivery-links", headers=owner["headers"]).json()
+    assert listed[0]["url"] is None
 
 
 def test_public_metadata_and_download(client, db, storage, shared):

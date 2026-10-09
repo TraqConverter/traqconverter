@@ -38,6 +38,34 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def _fernet():
+    import base64
+
+    from cryptography.fernet import Fernet
+
+    from app.config import settings
+
+    key = hashlib.sha256(b"delivery-link-token:" + settings.secret_key.encode()).digest()
+    return Fernet(base64.urlsafe_b64encode(key))
+
+
+def seal_token(token: str) -> str:
+    return _fernet().encrypt(token.encode()).decode()
+
+
+def team_url(link: DeliveryLink) -> Optional[str]:
+    """The link's full URL for the team to copy again; None for links made before tokens were kept, or revoked ones."""
+    if not link.token_sealed or link.revoked_at is not None:
+        return None
+    from cryptography.fernet import InvalidToken
+
+    try:
+        return link_url(_fernet().decrypt(link.token_sealed.encode()).decode())
+    except InvalidToken:
+        logger.warning("Delivery link token can't be decrypted (link=%s)", link.id)
+        return None
+
+
 def link_url(token: str) -> str:
     from app.config import settings
 
@@ -222,6 +250,7 @@ def create(
         project_id=project.id,
         token_hash=hash_token(token),
         token_prefix=token[:PREFIX_LEN],
+        token_sealed=seal_token(token),
         kind=kind,
         file_name=name,
         file_key=key,
