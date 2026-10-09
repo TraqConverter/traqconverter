@@ -396,3 +396,42 @@ def render_assignment_email(
         + ["", f"Open project: {link}"]
     )
     return subject, html, text
+
+
+def render_owner_notice_email(*, subject: str, rows: list[tuple[str, str]]) -> tuple[str, str]:
+    """Return (html, text) for an email to our own inbox about a subscriber."""
+    from html import escape
+
+    rows_html = "".join(
+        f'<tr><td style="padding:6px 16px 6px 0;font-size:13px;color:#8a8270;white-space:nowrap;vertical-align:top;">{escape(label)}</td>'
+        f'<td style="padding:6px 0;font-size:14px;color:#1f2a2e;font-weight:600;word-break:break-word;">{escape(value)}</td></tr>'
+        for label, value in rows
+    )
+    html = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{escape(subject)}</title>
+</head>
+<body style="margin:0;padding:0;background:#faf5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1f2a2e;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf5ee;padding:32px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e7ddc5;border-radius:18px;padding:28px 32px;max-width:560px;">
+        <tr><td>
+          <h1 style="font-size:20px;font-weight:700;letter-spacing:-0.01em;color:#1f2a2e;margin:0 0 16px;">
+            {escape(subject)}
+          </h1>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf5ee;border:1px solid #f1e8d1;border-radius:12px;padding:10px 16px;">
+            {rows_html}
+          </table>
+        </td></tr>
+      </table>
+      {_FOOTER}
+    </td></tr>
+  </table>
+</body>
+</html>
+"""
+    text = "\n".join([subject, ""] + [f"{label}: {value}" for label, value in rows])
+    return html, text

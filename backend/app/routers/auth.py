@@ -22,7 +22,7 @@ from app.models.team import Team
 from app.models.credit import CreditTransaction, CreditWallet
 from app.models.password_reset import PasswordResetToken
 from app.schemas.auth import ForgotPassword, ResetPassword, UserRegister, UserLogin, TokenResponse
-from app.services import email_service
+from app.services import email_service, owner_notifications
 from app.core.security import hash_password, verify_password, create_access_token
 from app.core.plan_features import TRIAL_DAYS, TRIAL_CREDITS
 from app.routers.members import auto_accept_invites
@@ -546,7 +546,7 @@ def delete_account(
     response_model=TokenResponse,
     dependencies=[Depends(_register_limit)],
 )
-def register(user_data: UserRegister, db: Session = Depends(get_db)):
+def register(user_data: UserRegister, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     from app.models.team_member import TeamInvite
 
     if _user_by_email(db, user_data.email):
@@ -624,12 +624,16 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
             user.subscription_plan = "TRIAL"
             user.subscription_status = "TRIAL"
 
+    signup_team_id = pending_invite.team_id if pending_invite is not None else team.id
     db.commit()
     db.refresh(user)
 
     if pending_invite is not None:
         auto_accept_invites(db, user, user_data.invite_token)
 
+    owner_notifications.notify(
+        background_tasks, "signup", owner_notifications.signup, db, user, signup_team_id, pending_invite is not None
+    )
 
 
     token = create_access_token(

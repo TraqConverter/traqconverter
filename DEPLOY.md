@@ -43,6 +43,7 @@ One supported path:
    | `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | `https://<vercel-domain>/success`, `/cancel` |
    | `FRONTEND_URL` | `https://<vercel-domain>`. Every link we send (password reset, invites, client links, Stripe return pages) starts with it; unset, they point at localhost |
    | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Resend key and a sender on a verified domain. Unset, no email is sent: no password resets, invites or payment notices |
+   | `OWNER_NOTIFY_EMAIL` | Optional. Inbox told about each sign-up, new subscription, plan change, credit pack and cancellation. Default `info@lumaxdigital.co.uk`; empty turns these emails off |
    | `CORS_ORIGINS` | `https://<vercel-domain>` |
 
 3. Deploy. `railway.json` runs `python -m alembic upgrade head` as the pre-deploy step, so every deploy migrates before the new version starts. A failed migration stops the deploy.
