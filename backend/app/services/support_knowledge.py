@@ -140,7 +140,10 @@ and a notification. The money goes to your Stripe account; Stripe's fees apply.
 there and presses "I've paid".
 - Bank transfer or anything else: with neither set up, the client sees "Contact <your team name> to pay" and an \
 "I've paid" button. There are no bank-details fields; give the client your details yourself.
-When a client presses "I've paid" you get an email and a notification and the link shows "Client says paid". Check \
+When a client presses "I've paid" you get an email and a notification and the link shows "Client says paid". The \
+client can also leave their email address there (optional). If they do, the link shows "Client will be emailed", and \
+when you mark it as paid (or Stripe confirms the payment) we send them one email saying the document is ready, with \
+the link, then delete the address. Nobody on the team can see the address. Check \
 the money has arrived, then click "Mark as paid" on that project in "Projects" (the "Client says paid" filter lists \
 them), or in the editor open "Export", "Share with client…" and click "Mark as paid" on that link. Marking as paid \
 releases the document: the client then downloads the clean file from the same link. Only the team owner, an admin \
@@ -218,14 +221,17 @@ you signed in after the browser closes.
 Notifications
 The bell shows: a translation is ready or failed, a project was assigned to you, a client downloaded a file, a \
 client says they paid, and a client paid through Stripe. "Mark all as read" clears them. Emails are sent for team \
-invites, password resets, project assignments and client payments.
+invites, password resets, project assignments and client payments, and to a client who asked to hear when their \
+document is ready.
 
 Your data
 Files are stored in the EU (Ireland), encrypted at rest, and not used to train AI models. AI processing goes to \
 Anthropic through commercial APIs; when GPT-4.1 is chosen for a project, its text also goes to OpenAI. Projects stay until you delete them or the \
 account; nothing is deleted automatically. Deleting a project removes its files, text and translation memory \
 entries; templates and learned terms stay in the library until you delete them. A client link's file is deleted \
-when the link is revoked or 7 days after it expires. Read notifications are cleared after 90 days. Questions in \
+when the link is revoked or 7 days after it expires. A client's email address, if they left one on "I've paid", is \
+used once to tell them the document is ready, then deleted; it is also deleted if the link is revoked, expires or is \
+deleted first. Read notifications are cleared after 90 days. Questions in \
 this Help chat are sent to Anthropic to answer them and aren't stored. A data processing agreement (DPA) is \
 available on request at {SUPPORT_EMAIL}. Details are in the Privacy Policy.
 

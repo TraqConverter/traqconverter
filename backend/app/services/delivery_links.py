@@ -203,7 +203,7 @@ def member_name(user) -> Optional[str]:
 
 
 def project_payment(link: DeliveryLink, marked_by, can_mark_paid: bool) -> dict:
-    """The Jobs badge for a project. Team member names only; nothing about the client is stored or shown."""
+    """The Jobs badge for a project. Team member names only; the client's email (if any) is never shown."""
     state = payment_status(link)
     state = {"paid": "paid_card", "unlocked": "marked_paid"}.get(state, state)
     return {
@@ -218,6 +218,7 @@ def project_payment(link: DeliveryLink, marked_by, can_mark_paid: bool) -> dict:
         "unlocked_at": _iso(link.unlocked_at),
         "marked_by": member_name(marked_by) if state == "marked_paid" else None,
         "can_mark_paid": can_mark_paid and state in ("claimed", "awaiting"),
+        "client_will_be_emailed": bool(link.client_email),
     }
 
 
@@ -277,20 +278,23 @@ def revoke(db: Session, link: DeliveryLink) -> None:
     keys = [link.file_key, *(link.preview_keys or [])]
     link.file_key = None
     link.preview_keys = None
+    link.client_email = None
     db.commit()
     if any(keys):
         s3_service.delete_objects_from_s3(keys)
 
 
-def unlock(db: Session, link: DeliveryLink, user) -> None:
-    """The client paid: the link serves the clean file from now on, and the preview images go."""
+def unlock(db: Session, link: DeliveryLink, user) -> bool:
+    """The client paid: the link serves the clean file from now on, and the preview images go. True the first time."""
     from app.services import protected_preview
 
-    if link.unlocked_at is None:
+    first = link.unlocked_at is None
+    if first:
         link.unlocked_at = datetime.utcnow()
         link.unlocked_by = user.id
         db.commit()
     protected_preview.delete(db, link)
+    return first
 
 
 def mark_paid(db: Session, link: DeliveryLink, payment_intent: Optional[str]) -> bool:
@@ -336,13 +340,29 @@ def notification_recipient(db: Session, link: DeliveryLink):
     return recipient
 
 
-def claim_paid(db: Session, link: DeliveryLink) -> bool:
-    """Record the client's "I've paid" once. True only for the request that recorded it."""
+def clean_client_email(raw: str) -> str:
+    """The address normalised, or ValueError. Never put the input in the error."""
+    from email_validator import EmailNotValidError, validate_email
+
+    try:
+        if len(raw) > 320:
+            raise EmailNotValidError()
+        return validate_email(raw.strip(), check_deliverability=False).normalized
+    except EmailNotValidError:
+        raise ValueError("Enter a valid email address, or leave it empty.") from None
+
+
+def claim_paid(db: Session, link: DeliveryLink, client_email: Optional[str] = None) -> bool:
+    """Record the client's "I've paid" once (True for that request); a cleaned email replaces any earlier one while locked."""
     updated = (
         db.query(DeliveryLink)
         .filter(DeliveryLink.id == link.id, DeliveryLink.paid_claimed_at.is_(None))
         .update({DeliveryLink.paid_claimed_at: datetime.utcnow()}, synchronize_session=False)
     )
+    if client_email:
+        db.query(DeliveryLink).filter(
+            DeliveryLink.id == link.id, DeliveryLink.unlocked_at.is_(None), DeliveryLink.revoked_at.is_(None)
+        ).update({DeliveryLink.client_email: client_email}, synchronize_session=False)
     db.commit()
     db.refresh(link)
     return updated == 1
@@ -367,6 +387,18 @@ def record_download(db: Session, link: DeliveryLink) -> bool:
     db.commit()
     db.refresh(link)
     return first
+
+
+def take_client_email(db: Session, link_id) -> tuple[Optional[DeliveryLink], Optional[str]]:
+    """(link, email) and the email cleared in the same commit, so it's used at most once; (link, None) if there's none."""
+    link = db.query(DeliveryLink).filter(DeliveryLink.id == link_id).with_for_update().first()
+    if link is None or not link.client_email:
+        db.rollback()
+        return link, None
+    email = link.client_email
+    link.client_email = None
+    db.commit()
+    return link, email
 
 
 _CREATOR_TEXT = {
@@ -400,6 +432,15 @@ def notify_creator(db: Session, link: DeliveryLink, kind: str) -> None:
         logger.exception("Couldn't notify the creator of link %s (%s)", link.id, kind)
 
 
+def _clear_unusable_client_emails(db: Session, now: datetime) -> None:
+    from sqlalchemy import or_
+
+    db.query(DeliveryLink).filter(
+        DeliveryLink.client_email.isnot(None),
+        or_(DeliveryLink.expires_at <= now, DeliveryLink.revoked_at.isnot(None), DeliveryLink.file_key.is_(None)),
+    ).update({DeliveryLink.client_email: None}, synchronize_session=False)
+
+
 def purge_expired_files(now: Optional[datetime] = None) -> int:
     """Delete the snapshots of links that expired more than FILE_RETENTION ago; the rows stay for the history."""
     from app.database import SessionLocal
@@ -418,6 +459,7 @@ def purge_expired_files(now: Optional[datetime] = None) -> int:
         for r in rows:
             r.file_key = None
             r.preview_keys = None
+        _clear_unusable_client_emails(db, now or datetime.utcnow())
         db.commit()
         if keys:
             s3_service.delete_objects_from_s3(keys)

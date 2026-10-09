@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -60,6 +60,7 @@ def _serialize(link: DeliveryLink, marked_by: Optional[User] = None) -> dict:
         "unlocked_at": _iso(link.unlocked_at),
         "paid_at": _iso(link.paid_at),
         "marked_paid_by": delivery_links.member_name(marked_by) if link.paid_at is None else None,
+        "client_will_be_emailed": bool(link.client_email),
     }
 
 
@@ -180,6 +181,7 @@ def revoke_delivery_link(
 def unlock_delivery_link(
     project_id: UUID,
     link_id: UUID,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -196,7 +198,8 @@ def unlock_delivery_link(
         raise HTTPException(status_code=400, detail="This link isn't protected.")
     if link.revoked_at is not None:
         raise HTTPException(status_code=400, detail="This link was revoked.")
-    delivery_links.unlock(db, link, current_user)
+    if delivery_links.unlock(db, link, current_user) and link.client_email:
+        background_tasks.add_task(notify_client_ready, link.id)
     marker = db.query(User).filter(User.id == link.unlocked_by).first() if link.unlocked_by else None
     return _serialize(link, marker)
 
@@ -328,12 +331,27 @@ def public_delivery_preview(token: str, page: int, db: Session = Depends(get_db)
     return Response(content=data, media_type="image/png", headers=_PUBLIC_HEADERS)
 
 
+class _ClaimPayload(BaseModel):
+    email: Optional[str] = None
+
+
 @public_router.post("/{token}/paid", dependencies=[Depends(rate_limit("public_delivery_paid", 5, 3600))])
-def public_delivery_paid(token: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def public_delivery_paid(
+    token: str,
+    background_tasks: BackgroundTasks,
+    data: Optional[_ClaimPayload] = Body(default=None),
+    db: Session = Depends(get_db),
+):
     link = _usable_link(db, token)
     if not link.protected:
         raise HTTPException(status_code=404, detail="Link not found", headers=_PUBLIC_HEADERS)
-    if delivery_links.is_locked(link) and delivery_links.claim_paid(db, link):
+    email = None
+    if data is not None and (data.email or "").strip():
+        try:
+            email = delivery_links.clean_client_email(data.email)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e), headers=_PUBLIC_HEADERS)
+    if delivery_links.is_locked(link) and delivery_links.claim_paid(db, link, email):
         delivery_links.notify_creator(db, link, "client_claimed_paid")
         db.commit()
         background_tasks.add_task(_notify_paid, link.id)
@@ -372,6 +390,32 @@ def _notify_paid(link_id) -> None:
         )
     except Exception:
         logger.exception("Couldn't send the payment-claim email (link=%s)", link_id)
+    finally:
+        db.close()
+
+
+def notify_client_ready(link_id) -> None:
+    """Email the client who left an address on "I've paid": the document is ready. Once; the address is cleared first."""
+    from app.database import SessionLocal
+    from app.services import email_service
+
+    db = SessionLocal()
+    try:
+        link, email = delivery_links.take_client_email(db, link_id)
+        if link is None or not email:
+            return
+        url = delivery_links.team_url(link)
+        if url is None:
+            logger.info("Client ready email skipped, link URL unavailable (link=%s)", link_id)
+            return
+        subject, body, text = email_service.render_document_ready_email(
+            company=_company(db, link), file_name=link.file_name, link=url
+        )
+        if not email_service.send_email(to=email, subject=subject, html=body, text_fallback=text):
+            logger.warning("Client ready email not sent (link=%s)", link_id)
+    except Exception as e:
+        # Type only: the message or traceback could carry the address.
+        logger.error("Couldn't send the client ready email (link=%s): %s", link_id, type(e).__name__)
     finally:
         db.close()
 

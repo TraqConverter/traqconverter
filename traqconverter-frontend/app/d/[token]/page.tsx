@@ -35,6 +35,8 @@ const PAID_POLL_TRIES = 20
 
 const noSubscription = () => () => {}
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 function returnedFromCheckout() {
   return new URLSearchParams(window.location.search).get("paid") === "1"
 }
@@ -143,6 +145,8 @@ function LockedPreview({
 }) {
   const [claiming, setClaiming] = useState(false)
   const [claimError, setClaimError] = useState("")
+  const [email, setEmail] = useState("")
+  const [willEmail, setWillEmail] = useState(false)
   const [paying, setPaying] = useState(false)
   const [payError, setPayError] = useState("")
   const amount = formatAmount(info.amount, info.currency)
@@ -150,13 +154,28 @@ function LockedPreview({
   const original = info.original_pages || 0
 
   const claim = async () => {
+    const address = email.trim()
+    if (address && !EMAIL_RE.test(address)) {
+      setClaimError("Enter a valid email address, or leave it empty.")
+      return
+    }
     setClaiming(true)
     setClaimError("")
     try {
-      const res = await fetch(publicUrl(token, "/paid"), { method: "POST", credentials: "omit", cache: "no-store" })
+      const res = await fetch(publicUrl(token, "/paid"), {
+        method: "POST",
+        credentials: "omit",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(address ? { email: address } : {}),
+      })
       if (res.status === 429) setClaimError("Too many attempts. Try again later.")
+      else if (res.status === 422) setClaimError("Enter a valid email address, or leave it empty.")
       else if (!res.ok) setClaimError("That didn't go through. Try again in a moment.")
-      else onClaimed()
+      else {
+        setWillEmail(!!address)
+        onClaimed()
+      }
     } catch {
       setClaimError("That didn't go through. Check your connection and try again.")
     } finally {
@@ -206,7 +225,9 @@ function LockedPreview({
         </div>
       ) : info.paid_claimed ? (
         <div className="rounded-xl px-4 py-3 text-sm text-center" style={{ background: "#e1efec", color: "#0a5e58" }}>
-          Thanks — the translator will unlock your document shortly.
+          {willEmail
+            ? "Thanks. The translator will unlock your document shortly, and we'll email you when it's ready."
+            : "Thanks — the translator will unlock your document shortly."}
         </div>
       ) : (
         <div className="flex flex-col gap-2">
@@ -252,6 +273,27 @@ function LockedPreview({
                 {info.company ? `Contact ${info.company} to pay ${amount}.` : `Contact the translator to pay ${amount}.`}
               </div>
             )
+          )}
+          {showClaim && (
+            <div className="mt-2">
+              <label htmlFor="ready-email" className="block text-[13px] font-medium mb-1" style={{ color: "#4a4638" }}>
+                Email me when it&apos;s ready (optional)
+              </label>
+              <input
+                id="ready-email"
+                type="email"
+                autoComplete="email"
+                inputMode="email"
+                maxLength={254}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full rounded-lg px-3 py-2 text-sm"
+                style={{ border: "1px solid #e7ddc5", background: "#ffffff", color: "#1f2a2e" }}
+              />
+              <div className="text-[12px] mt-1" style={{ color: "#8a8270" }}>
+                We use it once to tell you the document is ready, then delete it.
+              </div>
+            </div>
           )}
           {showClaim && (
             <button

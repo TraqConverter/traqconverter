@@ -14,7 +14,7 @@ export default function TermsPage() {
   return (
     <LegalPage
       title="Terms of Service"
-      updated="8 October 2026"
+      updated="9 October 2026"
       intro="These terms are the agreement between you and us for using OnlineDocTranslator. We've kept them short and plain. Please read them before you sign up."
     >
       <h2 id="who">1. Who we are</h2>
@@ -263,7 +263,9 @@ export default function TermsPage() {
           don&apos;t unlock one that was.
         </li>
         <li>
-          We don&apos;t collect or store your clients&apos; names or email addresses for these links. See the{" "}
+          We don&apos;t collect your clients&apos; names for these links. If a client chooses to give their email
+          address when they say they have paid, we use it once to tell them the document is ready, then delete it.
+          You and your team can&apos;t see it. See the{" "}
           <Link href="/privacy#data">Privacy Policy</Link>{" "}for what we do record.
         </li>
       </ul>

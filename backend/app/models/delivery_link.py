@@ -48,3 +48,6 @@ class DeliveryLink(Base):
     original_pages = Column(Integer, nullable=True)
     # Storage keys of the rendered preview PNGs, in page order; cleared when they're deleted.
     preview_keys = Column(JSONB, nullable=True)
+    # Left by the client on "I've paid", only to tell them the document is ready. Never shown or logged;
+    # cleared once that email goes, and when the link is revoked, expires or is deleted.
+    client_email = Column(String(320), nullable=True)

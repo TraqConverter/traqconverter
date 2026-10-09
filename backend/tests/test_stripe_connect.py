@@ -347,6 +347,30 @@ def test_webhook_unlocks_and_emails_the_creator(client, db, storage, monkeypatch
     assert len(emails) == 1
 
 
+def test_webhook_emails_a_client_who_left_an_address(client, db, monkeypatch, caplog, team_with_stripe, calls, emails,
+                                                     connect_secret):
+    owner, translator, project = team_with_stripe
+    body, token = _protected(client, translator, project)
+    assert client.post(f"/public/delivery/{token}/paid", json={"email": "anna@example.com"}).status_code == 200
+    with caplog.at_level("DEBUG"):
+        assert _post(client, monkeypatch, _event(body["id"])).json() == {"status": "unlocked"}
+    client_mails = [m for m in emails if m["to"] == "anna@example.com"]
+    assert len(client_mails) == 1 and client_mails[0]["subject"] == "Your document is ready"
+    assert f"/d/{token}" in client_mails[0]["text_fallback"]
+    row = db.query(DeliveryLink).one()
+    db.refresh(row)
+    assert row.client_email is None
+    assert "anna@" not in caplog.text
+
+
+def test_webhook_without_a_client_address_sends_no_client_mail(client, db, monkeypatch, team_with_stripe, calls,
+                                                               emails, connect_secret):
+    owner, translator, project = team_with_stripe
+    body, _ = _protected(client, translator, project)
+    _post(client, monkeypatch, _event(body["id"]))
+    assert [m["subject"] for m in emails] == ["Your client paid €45.50"]
+
+
 def test_webhook_stores_nothing_from_customer_details(client, db, monkeypatch, caplog, team_with_stripe, calls,
                                                       emails, connect_secret):
     owner, translator, project = team_with_stripe

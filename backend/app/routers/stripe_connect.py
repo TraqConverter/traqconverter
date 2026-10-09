@@ -46,10 +46,12 @@ def _link_paid(db: Session, event, background_tasks: BackgroundTasks) -> str:
     if not link.protected:
         return "ignored"
     if delivery_links.mark_paid(db, link, stripe_id(session.get("payment_intent"))):
-        from app.routers.delivery_links import notify_stripe_paid
+        from app.routers.delivery_links import notify_client_ready, notify_stripe_paid
 
         delivery_links.notify_creator(db, link, "client_paid")
         background_tasks.add_task(notify_stripe_paid, link.id)
+        if link.client_email:
+            background_tasks.add_task(notify_client_ready, link.id)
     return "unlocked"
 
 
