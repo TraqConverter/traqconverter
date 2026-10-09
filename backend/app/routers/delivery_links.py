@@ -127,6 +127,8 @@ def create_delivery_link(
         raise HTTPException(status_code=500, detail="Couldn't prepare the file for the link")
 
     background_tasks.add_task(capture_template_in_background, project.id, current_user.id)
+    if link.protected:
+        background_tasks.add_task(protected_preview.warm_in_background, link.id)
     # The only time the full link is returned; just its hash is stored.
     return {**_serialize(link), "url": delivery_links.link_url(token)}
 

@@ -306,6 +306,22 @@ def ensure(db: Session, link: DeliveryLink) -> list[str]:
     return keys
 
 
+def warm_in_background(link_id) -> None:
+    """Render a new protected link's preview straight away, so the client's first view doesn't wait for it."""
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        link = db.query(DeliveryLink).filter(DeliveryLink.id == link_id).first()
+        if link and link.protected and not link.preview_keys:
+            ensure(db, link)
+    except Exception:
+        db.rollback()
+        logger.exception("Preview pre-render failed (link=%s)", link_id)
+    finally:
+        db.close()
+
+
 def delete(db: Session, link: DeliveryLink) -> None:
     """Drop the rendered preview; it's re-rendered if the link is still locked and viewed again."""
     from app.services import s3_service

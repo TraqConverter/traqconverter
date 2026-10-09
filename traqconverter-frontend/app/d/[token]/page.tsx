@@ -275,17 +275,7 @@ function LockedPreview({
       {pages.length > 0 && (
         <div className="mt-6 flex flex-col gap-3 select-none" style={{ userSelect: "none", WebkitUserSelect: "none" }}>
           {pages.map((n) => (
-            // eslint-disable-next-line @next/next/no-img-element -- served by the API with no-store; next/image would cache it.
-            <img
-              key={n}
-              src={publicUrl(token, `/preview/${n}`)}
-              alt={`Preview of page ${n}`}
-              loading={n > 2 ? "lazy" : "eager"}
-              draggable={false}
-              onContextMenu={(e) => e.preventDefault()}
-              className="w-full h-auto rounded-lg"
-              style={{ border: "1px solid #e7ddc5", background: "#ffffff" }}
-            />
+            <PreviewPage key={n} src={publicUrl(token, `/preview/${n}`)} n={n} total={pages.length} />
           ))}
         </div>
       )}
@@ -422,5 +412,69 @@ export default function DeliveryPage() {
         Delivered with OnlineDocTranslator
       </div>
     </main>
+  )
+}
+
+// A page-sized placeholder with a spinner until the image arrives; the first view can take a few seconds to render.
+function PreviewPage({ src, n, total }: { src: string; n: number; total: number }) {
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading")
+  const [attempt, setAttempt] = useState(0)
+  return (
+    <div
+      className="relative w-full rounded-lg overflow-hidden"
+      style={{ border: "1px solid #e7ddc5", background: "#ffffff", aspectRatio: status === "ready" ? undefined : "1 / 1.414" }}
+    >
+      {status !== "ready" && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center" style={{ background: "#faf5ee" }}>
+          {status === "loading" ? (
+            <>
+              <span
+                className="inline-block h-8 w-8 rounded-full animate-spin"
+                style={{ border: "3px solid #d9ecea", borderTopColor: "#0a7870" }}
+                aria-hidden
+              />
+              <div className="text-sm font-semibold" style={{ color: "#0a5e58" }}>
+                Preparing your preview…
+              </div>
+              <div className="text-[12px]" style={{ color: "#8a8270" }}>
+                Page {n} of {total}. This can take a few seconds.
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-sm" style={{ color: "#7a2f24" }}>
+                Page {n} didn&apos;t load.
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setStatus("loading")
+                  setAttempt((a) => a + 1)
+                }}
+                className="rounded-full px-4 py-1.5 text-sm font-semibold"
+                style={{ background: "#ffffff", color: "#0a5e58", border: "1px solid #0a7870" }}
+              >
+                Try again
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {status !== "error" && (
+        // eslint-disable-next-line @next/next/no-img-element -- served by the API with no-store; next/image would cache it.
+        <img
+          key={attempt}
+          src={attempt ? `${src}${src.includes("?") ? "&" : "?"}r=${attempt}` : src}
+          alt={`Preview of page ${n}`}
+          loading="eager"
+          draggable={false}
+          onContextMenu={(e) => e.preventDefault()}
+          onLoad={() => setStatus("ready")}
+          onError={() => setStatus("error")}
+          className="w-full h-auto block"
+          style={{ opacity: status === "ready" ? 1 : 0 }}
+        />
+      )}
+    </div>
   )
 }
