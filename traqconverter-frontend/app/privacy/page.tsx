@@ -15,7 +15,7 @@ export default function PrivacyPage() {
   return (
     <LegalPage
       title="Privacy Policy"
-      updated="8 October 2026"
+      updated="9 October 2026"
       intro="This policy explains what personal data OnlineDocTranslator handles, why, who else processes it, how long we keep it, and the rights you have."
     >
       <h2 id="who-we-are">1. Who we are</h2>
@@ -72,7 +72,9 @@ export default function PrivacyPage() {
         <li>
           For protected delivery links (paid before download): the amount, when the client said they had paid, when
           the link was paid or unlocked, and the download count. We also store your team&apos;s PayPal.me name. We
-          don&apos;t collect or store the names or email addresses of your clients. A client who pays on PayPal, or
+          don&apos;t collect your clients&apos; names. If a client chooses to give their email address when they say
+          they have paid, we use it once to tell them the document is ready, then delete it; it isn&apos;t shown to
+          you or your team. A client who pays on PayPal, or
           by bank transfer or another method outside the service, pays you directly, so we never receive or store
           their payment details. If the client tells us they have paid, we record when and email you.
         </li>
@@ -133,6 +135,10 @@ export default function PrivacyPage() {
             <tr>
               <td>Send service emails, such as team invitations</td>
               <td>Performance of a contract, Art. 6(1)(b)</td>
+            </tr>
+            <tr>
+              <td>Tell a client who left their email address that their document is ready</td>
+              <td>Consent, Art. 6(1)(a)</td>
             </tr>
             <tr>
               <td>Keep the service secure, prevent abuse, fix errors, measure AI costs</td>
@@ -264,7 +270,9 @@ export default function PrivacyPage() {
         <li>
           <strong>Delivery links</strong>{" "}expire after 1, 7 or 30 days, as you choose, or when you revoke them. The
           file behind a link is deleted when you revoke it, or 7 days after it expires. A protected link&apos;s
-          watermarked preview images are deleted when you unlock or revoke it, or with the file.
+          watermarked preview images are deleted when you unlock or revoke it, or with the file. A client&apos;s email
+          address, if they gave one, is deleted as soon as we have emailed them that the document is ready, or when
+          the link is revoked, expires or is deleted, whichever comes first.
         </li>
         <li>
           <strong>Uploaded files waiting to become templates</strong>{" "}are discarded after 24 hours if you don&apos;t

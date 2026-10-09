@@ -1212,7 +1212,8 @@ function Jobs() {
             </p>
             <p className="text-sm mb-5" style={{ color: "#6b6558" }}>
               Marking it as paid releases the document: your client can download the clean file straight away from the
-              link you sent. This can&apos;t be undone.
+              link you sent.{markingPaid.payment.client_will_be_emailed && " We'll also email your client that it's ready."}{" "}
+              This can&apos;t be undone.
             </p>
             {markError && (
               <div className="text-sm rounded-lg px-3 py-2 mb-4" style={{ background: "#f2d4cf", color: "#7a2f24" }}>

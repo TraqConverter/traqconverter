@@ -242,6 +242,63 @@ def render_password_reset_email(*, name: str | None, link: str) -> tuple[str, st
     return subject, html
 
 
+def render_document_ready_email(*, company: str, file_name: str, link: str) -> tuple[str, str, str]:
+    """Return (subject, html, text) for the email telling a client their document is ready."""
+    from html import escape
+
+    subject = "Your document is ready"
+    sender = company.strip() or "Your translator"
+    intro = f"{sender} has confirmed your payment. Your document {file_name} is ready to download."
+    safe_link = escape(link, quote=True)
+    html = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{subject}</title>
+</head>
+<body style="margin:0;padding:0;background:#faf5ee;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1f2a2e;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf5ee;padding:32px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border:1px solid #e7ddc5;border-radius:18px;padding:36px 32px;max-width:560px;">
+        <tr><td>
+          <h1 style="font-size:24px;font-weight:700;letter-spacing:-0.02em;color:#1f2a2e;margin:0 0 14px;">
+            Your document is ready
+          </h1>
+          <p style="font-size:15px;line-height:1.55;color:#4a4638;margin:0 0 18px;">
+            {escape(intro)}
+          </p>
+          <div style="margin:28px 0;">
+            <a href="{safe_link}" style="display:inline-block;background:#0a7870;color:#ffffff;padding:13px 26px;border-radius:999px;font-weight:600;font-size:14px;text-decoration:none;">
+              Download your document
+            </a>
+          </div>
+          <p style="font-size:13px;line-height:1.5;color:#8a8270;margin:0 0 8px;">
+            If the button doesn't work, copy this link into your browser:
+          </p>
+          <p style="font-size:12px;line-height:1.5;color:#0a7870;word-break:break-all;margin:0 0 24px;">
+            {safe_link}
+          </p>
+          <hr style="border:none;border-top:1px solid #f1e8d1;margin:20px 0;">
+          <p style="font-size:12px;color:#8a8270;line-height:1.5;margin:0;">
+            You're getting this because you asked to be emailed when this document was ready. We don't keep your address, and we won't email you again about it.
+          </p>
+        </td></tr>
+      </table>
+      {_FOOTER}
+    </td></tr>
+  </table>
+</body>
+</html>
+"""
+    text = (
+        f"{intro}\n\nDownload it here: {link}\n\n"
+        "You're getting this because you asked to be emailed when this document was ready. "
+        "We don't keep your address, and we won't email you again about it."
+    )
+    return subject, html, text
+
+
 _STATUS_LABELS = {
     "PENDING": "Queued",
     "PROCESSING": "Translating",

@@ -1,4 +1,4 @@
-// How a protected client link's payment is shown to the team. No client details: we don't store any.
+// How a protected client link's payment is shown to the team. No client details; at most whether they'll be emailed.
 
 export type ProjectPaymentState = "paid_card" | "marked_paid" | "claimed" | "awaiting"
 
@@ -15,6 +15,8 @@ export type ProjectPayment = {
   marked_by: string | null
   // Owner, admin or PM, and only while the link is still waiting.
   can_mark_paid: boolean
+  // The client left an email to hear when it's ready; the address itself is never sent here.
+  client_will_be_emailed?: boolean
 }
 
 // 45 -> "45", 45.5 -> "45.50": the form a paypal.me link takes.
@@ -57,5 +59,6 @@ export function paymentDetail(p: ProjectPayment) {
       : p.state === "claimed"
       ? shortDate(p.claimed_at)
       : `sent ${shortDate(p.sent_at)}`
-  return [amount, when].filter(Boolean).join(" · ")
+  const emailed = p.client_will_be_emailed ? "client will be emailed" : ""
+  return [amount, when, emailed].filter(Boolean).join(" · ")
 }

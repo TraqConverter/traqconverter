@@ -32,6 +32,8 @@ type DeliveryLink = {
   paid_at: string | null
   // The team member who marked it as paid by hand.
   marked_paid_by: string | null
+  // The client left an email on "I've paid"; the address itself is never sent here.
+  client_will_be_emailed?: boolean
 }
 
 type Payments = { paypal_me: string | null; stripe_status?: string | null }
@@ -454,7 +456,9 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                               {paymentLabel(STATE[l.payment_status], l.marked_paid_by)}
                             </span>
                             <span className="text-[12px]" style={{ color: "#8a8270" }}>
-                              {[money(l.amount, l.currency), paymentWhen(l)].filter(Boolean).join(" · ")}
+                              {[money(l.amount, l.currency), paymentWhen(l), l.client_will_be_emailed ? "Client will be emailed" : ""]
+                                .filter(Boolean)
+                                .join(" · ")}
                             </span>
                           </div>
                         )}
@@ -485,6 +489,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                       <div className="mt-2 rounded-lg p-2.5" style={{ background: "#e1efec", border: "1px solid #cfe6e2" }}>
                         <div className="text-[13px] mb-2" style={{ color: "#1f2a2e" }}>
                           Check that the money has arrived first. Marking it as paid releases the document: the client can download the clean file from the same link straight away.
+                          {l.client_will_be_emailed && " We'll also email the client that it's ready."}
                         </div>
                         <div className="flex gap-2 justify-end">
                           <button

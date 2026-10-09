@@ -27,6 +27,7 @@ def stored_keys(db: Session, project: TranslationProject) -> list[str]:
 
 def delete_project(db: Session, project: TranslationProject, keep_memory: bool = False) -> None:
     """Delete the rows, then the stored files and cached page images; keep_memory detaches TM entries instead."""
+    from app.models.delivery_link import DeliveryLink
     from app.models.segment_comment import SegmentComment
     from app.models.translation_segment import TranslationSegment
     from app.services import source_pages
@@ -46,6 +47,7 @@ def delete_project(db: Session, project: TranslationProject, keep_memory: bool =
         db.query(TranslationSegment).filter(TranslationSegment.project_id == project.id).delete(
             synchronize_session=False
         )
+        db.query(DeliveryLink).filter(DeliveryLink.project_id == project.id).delete(synchronize_session=False)
         memory_sql = (
             "UPDATE translation_memory SET project_id = NULL WHERE project_id = :pid"
             if keep_memory
