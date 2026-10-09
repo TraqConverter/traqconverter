@@ -293,7 +293,8 @@ export default function PrivacyPage() {
       <p>
         All connections use HTTPS, stored files are encrypted at rest, and passwords are stored only as hashes.
         Projects are visible only to your team, and roles control what each member can do. Delivery links use
-        random tokens that we store only in hashed form.
+        long random tokens. We look them up by a one-way hash and keep the token itself only encrypted, so your
+        team can copy a link again.
       </p>
 
       <h2 id="rights">10. Your rights</h2>

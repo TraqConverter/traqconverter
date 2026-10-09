@@ -45,6 +45,7 @@ def _serialize(link: DeliveryLink, marked_by: Optional[User] = None) -> dict:
         "kind": link.kind,
         "file_name": link.file_name,
         "token_prefix": link.token_prefix,
+        "url": delivery_links.team_url(link),
         "status": delivery_links.status(link),
         "expires_at": _iso(link.expires_at),
         "created_at": _iso(link.created_at),

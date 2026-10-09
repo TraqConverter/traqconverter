@@ -19,6 +19,8 @@ class DeliveryLink(Base):
     # Only the sha256 of the token is kept; the prefix is there so the translator can tell links apart.
     token_hash = Column(String(64), nullable=False, unique=True, index=True)
     token_prefix = Column(String(12), nullable=False)
+    # The token encrypted with the app secret, so the team can copy the link again. Lookups still use token_hash.
+    token_sealed = Column(String, nullable=True)
     kind = Column(String, nullable=False)
     file_name = Column(String, nullable=False)
     # Cleared once the snapshot is deleted from storage.

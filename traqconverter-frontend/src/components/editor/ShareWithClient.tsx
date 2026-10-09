@@ -14,6 +14,8 @@ type DeliveryLink = {
   kind: LinkKind
   file_name: string
   token_prefix: string
+  // Full link to copy again; null for links made before links were kept, and for revoked ones.
+  url: string | null
   status: "active" | "expired" | "revoked"
   expires_at: string
   created_at: string
@@ -81,6 +83,7 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
   const [creating, setCreating] = useState(false)
   const [url, setUrl] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null)
   const [links, setLinks] = useState<DeliveryLink[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [revoking, setRevoking] = useState<string | null>(null)
@@ -410,6 +413,35 @@ export default function ShareWithClient({ projectId, onClose }: { projectId: str
                           {" · "}
                           {l.download_count === 1 ? "1 download" : `${l.download_count} downloads`}
                         </div>
+                        {l.url && l.status === "active" && (
+                          <div className="flex flex-wrap items-center gap-2 mt-1">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (await copyText(l.url!)) {
+                                  setCopiedLinkId(l.id)
+                                  window.setTimeout(() => setCopiedLinkId((id) => (id === l.id ? null : id)), 2000)
+                                }
+                              }}
+                              className="text-[12px] font-semibold px-2.5 py-0.5 rounded-full"
+                              style={{
+                                background: copiedLinkId === l.id ? "#d8ead6" : "#e1efec",
+                                color: copiedLinkId === l.id ? "#2d5a24" : "#0a5e58",
+                              }}
+                            >
+                              {copiedLinkId === l.id ? "Copied" : "Copy link"}
+                            </button>
+                            <a
+                              href={l.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[12px] font-semibold underline"
+                              style={{ color: "#0a5e58" }}
+                            >
+                              Open
+                            </a>
+                          </div>
+                        )}
                         {l.protected && l.payment_status && (
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
                             <span
