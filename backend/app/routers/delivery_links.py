@@ -39,7 +39,7 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() + "Z" if value else None
 
 
-def _serialize(link: DeliveryLink) -> dict:
+def _serialize(link: DeliveryLink, marked_by: Optional[User] = None) -> dict:
     return {
         "id": str(link.id),
         "kind": link.kind,
@@ -58,6 +58,7 @@ def _serialize(link: DeliveryLink) -> dict:
         "paid_claimed_at": _iso(link.paid_claimed_at),
         "unlocked_at": _iso(link.unlocked_at),
         "paid_at": _iso(link.paid_at),
+        "marked_paid_by": delivery_links.member_name(marked_by) if link.paid_at is None else None,
     }
 
 
@@ -148,7 +149,11 @@ def list_delivery_links(
         .all()
     )
     can_unlock = is_team_lead(db, project.team_id, current_user)
-    return [{**_serialize(link), "can_unlock": can_unlock} for link in links]
+    marker_ids = {link.unlocked_by for link in links if link.unlocked_by}
+    markers = {u.id: u for u in db.query(User).filter(User.id.in_(marker_ids)).all()} if marker_ids else {}
+    return [
+        {**_serialize(link, markers.get(link.unlocked_by)), "can_unlock": can_unlock} for link in links
+    ]
 
 
 @router.delete("/{project_id}/delivery-links/{link_id}")
@@ -178,7 +183,7 @@ def unlock_delivery_link(
     current_user: User = Depends(get_current_user),
 ):
     project = get_user_project_or_404(db, project_id, current_user)
-    require_team_lead(db, project.team_id, current_user, "unlock a client link")
+    require_team_lead(db, project.team_id, current_user, "mark a client link as paid")
     link = (
         db.query(DeliveryLink)
         .filter(DeliveryLink.id == link_id, DeliveryLink.project_id == project.id)
@@ -191,7 +196,8 @@ def unlock_delivery_link(
     if link.revoked_at is not None:
         raise HTTPException(status_code=400, detail="This link was revoked.")
     delivery_links.unlock(db, link, current_user)
-    return _serialize(link)
+    marker = db.query(User).filter(User.id == link.unlocked_by).first() if link.unlocked_by else None
+    return _serialize(link, marker)
 
 
 def _link_team(db: Session, link: DeliveryLink) -> Optional[Team]:
@@ -353,14 +359,15 @@ def _notify_paid(link_id) -> None:
         amount = paypal.display_amount(link.amount_cents or 0, link.currency or "EUR")
         message = (
             f"Your client says they've paid {amount} for {link.file_name}. "
-            "Check that the money has arrived, then unlock it in the editor (Share with client)."
+            "Check that the money has arrived, then mark it as paid on the Projects page "
+            "or in the editor (Share with client). That releases the clean file to your client."
         )
-        editor = f"{settings.FRONTEND_URL.rstrip('/')}/editor/{link.project_id}"
+        jobs = f"{settings.FRONTEND_URL.rstrip('/')}/jobs?payment=claimed"
         email_service.send_email(
             to=recipient.email,
             subject=f"Your client says they've paid {amount}",
-            html=f'<p>{html.escape(message)}</p><p><a href="{html.escape(editor)}">Open the project</a></p>',
-            text_fallback=f"{message}\n\n{editor}",
+            html=f'<p>{html.escape(message)}</p><p><a href="{html.escape(jobs)}">Check and mark as paid</a></p>',
+            text_fallback=f"{message}\n\n{jobs}",
         )
     except Exception:
         logger.exception("Couldn't send the payment-claim email (link=%s)", link_id)

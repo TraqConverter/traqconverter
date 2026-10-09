@@ -141,9 +141,12 @@ there and presses "I've paid".
 - Bank transfer or anything else: with neither set up, the client sees "Contact <your team name> to pay" and an \
 "I've paid" button. There are no bank-details fields; give the client your details yourself.
 When a client presses "I've paid" you get an email and a notification and the link shows "Client says paid". Check \
-the money has arrived, then in the editor open "Export", "Share with client…" and click "Unlock" on that link. The \
-client then downloads the clean file from the same link. Only the team owner or an admin can change the Payments \
-settings.
+the money has arrived, then click "Mark as paid" on that project in "Projects" (the "Client says paid" filter lists \
+them), or in the editor open "Export", "Share with client…" and click "Mark as paid" on that link. Marking as paid \
+releases the document: the client then downloads the clean file from the same link. Only the team owner, an admin \
+or a project manager can mark a link as paid. The Projects list shows each project's payment: "Paid by card" (Stripe \
+confirmed it), "Marked paid by <name>", "Client says paid" or "Awaiting payment". Only the team owner or an admin \
+can change the Payments settings.
 
 Certifications (Pro and above)
 "Certifications" in the sidebar is the certifications library. Upload your own Word (.docx) certification with \

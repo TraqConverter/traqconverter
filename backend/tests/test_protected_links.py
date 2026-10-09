@@ -303,8 +303,10 @@ def test_paid_claim_is_recorded_once_and_emails_once(client, db, shared, emails)
     assert mail["subject"] == "Your client says they've paid €45.50"
     assert (
         "Your client says they've paid €45.50 for diploma - translation.pdf. "
-        "Check that the money has arrived, then unlock it in the editor (Share with client)."
+        "Check that the money has arrived, then mark it as paid on the Projects page "
+        "or in the editor (Share with client)."
     ) in mail["text_fallback"]
+    assert mail["text_fallback"].endswith("/jobs?payment=claimed")
     assert client.get(f"/public/delivery/{token}").json()["paid_claimed"] is True
     listed = client.get(f"/projects/{project.id}/delivery-links", headers=owner["headers"]).json()[0]
     assert listed["payment_status"] == "claimed"

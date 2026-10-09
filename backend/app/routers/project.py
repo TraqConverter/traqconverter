@@ -441,6 +441,7 @@ def list_projects(
     assignee: str | None = None,
     status_filter: str = Query("all", alias="status"),
     q: str | None = None,
+    payment: str | None = None,
     limit: int = Query(50, ge=1, le=MAX_PROJECT_PAGE),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -449,16 +450,25 @@ def list_projects(
     """One page of the team's projects, newest first; the X-Total-Count header has the number matching the filters.
 
     `assignee` is me, unassigned or a user id; `status` one of PROJECT_STATUS_FILTERS; `q` searches file name,
-    languages and batch name.
+    languages and batch name; `payment` one of delivery_links.PROJECT_PAYMENT_FILTERS.
     """
+    from app.services import delivery_links
+
     tab = (status_filter or "all").lower()
     if tab not in PROJECT_STATUS_FILTERS:
         raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(PROJECT_STATUS_FILTERS)}")
+    payment = (payment or "all").lower()
+    if payment != "all" and payment not in delivery_links.PROJECT_PAYMENT_FILTERS:
+        raise HTTPException(
+            status_code=400, detail=f"payment must be one of: {', '.join(delivery_links.PROJECT_PAYMENT_FILTERS)}"
+        )
 
     base = _projects_scope(db, current_user, assignee, q)
     condition = _status_condition(tab)
     if condition is not None:
         base = base.filter(condition)
+    if payment != "all":
+        base = base.filter(delivery_links.project_payment_filter(db, payment))
 
     total = base.order_by(None).count()
     response.headers["X-Total-Count"] = str(total)
@@ -477,6 +487,14 @@ def list_projects(
             users_by_id[str(u.id)] = u
 
     word_counts = _word_counts(db, [p.id for p in projects])
+
+    payment_links = delivery_links.deciding_links_for(db, [p.id for p in projects])
+    markers = {link.unlocked_by for link in payment_links.values() if link.unlocked_by}
+    markers_by_id = {u.id: u for u in db.query(User).filter(User.id.in_(markers)).all()} if markers else {}
+    leads = {
+        team_id: is_team_lead(db, team_id, current_user)
+        for team_id in {p.team_id for p in projects if p.id in payment_links}
+    }
 
     from app.models.batch import Batch
 
@@ -530,6 +548,13 @@ def list_projects(
                 if o
                 else None
             ),
+            "payment": (
+                delivery_links.project_payment(
+                    payment_links[p.id], markers_by_id.get(payment_links[p.id].unlocked_by), leads[p.team_id]
+                )
+                if p.id in payment_links
+                else None
+            ),
         })
 
     return result
@@ -578,6 +603,7 @@ def projects_summary(
     )
     total, n_active, n_review, n_delivered, n_failed, n_open, open_pages, open_with_pages, credits = (int(x) for x in row)
     return {
+        "payment": _payment_counts(db, base),
         "total": total,
         "counts": {"active": n_active, "review": n_review, "delivered": n_delivered, "failed": n_failed},
         "open": {
@@ -587,6 +613,27 @@ def projects_summary(
             "language_pairs": pairs,
         },
         "credits_used": credits,
+    }
+
+
+def _payment_counts(db: Session, base) -> dict[str, int]:
+    """How many projects in scope are in each payment filter, in one query."""
+    from sqlalchemy import func
+
+    from app.services import delivery_links
+
+    states = delivery_links.project_payment_states(db)
+    rows = (
+        db.query(states.c.state, func.count())
+        .filter(states.c.project_id.in_(base.with_entities(TranslationProject.id).order_by(None)))
+        .group_by(states.c.state)
+        .all()
+    )
+    by_state = dict(rows)
+    return {
+        "claimed": by_state.get("claimed", 0),
+        "awaiting": by_state.get("awaiting", 0),
+        "paid": by_state.get("paid_card", 0) + by_state.get("marked_paid", 0),
     }
 
 

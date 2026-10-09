@@ -2,7 +2,8 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { api } from "@/lib/api"
+import { api, apiErrorDetail } from "@/lib/api"
+import { PAYMENT_STYLE, money, paymentDetail, paymentLabel, type ProjectPayment } from "@/lib/payment"
 import { stageText } from "@/lib/jobProgress"
 import { deletionNotice } from "@/lib/retention"
 import { type BatchRef } from "@/components/BatchBadge"
@@ -35,6 +36,7 @@ type Project = {
   partial?: boolean
   failure_reason?: string | null
   failure_code?: string | null
+  payment?: ProjectPayment | null
 }
 
 function effectiveStatus(p: { status?: string; review_status?: string }) {
@@ -64,6 +66,12 @@ type AssigneeFilter = "all" | "me" | "unassigned"
 
 function parseAssignee(raw: string | null): AssigneeFilter {
   return raw === "me" || raw === "unassigned" ? raw : "all"
+}
+
+type PaymentFilter = "all" | "claimed" | "awaiting" | "paid"
+
+function parsePayment(raw: string | null): PaymentFilter {
+  return raw === "claimed" || raw === "awaiting" || raw === "paid" ? raw : "all"
 }
 
 const STATUS_STYLES: Record<
@@ -142,6 +150,7 @@ const SEARCH_DEBOUNCE_MS = 300
 type Summary = {
   total: number
   counts: { active: number; review: number; delivered: number; failed: number }
+  payment?: { claimed: number; awaiting: number; paid: number }
 }
 
 const ROW_GRID =
@@ -190,15 +199,21 @@ function Jobs() {
   const searchParams = useSearchParams()
   const highlight = searchParams.get("batch")
   const assignee = parseAssignee(searchParams.get("assignee"))
+  const payment = parsePayment(searchParams.get("payment"))
   const fetchSeq = useRef(0)
 
-  const setAssignee = (next: AssigneeFilter) => {
+  // Filters live in the URL, so the "client says paid" email can link straight to them.
+  const setParams = (next: { assignee?: AssigneeFilter; payment?: PaymentFilter }) => {
     const params = new URLSearchParams(searchParams.toString())
-    if (next === "all") params.delete("assignee")
-    else params.set("assignee", next)
+    for (const [key, value] of Object.entries(next)) {
+      if (value === "all") params.delete(key)
+      else if (value) params.set(key, value)
+    }
     const qs = params.toString()
     router.replace(qs ? `/jobs?${qs}` : "/jobs", { scroll: false })
   }
+  const setAssignee = (next: AssigneeFilter) => setParams({ assignee: next })
+  const setPayment = (next: PaymentFilter) => setParams({ payment: next })
 
   const [projects, setProjects] = useState<Project[]>([])
   const [summaries, setSummaries] = useState<Record<string, BatchSummary>>({})
@@ -223,7 +238,7 @@ function Jobs() {
     return () => window.clearTimeout(t)
   }, [query])
   // A new filter or search starts again from the first page.
-  const filterKey = `${tab}|${assignee}|${search}`
+  const filterKey = `${tab}|${assignee}|${payment}|${search}`
   const [paging, setPaging] = useState({ key: filterKey, page: 0 })
   if (paging.key !== filterKey) setPaging({ key: filterKey, page: 0 })
   const page = paging.key === filterKey ? paging.page : 0
@@ -238,6 +253,9 @@ function Jobs() {
   const [renameBusy, setRenameBusy] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
+  const [markingPaid, setMarkingPaid] = useState<Project | null>(null)
+  const [markBusy, setMarkBusy] = useState(false)
+  const [markError, setMarkError] = useState<string | null>(null)
 
   const highlightRef = useRef<HTMLDivElement | null>(null)
   const scrolledTo = useRef<string | null>(null)
@@ -298,6 +316,28 @@ function Jobs() {
     }
   }
 
+  const closeMarkPaid = () => {
+    setMarkingPaid(null)
+    setMarkError(null)
+  }
+
+  const submitMarkPaid = async () => {
+    const p = markingPaid
+    if (!p?.payment) return
+    try {
+      setMarkBusy(true)
+      setMarkError(null)
+      await api.post(`/projects/${p.id}/delivery-links/${p.payment.link_id}/unlock`)
+      closeMarkPaid()
+      fetchJobs()
+      fetchCounts()
+    } catch (err) {
+      setMarkError(apiErrorDetail(err, "Couldn't mark it as paid. Please try again."))
+    } finally {
+      setMarkBusy(false)
+    }
+  }
+
   const fetchJobs = useCallback(async () => {
     // Only the latest request may write, so a slow response for an old filter can't replace the list.
     const seq = ++fetchSeq.current
@@ -306,6 +346,7 @@ function Jobs() {
         params: {
           ...(assignee === "all" ? {} : { assignee }),
           ...(tab === "all" ? {} : { status: tab }),
+          ...(payment === "all" ? {} : { payment }),
           ...(search ? { q: search } : {}),
           limit: PAGE_SIZE,
           offset: page * PAGE_SIZE,
@@ -332,7 +373,7 @@ function Jobs() {
     } finally {
       if (seq === fetchSeq.current) setLoading(false)
     }
-  }, [assignee, tab, search, page])
+  }, [assignee, tab, payment, search, page])
 
   const fetchCounts = useCallback(async () => {
     try {
@@ -483,8 +524,8 @@ function Jobs() {
       if (p.batch) byBatch.set(p.batch.id, [...(byBatch.get(p.batch.id) || []), p])
     }
     // GET /projects/ is paged, so a batch can have documents only its detail knows about.
-    // Batch details carry no assignee, so they can't fill in a list filtered by assignee.
-    for (const d of assignee === "all" ? Object.values(details) : []) {
+    // Batch details carry no assignee or payment, so they can't fill in a list filtered by either.
+    for (const d of assignee === "all" && payment === "all" ? Object.values(details) : []) {
       const ref = { id: d.id, name: d.name }
       const extra = d.projects.filter((x) => !known.has(x.id)).map((x) => fromBatchDoc(x, ref))
       if (extra.length) byBatch.set(d.id, [...(byBatch.get(d.id) || []), ...extra])
@@ -497,7 +538,7 @@ function Jobs() {
       const all = byBatch.get(id) || []
       const nameHit = !!q && name.toLowerCase().includes(q)
       const docs = all.filter((p) => tabOk(p) && (nameHit || queryOk(p)))
-      if (docs.length || id === highlight || (nameHit && tab === "all" && assignee === "all")) {
+      if (docs.length || id === highlight || (nameHit && tab === "all" && assignee === "all" && payment === "all")) {
         out.push({ kind: "group", id, name, docs, all })
       }
     }
@@ -516,7 +557,7 @@ function Jobs() {
       }
     }
     return out
-  }, [projects, details, summaries, tab, query, highlight, assignee])
+  }, [projects, details, summaries, tab, query, highlight, assignee, payment])
 
   useEffect(() => {
     if (!highlight || scrolledTo.current === highlight || !highlightRef.current) return
@@ -664,6 +705,46 @@ function Jobs() {
     )
   }
 
+  const renderPayment = (p: Project) => {
+    const pay = p.payment
+    if (!pay) return null
+    const st = PAYMENT_STYLE[pay.state]
+    const claimed = pay.state === "claimed"
+    return (
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1" onClick={(e) => e.stopPropagation()}>
+        <span
+          className={`inline-flex items-center gap-1.5 text-[11px] px-2 py-0.5 rounded-full whitespace-nowrap ${claimed ? "font-bold" : "font-semibold"}`}
+          style={{ background: st.background, color: st.color, border: `1px solid ${st.border}` }}
+          data-payment={pay.state}
+        >
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background: st.dot }} />
+          {paymentLabel(pay.state, pay.marked_by)}
+        </span>
+        <span className="text-xs" style={{ color: claimed ? "#6b4a06" : "#8a8270" }}>
+          {paymentDetail(pay)}
+        </span>
+        {pay.can_mark_paid && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setMarkError(null)
+              setMarkingPaid(p)
+            }}
+            className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full whitespace-nowrap transition"
+            style={
+              claimed
+                ? { background: "#0a7870", color: "#ffffff", border: "1px solid #0a7870" }
+                : { background: "#ffffff", color: "#0a5e58", border: "1px solid #b7dad4" }
+            }
+          >
+            Mark as paid
+          </button>
+        )}
+      </div>
+    )
+  }
+
   const renderActions = (p: Project) =>
     p.partial ? null : (
       <div className="flex justify-end items-center gap-1" onClick={(e) => e.stopPropagation()}>
@@ -772,8 +853,13 @@ function Jobs() {
         style={{
           borderBottom: "1px solid #f4ecd6",
           color: "#1f2a2e",
-          background: inGroup ? "#fffdf9" : undefined,
-          boxShadow: inGroup ? "inset 3px 0 0 #cfe6e2" : undefined,
+          background: p.payment?.state === "claimed" ? "#fffaeb" : inGroup ? "#fffdf9" : undefined,
+          boxShadow:
+            p.payment?.state === "claimed"
+              ? "inset 3px 0 0 #e0a92e"
+              : inGroup
+              ? "inset 3px 0 0 #cfe6e2"
+              : undefined,
         }}
       >
         <div className={`flex items-center gap-3 min-w-0 ${inGroup ? "md:pl-5" : ""}`}>
@@ -800,6 +886,7 @@ function Jobs() {
                 {p.failure_reason}
               </div>
             )}
+            {renderPayment(p)}
           </div>
           <div className="md:hidden shrink-0">{renderActions(p)}</div>
         </div>
@@ -841,7 +928,7 @@ function Jobs() {
     )
   }
 
-  const isFiltered = tab !== "all" || assignee !== "all" || query.trim().length > 0
+  const isFiltered = tab !== "all" || assignee !== "all" || payment !== "all" || query.trim().length > 0
 
   return (
     <div className="space-y-6 pb-16">
@@ -905,6 +992,25 @@ function Jobs() {
               <TabButton label="Unassigned" active={assignee === "unassigned"} onClick={() => setAssignee("unassigned")} />
             </div>
           </div>
+          <div className="max-w-full overflow-x-auto">
+            <div
+              role="group"
+              aria-label="Filter by payment"
+              className="inline-flex items-center gap-1 p-1 rounded-full"
+              style={{ background: "#f3ecdb", border: "1px solid #e7ddc5" }}
+            >
+              <TabButton label="Any payment" active={payment === "all"} onClick={() => setPayment("all")} />
+              <TabButton
+                label="Client says paid"
+                count={summary?.payment?.claimed}
+                urgent={!!summary?.payment?.claimed}
+                active={payment === "claimed"}
+                onClick={() => setPayment("claimed")}
+              />
+              <TabButton label="Awaiting payment" count={summary?.payment?.awaiting} active={payment === "awaiting"} onClick={() => setPayment("awaiting")} />
+              <TabButton label="Paid" count={summary?.payment?.paid} active={payment === "paid"} onClick={() => setPayment("paid")} />
+            </div>
+          </div>
         </div>
 
         <div
@@ -951,7 +1057,7 @@ function Jobs() {
             onReset={() => {
               setTab("all")
               setQuery("")
-              setAssignee("all")
+              setParams({ assignee: "all", payment: "all" })
             }}
           />
         ) : (
@@ -1072,6 +1178,69 @@ function Jobs() {
                 }}
               >
                 {renameBusy ? "Saving…" : "Save name"}
+              </button>
+            </div>
+          </div>
+        </ModalOverlay>
+      )}
+
+      {markingPaid?.payment && (
+        <ModalOverlay onClose={markBusy ? () => {} : closeMarkPaid}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Mark as paid"
+            className="rounded-2xl p-6 w-full max-w-md"
+            style={{
+              background: "#ffffff",
+              border: "1px solid #e7ddc5",
+              boxShadow: "0 24px 60px rgba(30,30,20,0.18)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-[11px] font-semibold tracking-[0.18em] mb-1" style={{ color: "#9a9178" }}>
+              MARK AS PAID
+            </div>
+            <h3 className="text-[18px] font-semibold tracking-tight mb-3 break-words" style={{ color: "#1f2a2e" }}>
+              Has {money(markingPaid.payment.amount, markingPaid.payment.currency) || "the payment"} for{" "}
+              {markingPaid.filename || "this document"} arrived?
+            </h3>
+            <p className="text-sm mb-2" style={{ color: "#6b6558" }}>
+              {markingPaid.payment.state === "claimed"
+                ? "Your client says they've paid. Check your PayPal or bank account first."
+                : "Your client hasn't said they've paid yet. Check your PayPal or bank account first."}
+            </p>
+            <p className="text-sm mb-5" style={{ color: "#6b6558" }}>
+              Marking it as paid releases the document: your client can download the clean file straight away from the
+              link you sent. This can&apos;t be undone.
+            </p>
+            {markError && (
+              <div className="text-sm rounded-lg px-3 py-2 mb-4" style={{ background: "#f2d4cf", color: "#7a2f24" }}>
+                {markError}
+              </div>
+            )}
+            <div className="flex items-center justify-end gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={closeMarkPaid}
+                disabled={markBusy}
+                className="px-4 py-2 rounded-full text-sm font-semibold"
+                style={{ background: "#ffffff", color: "#1f2a2e", border: "1px solid #e7ddc5" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitMarkPaid}
+                disabled={markBusy}
+                className="px-4 py-2 rounded-full text-sm font-semibold"
+                style={{
+                  background: markBusy ? "#9bc9c5" : "#0a7870",
+                  color: "#fff",
+                  cursor: markBusy ? "not-allowed" : "pointer",
+                }}
+              >
+                {markBusy ? "Marking as paid…" : "Yes, mark as paid and release"}
               </button>
             </div>
           </div>
@@ -1220,11 +1389,13 @@ function Pager({
 function TabButton({
   label,
   count,
+  urgent,
   active,
   onClick,
 }: {
   label: string
   count?: number
+  urgent?: boolean
   active: boolean
   onClick: () => void
 }) {
@@ -1245,11 +1416,11 @@ function TabButton({
       {count !== undefined && (
         <span
           className="text-[10px] font-semibold tabular-nums px-1.5 py-0.5 rounded-full"
-          style={{
-            background: active ? "#f3ecdb" : "#ffffff",
-            color: "#8a8270",
-            border: "1px solid #e7ddc5",
-          }}
+          style={
+            urgent
+              ? { background: "#fbe3a6", color: "#6b4a06", border: "1px solid #e0a92e" }
+              : { background: active ? "#f3ecdb" : "#ffffff", color: "#8a8270", border: "1px solid #e7ddc5" }
+          }
         >
           {count}
         </span>

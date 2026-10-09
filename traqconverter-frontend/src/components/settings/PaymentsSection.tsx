@@ -247,7 +247,7 @@ export default function PaymentsSection() {
         Manual option: PayPal.me
       </div>
       <p className="text-[13px] mb-3" style={{ color: "#6b6558" }}>
-        The client pays on PayPal, then you check and unlock the link yourself.
+        The client pays on PayPal, then you check and mark the link as paid yourself.
       </p>
       <label htmlFor="paypal-me" className="block text-[11px] font-semibold tracking-[0.14em] mb-2" style={{ color: "#9a9178" }}>
         PAYPAL.ME NAME
@@ -298,7 +298,7 @@ export default function PaymentsSection() {
           )
           : data?.stripe_status === "active"
           ? "No PayPal.me name: clients pay through Stripe only."
-          : "No PayPal.me name yet. Protected links still work: clients pay you directly and you unlock them."}
+          : "No PayPal.me name yet. Protected links still work: clients pay you directly and you mark them as paid."}
       </div>
       {saved && (
         <div className="text-[13px] mt-1" style={{ color: "#2d5a24" }}>
