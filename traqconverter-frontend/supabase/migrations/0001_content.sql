@@ -91,30 +91,14 @@ create table content.wp_ids (
 );
 alter table content.wp_ids enable row level security;
 
--- Quote requests. Column names match the siblings so one reporting script can
--- read every site, including the attribution columns added across the estate on
--- 2026-10-12.
-create table content.leads (
-  id                  bigint generated always as identity primary key,
-  token               text unique,
-  status              text not null default 'complete',
-  name                text not null default '',
-  email               text not null,
-  phone               text not null default '',
-  company             text not null default '',
-  message             text not null default '',
-  page                text not null default '',
-  files               jsonb not null default '[]'::jsonb,
-  -- Where the visit came from, captured in the browser on the FIRST page of the
-  -- visit. By the time somebody reaches a form the referrer names our own site.
-  lead_source         text not null default '',
-  lead_source_detail  text not null default '',
-  landing_page        text not null default '',
-  created_at          timestamptz not null default now(),
-  updated_at          timestamptz
-);
-create index leads_created on content.leads (created_at desc);
-create index leads_email on content.leads (lower(email));
+-- NO LEADS TABLE. The six sibling sites are agencies that quote for work, so
+-- each carries a quote form and a leads table. This is a SaaS: a reader goes to
+-- pricing and subscribes, so the conversion is a signup the product already
+-- records, and a lead table here would be a copied assumption with nothing to
+-- put in it.
+--
+-- The question worth answering later is which GUIDE preceded a signup. That is
+-- attribution on the existing registration, not a second store of people.
 
 create table content.redirects (
   from_path  text primary key,
@@ -138,11 +122,10 @@ create index ai_visits_day on content.ai_visits (day desc);
 
 -- Row level security on every table. The site reads through the service role
 -- from server components only; nothing here is ever queried from the browser,
--- and leads in particular must never be readable with the anon key.
+-- and a draft in particular must never be readable with the anon key.
 alter table content.pages      enable row level security;
 alter table content.revisions  enable row level security;
 alter table content.settings   enable row level security;
-alter table content.leads      enable row level security;
 alter table content.redirects  enable row level security;
 alter table content.ai_visits  enable row level security;
 

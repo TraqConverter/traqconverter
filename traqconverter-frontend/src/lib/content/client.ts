@@ -16,8 +16,8 @@ import { createClient } from "@supabase/supabase-js"
  * days. Anything that can exceed 1000 rows must page — see `selectAll` below.
  *
  * The service-role key bypasses row level security, which is correct here
- * because this module is server-only and the content tables carry leads. It
- * must never be imported into a client component; the "server-only" import
+ * because this module is server-only and writes drafts the public must not see.
+ * It must never be imported into a client component; the "server-only" import
  * above turns that mistake into a build error rather than a leaked key.
  */
 // The schema option changes the client's generic signature, so the type is
