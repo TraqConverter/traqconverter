@@ -28,7 +28,7 @@ function create() {
   const key = process.env.CONTENT_SUPABASE_SERVICE_KEY
   if (!url || !key) {
     throw new Error(
-      "CONTENT_SUPABASE_URL and CONTENT_SUPABASE_SERVICE_KEY must be set. They point at the content project, which is deliberately separate from the converter's own database.",
+      "CONTENT_SUPABASE_URL and CONTENT_SUPABASE_SERVICE_KEY must be set. They point at this product's own Supabase project — the one already used for Storage, whose Postgres was idle — and the content lives in its `content` schema. Not SemanticWP's project: a customer-facing site must not share a database with the SaaS that manages it.",
     )
   }
   return createClient(url, key, {
