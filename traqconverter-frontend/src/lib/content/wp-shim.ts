@@ -1,5 +1,5 @@
 import "server-only"
-import { contentDb, selectAll } from "./client"
+import { sql } from "./client"
 import { normaliseSlug, type ContentPage, type PageType } from "./pages"
 
 /**
@@ -39,23 +39,23 @@ export function authorized(req: Request): boolean {
 }
 
 export async function idForSlug(slug: string): Promise<number> {
-  const db = contentDb()
-  const existing = await db.from("wp_ids").select("id").eq("slug", slug).maybeSingle()
-  if (existing.data) return Number((existing.data as { id: number }).id)
-  const inserted = await db.from("wp_ids").insert({ slug }).select("id").single()
-  if (inserted.error) {
-    // A concurrent create for the same slug loses the insert race; the row it
-    // wanted now exists, so read it rather than failing the request.
-    const again = await db.from("wp_ids").select("id").eq("slug", slug).maybeSingle()
-    if (again.data) return Number((again.data as { id: number }).id)
-    throw new Error(`could not allocate an id for ${slug}: ${inserted.error.message}`)
-  }
-  return Number((inserted.data as { id: number }).id)
+  // One statement, so a concurrent create for the same slug cannot lose a race
+  // between a select and an insert. `do update` rather than `do nothing`
+  // because `do nothing` returns no row on conflict and there would be nothing
+  // to read back.
+  const rows = (await sql()`
+    insert into content.wp_ids (slug) values (${slug})
+    on conflict (slug) do update set slug = excluded.slug
+    returning id
+  `) as unknown as Array<{ id: number | string }>
+  return Number(rows[0].id)
 }
 
 export async function slugForId(id: number): Promise<string | null> {
-  const { data } = await contentDb().from("wp_ids").select("slug").eq("id", id).maybeSingle()
-  return (data as { slug: string } | null)?.slug ?? null
+  const rows = (await sql()`
+    select slug from content.wp_ids where id = ${id} limit 1
+  `) as unknown as Array<{ slug: string }>
+  return rows.length ? rows[0].slug : null
 }
 
 const SITE = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.onlinedoctranslator.ai").replace(/\/$/, "")
@@ -82,16 +82,16 @@ export async function toWpObject(page: ContentPage): Promise<Record<string, unkn
   }
 }
 
+/** Every page INCLUDING drafts — this is the pipeline's inventory, and it has
+ *  to see what it has already created whether or not it is live yet. */
 export async function listAllPages(): Promise<ContentPage[]> {
-  const db = contentDb()
-  return selectAll<ContentPage>((from, to) =>
-    db
-      .from("pages")
-      .select("*")
-      .order("sort", { ascending: true })
-      .order("title", { ascending: true })
-      .range(from, to),
-  )
+  return (await sql()`
+    select slug, title, h1, meta_description, body_html, excerpt, type, hub_slug, status,
+           faq, schema_json, canonical, in_nav, sort,
+           created_at::text as created_at, updated_at::text as updated_at
+    from content.pages
+    order by sort asc, title asc
+  `) as unknown as ContentPage[]
 }
 
 /**
@@ -154,12 +154,24 @@ export async function upsertFromWp(input: {
     status: input.status === "draft" ? ("draft" as const) : ("published" as const),
     updated_at: new Date().toISOString(),
   }
-  const { data, error } = await contentDb()
-    .from("pages")
-    .upsert(row, { onConflict: "slug" })
-    .select("*")
-    .single()
-  if (error) throw new Error(`could not write ${slug}: ${error.message}`)
-  const page = data as ContentPage
+  const rows = (await sql()`
+    insert into content.pages (slug, title, h1, body_html, excerpt, meta_description, type, status, updated_at)
+    values (${row.slug}, ${row.title}, ${row.h1}, ${row.body_html}, ${row.excerpt},
+            ${row.meta_description}, ${row.type}, ${row.status}, ${row.updated_at})
+    on conflict (slug) do update set
+      title = excluded.title,
+      h1 = excluded.h1,
+      body_html = excluded.body_html,
+      excerpt = excluded.excerpt,
+      meta_description = excluded.meta_description,
+      type = excluded.type,
+      status = excluded.status,
+      updated_at = excluded.updated_at
+    returning slug, title, h1, meta_description, body_html, excerpt, type, hub_slug, status,
+              faq, schema_json, canonical, in_nav, sort,
+              created_at::text as created_at, updated_at::text as updated_at
+  `) as unknown as ContentPage[]
+  if (!rows.length) throw new Error(`could not write ${slug}`)
+  const page = rows[0]
   return { page, id: await idForSlug(page.slug) }
 }

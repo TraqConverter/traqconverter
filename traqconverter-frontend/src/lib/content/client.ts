@@ -1,71 +1,64 @@
 import "server-only"
-import { createClient } from "@supabase/supabase-js"
+import { neon } from "@neondatabase/serverless"
 
 /**
- * Server-only client for the content schema.
+ * The content database.
  *
- * WHY PostgREST RATHER THAN A POSTGRES CONNECTION. This app runs on Vercel, so
- * every request may be a cold serverless invocation. A `pg` pool per invocation
- * exhausts Supabase's connection limit under any real traffic, and the usual
- * fix — the transaction pooler — forbids prepared statements, which the driver
- * uses by default. HTTP has no connection to exhaust.
+ * ITS OWN POSTGRES, ON PURPOSE. The first version of this pointed at the
+ * product's Supabase project, on the assumption that only Storage was in use
+ * there. It was not: that project holds translation_jobs, translation_segments,
+ * delivery_links and media_assets — 28 tables of customers' documents — so any
+ * credential the content layer held would have reached all of it. A separate
+ * Postgres means there is no such credential to leak, rather than a narrower
+ * one.
  *
- * WHAT IT COSTS. PostgREST caps a response at 1000 rows SERVER-SIDE, and
- * neither .limit() nor .range() lifts it. That cap is silent: you get 1000 rows
- * and no error, which on a sibling project read as a traffic collapse for four
- * days. Anything that can exceed 1000 rows must page — see `selectAll` below.
+ * NEON'S HTTP DRIVER, NOT A POOL. Every request here may be a cold serverless
+ * invocation, and a `pg` pool per invocation exhausts the connection limit under
+ * any real traffic. `neon()` issues each query over HTTP, so there is no
+ * connection to exhaust and no pooler mode to work around.
  *
- * The service-role key bypasses row level security, which is correct here
- * because this module is server-only and writes drafts the public must not see.
- * It must never be imported into a client component; the "server-only" import
- * above turns that mistake into a build error rather than a leaked key.
+ * It also removes a workaround: the Supabase version went through PostgREST,
+ * which caps a response at 1000 rows server-side and says nothing when it does
+ * — a cap that cost four days on a sibling project. Plain SQL has no such
+ * ceiling, so `selectAll` and its paging are gone.
  */
-// The schema option changes the client's generic signature, so the type is
-// inferred from the factory rather than written out — naming it means naming
-// five generic parameters that move between supabase-js releases.
-function create() {
-  const url = process.env.CONTENT_SUPABASE_URL
-  const key = process.env.CONTENT_SUPABASE_SERVICE_KEY
-  if (!url || !key) {
+
+/**
+ * Vercel's Neon integration injects several URLs. DATABASE_URL is the pooled
+ * one and is what this wants; the unpooled variant is only for migrations and
+ * long transactions, neither of which happen in a request.
+ */
+function connectionString(): string {
+  const url =
+    process.env.CONTENT_DATABASE_URL ??
+    process.env.DATABASE_URL ??
+    process.env.POSTGRES_URL
+  if (!url) {
     throw new Error(
-      "CONTENT_SUPABASE_URL and CONTENT_SUPABASE_SERVICE_KEY must be set. They point at this product's own Supabase project — the one already used for Storage, whose Postgres was idle — and the content lives in its `content` schema. Not SemanticWP's project: a customer-facing site must not share a database with the SaaS that manages it.",
+      "No content database URL. Expected CONTENT_DATABASE_URL, or DATABASE_URL / POSTGRES_URL as injected by Vercel's Neon integration.",
     )
   }
-  return createClient(url, key, {
-    db: { schema: "content" },
-    auth: { persistSession: false, autoRefreshToken: false },
-  })
+  return url
 }
 
-type ContentClient = ReturnType<typeof create>
-let cached: ContentClient | null = null
+let cached: ReturnType<typeof neon> | null = null
 
-export function contentDb(): ContentClient {
-  if (!cached) cached = create()
+/**
+ * A tagged-template query function. Interpolations are sent as bound
+ * parameters, never concatenated, so a page slug from a URL cannot alter the
+ * statement:
+ *
+ *   const rows = await sql`select * from content.pages where slug = ${slug}`
+ */
+export function sql() {
+  if (!cached) cached = neon(connectionString())
   return cached
 }
 
-/**
- * Read every row a query matches, a page at a time.
- *
- * `build` receives the row range and must return the query for it. Each page is
- * checked for an error rather than treated as the end of the table: a failed
- * page that is read as "no more rows" silently truncates the site's own
- * navigation and sitemap.
- */
-export async function selectAll<T>(
-  build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
-  pageSize = 1000,
-): Promise<T[]> {
-  const out: T[] = []
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await build(from, from + pageSize - 1)
-    if (error) throw new Error(`content read failed at offset ${from}: ${error.message}`)
-    const rows = data ?? []
-    out.push(...rows)
-    if (rows.length < pageSize) return out
-    // A site with more pages than this is not impossible, but it is far enough
-    // out that silently looping forever is the worse failure.
-    if (from > 50_000) throw new Error("content read exceeded 50k rows — check the filter")
-  }
+/** True when a content database is configured at all, so a route can degrade
+ *  to the product pages rather than throwing during a build. */
+export function hasContentDb(): boolean {
+  return Boolean(
+    process.env.CONTENT_DATABASE_URL ?? process.env.DATABASE_URL ?? process.env.POSTGRES_URL,
+  )
 }

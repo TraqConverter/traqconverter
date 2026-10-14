@@ -1,6 +1,6 @@
 import "server-only"
 import { cache } from "react"
-import { contentDb, selectAll } from "./client"
+import { hasContentDb, sql } from "./client"
 
 export type PageType =
   | "tool"
@@ -34,76 +34,79 @@ export type ContentPage = {
   updated_at: string
 }
 
-const COLUMNS =
-  "slug,title,h1,meta_description,body_html,excerpt,type,hub_slug,status,faq,schema_json,canonical,in_nav,sort,created_at,updated_at"
+// created_at and updated_at are cast to text so the shape stays a plain string
+// everywhere. The column is a real timestamptz; only the transport is flattened.
+//
+// The list is written out in both queries rather than interpolated. It is
+// static code, and an `unsafe()` call inside a query template is the kind of
+// thing a later edit quietly feeds user input into.
 
 /**
  * Every published page.
  *
- * `cache` dedupes this within a single render: the page body, the nav, the
- * related rail and the breadcrumb all want the same list, and without it one
- * page view would make four round trips for identical data.
+ * `cache` dedupes within a single render: the body, the breadcrumb, the related
+ * rail and the nav all want this list, and without it one page view would make
+ * four round trips for identical data.
  *
- * It pages, because PostgREST stops at 1000 rows without saying so.
+ * No paging. The Supabase version needed it because PostgREST silently caps a
+ * response at 1000 rows; SQL has no such ceiling.
  */
 export const listPages = cache(async (): Promise<ContentPage[]> => {
-  const db = contentDb()
-  const rows = await selectAll<ContentPage>((from, to) =>
-    db
-      .from("pages")
-      .select(COLUMNS)
-      .eq("status", "published")
-      .order("sort", { ascending: true })
-      .order("title", { ascending: true })
-      .range(from, to),
-  )
+  if (!hasContentDb()) return []
+  const rows = (await sql()`
+    select slug, title, h1, meta_description, body_html, excerpt, type, hub_slug, status,
+           faq, schema_json, canonical, in_nav, sort,
+           created_at::text as created_at, updated_at::text as updated_at
+    from content.pages
+    where status = 'published'
+    order by sort asc, title asc
+  `) as unknown as ContentPage[]
   return rows.map(normalise)
 })
 
-/** One page by slug, published only. Drafts 404 for the public. */
+/** One page by slug. A draft 404s for the public. */
 export const getPage = cache(async (slug: string): Promise<ContentPage | null> => {
-  const { data, error } = await contentDb()
-    .from("pages")
-    .select(COLUMNS)
-    .eq("slug", normaliseSlug(slug))
-    .eq("status", "published")
-    .maybeSingle()
-  if (error) throw new Error(`content read failed for ${slug}: ${error.message}`)
-  return data ? normalise(data as ContentPage) : null
+  if (!hasContentDb()) return null
+  const rows = (await sql()`
+    select slug, title, h1, meta_description, body_html, excerpt, type, hub_slug, status,
+           faq, schema_json, canonical, in_nav, sort,
+           created_at::text as created_at, updated_at::text as updated_at
+    from content.pages
+    where slug = ${normaliseSlug(slug)} and status = 'published'
+    limit 1
+  `) as unknown as ContentPage[]
+  return rows.length ? normalise(rows[0]) : null
 })
 
 /**
  * A redirect for a path that is no longer a page.
  *
  * Checked before serving a 404, because renaming a slug without one throws away
- * whatever the old URL had earned. On a sibling site a single renamed page
- * carried 1,296 impressions.
+ * whatever the old URL earned. On a sibling site a single renamed page was
+ * holding 1,296 impressions.
  */
 export async function getRedirect(path: string): Promise<string | null> {
-  const from = `/${normaliseSlug(path)}`
-  const { data, error } = await contentDb()
-    .from("redirects")
-    .select("to_path")
-    .eq("from_path", from)
-    .maybeSingle()
-  if (error) return null
-  return (data?.to_path as string | undefined) ?? null
+  if (!hasContentDb()) return null
+  const rows = (await sql()`
+    select to_path from content.redirects where from_path = ${`/${normaliseSlug(path)}`} limit 1
+  `) as unknown as Array<{ to_path: string }>
+  return rows.length ? rows[0].to_path : null
 }
 
-/** The hub a page belongs to, and the pages that belong to it. */
+/** The other members of this page's hub: for a question, the service page it
+ *  supports and its sibling questions; for a service page, its questions. */
 export function hubMembers(page: ContentPage, all: ContentPage[]): ContentPage[] {
   const hub = page.hub_slug ?? page.slug
   return all.filter((p) => p.slug !== page.slug && (p.hub_slug === hub || p.slug === hub))
 }
 
 /**
- * The related rail: the page's own hub first, then a rotating fill from the
- * others.
+ * The related rail: this page's hub first, then a rotating fill from the others.
  *
  * The rotation matters. A fixed `.slice(0, n)` over a stably ordered list hands
  * the same n pages every internal link on the site and leaves the rest with
- * none — which is exactly what happened on three sibling sites, where six pages
- * of seventy-four held every link the rail produced.
+ * none — which is what happened on three sibling sites, where six pages of
+ * seventy-four held every link the rail produced.
  */
 export function relatedPages(page: ContentPage, all: ContentPage[], limit = 6): ContentPage[] {
   if (page.type === "legal" || page.type === "home") return []
@@ -128,8 +131,8 @@ export function relatedPages(page: ContentPage, all: ContentPage[], limit = 6): 
   return out
 }
 
-/** "home" is the root; everything else is its slug. Trailing slashes and a
- *  leading slash are accepted because links, sitemaps and redirects disagree. */
+/** "home" is the section root; everything else is its slug. A leading or
+ *  trailing slash is accepted because links, sitemaps and redirects disagree. */
 export function normaliseSlug(input: string): string {
   const s = input.trim().replace(/^\/+|\/+$/g, "").toLowerCase()
   return s === "" ? "home" : s
@@ -138,7 +141,7 @@ export function normaliseSlug(input: string): string {
 function normalise(row: ContentPage): ContentPage {
   return {
     ...row,
-    // jsonb comes back parsed, but a hand-edited row can still hold the wrong
+    // jsonb arrives parsed, but a hand-edited row can still hold the wrong
     // shape. Render nothing rather than throw inside a server component.
     faq: Array.isArray(row.faq)
       ? (row.faq as Faq[]).filter((f) => f && typeof f.q === "string" && typeof f.a === "string")

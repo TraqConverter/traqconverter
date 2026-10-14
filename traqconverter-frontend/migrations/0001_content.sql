@@ -89,7 +89,6 @@ create table content.wp_ids (
   id    bigint generated always as identity primary key,
   slug  text not null unique
 );
-alter table content.wp_ids enable row level security;
 
 -- NO LEADS TABLE. The six sibling sites are agencies that quote for work, so
 -- each carries a quote form and a leads table. This is a SaaS: a reader goes to
@@ -120,22 +119,16 @@ create table content.ai_visits (
 );
 create index ai_visits_day on content.ai_visits (day desc);
 
--- Row level security on every table. The site reads through the service role
--- from server components only; nothing here is ever queried from the browser,
--- and a draft in particular must never be readable with the anon key.
-alter table content.pages      enable row level security;
-alter table content.revisions  enable row level security;
-alter table content.settings   enable row level security;
-alter table content.redirects  enable row level security;
-alter table content.ai_visits  enable row level security;
-
--- Published pages and redirects are the only things a public role may read, and
--- only for serving the site. No policy is created for leads: with RLS on and no
--- policy, anon and authenticated get nothing, which is the intent.
-create policy pages_read_published on content.pages
-  for select to anon, authenticated using (status = 'published');
-create policy redirects_read on content.redirects
-  for select to anon, authenticated using (true);
+-- NO ROW LEVEL SECURITY, and that is a deliberate change from the first draft.
+--
+-- RLS was there because the first version of this lived in the product's own
+-- Supabase project, alongside 28 tables of customers' documents, and the
+-- publishable key needed constraining. This database holds nothing but
+-- marketing copy, nothing queries it from a browser, and the only credential
+-- is a server-side connection string. A policy layer here would guard content
+-- that is published on the open web anyway.
+--
+-- If a browser-facing client is ever added, RLS goes back on FIRST.
 
 comment on schema content is
   'Content site for onlinedoctranslator.ai. Audience: translators and agencies who certify translations.';
