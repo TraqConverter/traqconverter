@@ -99,7 +99,20 @@ export async function GET(req: Request, ctx: { params: Promise<{ route?: string[
     const perPage = Math.min(100, Math.max(1, Number(url.searchParams.get("per_page") ?? 100)))
     const page = Math.max(1, Number(url.searchParams.get("page") ?? 1))
     const slice = subset.slice((page - 1) * perPage, page * perPage)
-    const body = await Promise.all(slice.map(toWpObject))
+    const full = await Promise.all(slice.map(toWpObject))
+
+    // `_fields` is not cosmetic at this scale. listPosts asks for
+    // id,title,slug,link,modified and walks the whole site in pages of 100; an
+    // unfiltered response carries every page's complete body_html, so one
+    // inventory sync of a few hundred guides moves megabytes to populate five
+    // columns. WordPress honours the parameter, so honour it.
+    const fields = (url.searchParams.get("_fields") ?? "")
+      .split(",")
+      .map((f) => f.trim())
+      .filter(Boolean)
+    const body = fields.length
+      ? full.map((obj) => Object.fromEntries(fields.filter((f) => f in obj).map((f) => [f, obj[f]])))
+      : full
 
     // x-wp-total is not decoration: the pipeline reads it to know whether it
     // has seen the whole inventory, and refuses to trust a sync that fetched
