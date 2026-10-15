@@ -1,41 +1,13 @@
 import "server-only"
 import { cache } from "react"
 import { hasContentDb, sql } from "./client"
+import { normaliseSlug, type ContentPage, type Faq, type PageType } from "./shim-naming"
 
-export type PageType =
-  | "tool"
-  | "certify"
-  | "credential"
-  | "workflow"
-  | "practice"
-  | "question"
-  | "legal"
-  | "generic"
-  | "home"
-
-export type Faq = { q: string; a: string }
-
-export type ContentPage = {
-  slug: string
-  title: string
-  h1: string
-  meta_description: string
-  body_html: string
-  excerpt: string
-  type: PageType
-  /** Which WP REST route this page belongs to — the pipeline's view of it, kept
-   *  apart from the editorial `type` above. See migrations/0002_wp_type.sql. */
-  wp_type: "page" | "post"
-  hub_slug: string | null
-  status: "draft" | "published"
-  faq: Faq[]
-  schema_json: unknown | null
-  canonical: string
-  in_nav: boolean
-  sort: number
-  created_at: string
-  updated_at: string
-}
+// Re-exported: these are the public names of the content layer, and they stay
+// importable from here even though the pure definitions live next door so a
+// test can reach them without Next's bundler.
+export { normaliseSlug }
+export type { ContentPage, Faq, PageType }
 
 // created_at and updated_at are cast to text so the shape stays a plain string
 // everywhere. The column is a real timestamptz; only the transport is flattened.
@@ -134,13 +106,6 @@ export function relatedPages(page: ContentPage, all: ContentPage[], limit = 6): 
     out.push(candidate)
   }
   return out
-}
-
-/** "home" is the section root; everything else is its slug. A leading or
- *  trailing slash is accepted because links, sitemaps and redirects disagree. */
-export function normaliseSlug(input: string): string {
-  const s = input.trim().replace(/^\/+|\/+$/g, "").toLowerCase()
-  return s === "" ? "home" : s
 }
 
 function normalise(row: ContentPage): ContentPage {

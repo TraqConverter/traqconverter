@@ -1,7 +1,11 @@
 import "server-only"
 import { sql } from "./client"
 import { contentUrl } from "./config"
-import { normaliseSlug, type ContentPage, type PageType } from "./pages"
+import { normaliseSlug, type ContentPage } from "./pages"
+import { extractLeadingH1, slugForTitle, statusFor, typeForTitle, wpDate } from "./shim-naming"
+
+// Re-exported so the route and anything else keeps importing them from here.
+export { extractLeadingH1, slugForTitle, typeForTitle }
 
 /**
  * Enough of the WordPress REST API for SemanticWP to drive this site.
@@ -57,17 +61,6 @@ export async function slugForId(id: number): Promise<string | null> {
     select slug from content.wp_ids where id = ${id} limit 1
   `) as unknown as Array<{ slug: string }>
   return rows.length ? rows[0].slug : null
-}
-
-/**
- * WordPress sends `2026-10-15T09:14:02`, with no zone marker, in both `modified`
- * and `modified_gmt`. The queries already hand back ISO-with-Z (see the
- * `to_char` in the column lists — a bare `::text` renders a timestamptz as
- * `2026-10-15 09:14:02.41+00`, which `new Date()` rejects outright because `+00`
- * is not a valid ISO offset), so this only drops the Z.
- */
-function wpDate(value: string): string {
-  return value.replace(/Z$/, "")
 }
 
 /** The subset of a WP post object the pipeline reads. */
@@ -129,57 +122,6 @@ export async function listAllPages(opts: { wpType?: "page" | "post"; status?: "p
 }
 
 /**
- * Decide where a page the pipeline is creating belongs.
- *
- * The audience is translators and agencies who certify translations, so the
- * type is read off the subject rather than guessed: a question keeps its own
- * type so the hub rail can pair it with the page it supports.
- */
-export function typeForTitle(title: string, postType: "page" | "post"): PageType {
-  const t = title.toLowerCase()
-  if (/^(how|what|why|when|which|who|can|do|does|is|are|should|will)\b/.test(t) || t.includes("?")) {
-    return "question"
-  }
-  if (postType === "post") return "question"
-  if (/\b(cat tool|translation memory|tmx|xliff|software|management system|trados|memoq|alternative)\b/.test(t)) return "tool"
-  if (/\b(certif|accuracy statement|notaris|notariz|affidavit|sworn)\b/.test(t)) return "certify"
-  if (/\b(ata|become|credential|qualif|exam|accredit)\b/.test(t)) return "credential"
-  if (/\b(ocr|post.?edit|mtpe|quality assurance|proofread|word count|segmentation|layout)\b/.test(t)) return "workflow"
-  if (/\b(rate|price|per word|invoice|quote|client|nda|agency)\b/.test(t)) return "practice"
-  return "generic"
-}
-
-export function slugForTitle(title: string): string {
-  return normaliseSlug(
-    title
-      .toLowerCase()
-      .normalize("NFD")
-      // Fold accents rather than percent-encoding them. A sibling site served
-      // /chi-pu%C3%B2-fare-... for months: ugly to share and easy to mistype.
-      .replace(/[̀-ͯ]/g, "")
-      .replace(/['’]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      // No truncation mid-phrase. A sibling site cut slugs at ~60 characters
-      // and shipped five URLs ending in a dangling "-for" and "-in".
-      .slice(0, 110)
-      .replace(/-+$/g, ""),
-  )
-}
-
-/**
- * WordPress maps a handful of statuses onto something a reader can or cannot
- * see. Only `publish` is public. Everything else — draft, pending, private,
- * future, trash — is not, and the previous version treated every one of them as
- * a publish instruction, so a page the pipeline queued for review would have
- * gone live.
- */
-function statusFor(value: string | undefined): "published" | "draft" | null {
-  if (value === undefined) return null
-  return value === "publish" ? "published" : "draft"
-}
-
-/**
  * Create or update a page from a WP REST body.
  *
  * AN UPDATE IS A PARTIAL UPDATE. WordPress leaves a field it was not sent
@@ -216,6 +158,11 @@ export async function upsertFromWp(input: {
   }
   const slug = input.slug ? normaliseSlug(input.slug) : slugForTitle(title ?? "")
 
+  // The body's own H1 becomes the page's h1 and leaves the markup, so the
+  // template's heading is the only one on the page.
+  const lifted = input.content === undefined ? { h1: null, body: undefined } : extractLeadingH1(input.content)
+  const h1 = lifted.h1 ?? title
+
   // The editorial type follows the title, so it is recomputed only when a title
   // was actually sent. wp_type is the route and is set once, on insert.
   const type = title ? typeForTitle(title, input.postType) : null
@@ -227,8 +174,8 @@ export async function upsertFromWp(input: {
     values (
       ${slug},
       ${title ?? slug},
-      ${title ?? slug},
-      ${input.content ?? ""},
+      ${h1 ?? slug},
+      ${lifted.body ?? ""},
       ${input.excerpt ?? ""},
       ${input.metaDescription ?? ""},
       ${type ?? typeForTitle(title ?? slug, input.postType)}::content.page_type,
@@ -238,8 +185,8 @@ export async function upsertFromWp(input: {
     )
     on conflict (slug) do update set
       title            = coalesce(${title}, content.pages.title),
-      h1               = coalesce(${title}, content.pages.h1),
-      body_html        = coalesce(${input.content ?? null}, content.pages.body_html),
+      h1               = coalesce(${h1}, content.pages.h1),
+      body_html        = coalesce(${lifted.body ?? null}, content.pages.body_html),
       excerpt          = coalesce(${input.excerpt ?? null}, content.pages.excerpt),
       meta_description = coalesce(${input.metaDescription ?? null}, content.pages.meta_description),
       type             = coalesce(${type}::content.page_type, content.pages.type),
