@@ -2,9 +2,19 @@ import type { MetadataRoute } from "next"
 import { listPages } from "@/lib/content/pages"
 import { CONTENT_BASE, SITE_URL, contentUrl } from "@/lib/content/config"
 
-// The sitemap must reflect what the pipeline has published, which changes
-// through the day, so it is revalidated rather than frozen at build time.
-export const revalidate = 300
+// GENERATED PER REQUEST, not cached.
+//
+// It was `revalidate = 300`, and that did not work: a page published half an
+// hour earlier was still missing, the CDN serving a HIT at age 410 — past its
+// own window — while the sitemap listed 3 guides and the database held 4. A
+// sitemap that silently lists fewer URLs than the site serves is
+// indistinguishable from a small site, which is the exact failure the note
+// below is about, so it must not depend on a cache expiring on time.
+//
+// The cost is one query per fetch, on a route a crawler reads occasionally, and
+// the guide pages themselves already render per request.
+export const dynamic = "force-dynamic"
+export const revalidate = 0
 
 /**
  * The site had no sitemap and no robots.txt at all — /sitemap.xml and
