@@ -23,6 +23,9 @@ export type ContentPage = {
   body_html: string
   excerpt: string
   type: PageType
+  /** Which WP REST route this page belongs to — the pipeline's view of it, kept
+   *  apart from the editorial `type` above. See migrations/0002_wp_type.sql. */
+  wp_type: "page" | "post"
   hub_slug: string | null
   status: "draft" | "published"
   faq: Faq[]
@@ -54,9 +57,10 @@ export type ContentPage = {
 export const listPages = cache(async (): Promise<ContentPage[]> => {
   if (!hasContentDb()) return []
   const rows = (await sql()`
-    select slug, title, h1, meta_description, body_html, excerpt, type, hub_slug, status,
+    select slug, title, h1, meta_description, body_html, excerpt, type, wp_type, hub_slug, status,
            faq, schema_json, canonical, in_nav, sort,
-           created_at::text as created_at, updated_at::text as updated_at
+           to_char(created_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at,
+           to_char(updated_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as updated_at
     from content.pages
     where status = 'published'
     order by sort asc, title asc
@@ -68,9 +72,10 @@ export const listPages = cache(async (): Promise<ContentPage[]> => {
 export const getPage = cache(async (slug: string): Promise<ContentPage | null> => {
   if (!hasContentDb()) return null
   const rows = (await sql()`
-    select slug, title, h1, meta_description, body_html, excerpt, type, hub_slug, status,
+    select slug, title, h1, meta_description, body_html, excerpt, type, wp_type, hub_slug, status,
            faq, schema_json, canonical, in_nav, sort,
-           created_at::text as created_at, updated_at::text as updated_at
+           to_char(created_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at,
+           to_char(updated_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as updated_at
     from content.pages
     where slug = ${normaliseSlug(slug)} and status = 'published'
     limit 1

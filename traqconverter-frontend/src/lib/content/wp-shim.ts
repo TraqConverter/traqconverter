@@ -1,5 +1,6 @@
 import "server-only"
 import { sql } from "./client"
+import { contentUrl } from "./config"
 import { normaliseSlug, type ContentPage, type PageType } from "./pages"
 
 /**
@@ -58,21 +59,38 @@ export async function slugForId(id: number): Promise<string | null> {
   return rows.length ? rows[0].slug : null
 }
 
-const SITE = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.onlinedoctranslator.ai").replace(/\/$/, "")
+/**
+ * WordPress sends `2026-10-15T09:14:02`, with no zone marker, in both `modified`
+ * and `modified_gmt`. The queries already hand back ISO-with-Z (see the
+ * `to_char` in the column lists — a bare `::text` renders a timestamptz as
+ * `2026-10-15 09:14:02.41+00`, which `new Date()` rejects outright because `+00`
+ * is not a valid ISO offset), so this only drops the Z.
+ */
+function wpDate(value: string): string {
+  return value.replace(/Z$/, "")
+}
 
 /** The subset of a WP post object the pipeline reads. */
 export async function toWpObject(page: ContentPage): Promise<Record<string, unknown>> {
   const id = await idForSlug(page.slug)
+  const date = wpDate(page.created_at)
+  const modified = wpDate(page.updated_at)
   return {
     id,
-    date: page.created_at,
-    date_gmt: page.created_at,
-    modified: page.updated_at,
-    modified_gmt: page.updated_at,
+    date,
+    date_gmt: date,
+    modified,
+    modified_gmt: modified,
     slug: page.slug,
     status: page.status === "published" ? "publish" : "draft",
-    type: page.type === "question" ? "post" : "page",
-    link: page.slug === "home" ? `${SITE}/` : `${SITE}/${page.slug}`,
+    // The ROUTE the page belongs to, never re-derived from its title. See
+    // migrations/0002_wp_type.sql.
+    type: page.wp_type,
+    // The real URL. These pages live under /guides — the section has a prefix
+    // because twenty-two app routes sit at the root. Returning a root-level link
+    // would have mirrored a 404 into site_pages for every page on the site, and
+    // internal linking plans against exactly those stored URLs.
+    link: contentUrl(page.slug),
     title: { rendered: page.title, raw: page.title },
     content: { rendered: page.body_html, raw: page.body_html, protected: false },
     excerpt: { rendered: page.excerpt, raw: page.excerpt, protected: false },
@@ -82,15 +100,31 @@ export async function toWpObject(page: ContentPage): Promise<Record<string, unkn
   }
 }
 
-/** Every page INCLUDING drafts — this is the pipeline's inventory, and it has
- *  to see what it has already created whether or not it is live yet. */
-export async function listAllPages(): Promise<ContentPage[]> {
+/**
+ * The pipeline's inventory.
+ *
+ * `status` honours the filter the caller sent: `listPosts` asks for
+ * `status=publish` because `site_pages` is meant to hold real public URLs and
+ * internal linking uses those rows as link targets — mirroring a draft puts a
+ * link to a 404 in the plan. With no filter, drafts are included, because the
+ * duplicate probe has to see a page the pipeline created but has not published.
+ */
+export async function listAllPages(opts: { wpType?: "page" | "post"; status?: "publish" | "draft" } = {}): Promise<ContentPage[]> {
+  const wpType = opts.wpType ?? null
+  const status = opts.status === "publish" ? "published" : opts.status === "draft" ? "draft" : null
   return (await sql()`
-    select slug, title, h1, meta_description, body_html, excerpt, type, hub_slug, status,
+    select slug, title, h1, meta_description, body_html, excerpt, type, wp_type, hub_slug, status,
            faq, schema_json, canonical, in_nav, sort,
-           created_at::text as created_at, updated_at::text as updated_at
+           to_char(created_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at,
+           to_char(updated_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as updated_at
     from content.pages
-    order by sort asc, title asc
+    where (${wpType}::text is null or wp_type = ${wpType})
+      and (${status}::text is null or status::text = ${status})
+    -- Qualified, because a bare updated_at would resolve to the to_char alias
+    -- above: an output-column name beats a table column in ORDER BY. Sorting
+    -- ISO text happens to agree with sorting the timestamp, which is exactly why
+    -- that would survive review and then break the day the format changed.
+    order by content.pages.updated_at desc, sort asc, title asc
   `) as unknown as ContentPage[]
 }
 
@@ -133,43 +167,96 @@ export function slugForTitle(title: string): string {
   )
 }
 
+/**
+ * WordPress maps a handful of statuses onto something a reader can or cannot
+ * see. Only `publish` is public. Everything else — draft, pending, private,
+ * future, trash — is not, and the previous version treated every one of them as
+ * a publish instruction, so a page the pipeline queued for review would have
+ * gone live.
+ */
+function statusFor(value: string | undefined): "published" | "draft" | null {
+  if (value === undefined) return null
+  return value === "publish" ? "published" : "draft"
+}
+
+/**
+ * Create or update a page from a WP REST body.
+ *
+ * AN UPDATE IS A PARTIAL UPDATE. WordPress leaves a field it was not sent
+ * alone, and so must this: the optimize flow POSTs only `content` to
+ * `/pages/<id>`. The first version wrote every column on every call, with
+ * `title: input.title`, and on an update with no title the route fell back to
+ * `title || slug` — so one content-only update replaced the page's title and H1
+ * with its own slug, blanked the excerpt and the meta description, and then
+ * re-derived the editorial type from that slug. The probe caught it live: a page
+ * titled "What is a translation memory?" came back titled
+ * "probe-what-is-a-translation-memory" and retyped from question to generic.
+ * On an estate of real pages that is an SEO extinction event, applied silently,
+ * one page per optimize run.
+ *
+ * The nulls below are the whole mechanism: a field the caller omitted binds
+ * null, `coalesce` keeps what is stored, and only a value actually sent is
+ * written.
+ */
 export async function upsertFromWp(input: {
-  title: string
-  content: string
+  title?: string
+  content?: string
   excerpt?: string
   status?: string
   slug?: string
   postType: "page" | "post"
   metaDescription?: string
+  /** True when the request addressed an existing id, so the slug is known to
+   *  exist and nothing may be derived from a missing title. */
+  isUpdate: boolean
 }): Promise<{ page: ContentPage; id: number }> {
-  const slug = input.slug ? normaliseSlug(input.slug) : slugForTitle(input.title)
-  const row = {
-    slug,
-    title: input.title,
-    h1: input.title,
-    body_html: input.content,
-    excerpt: input.excerpt ?? "",
-    meta_description: input.metaDescription ?? "",
-    type: typeForTitle(input.title, input.postType),
-    status: input.status === "draft" ? ("draft" as const) : ("published" as const),
-    updated_at: new Date().toISOString(),
+  const title = input.title?.trim() || undefined
+  if (!input.isUpdate && !title && !input.slug) {
+    throw new Error("a create needs a title or a slug")
   }
+  const slug = input.slug ? normaliseSlug(input.slug) : slugForTitle(title ?? "")
+
+  // The editorial type follows the title, so it is recomputed only when a title
+  // was actually sent. wp_type is the route and is set once, on insert.
+  const type = title ? typeForTitle(title, input.postType) : null
+  const status = statusFor(input.status)
+
   const rows = (await sql()`
-    insert into content.pages (slug, title, h1, body_html, excerpt, meta_description, type, status, updated_at)
-    values (${row.slug}, ${row.title}, ${row.h1}, ${row.body_html}, ${row.excerpt},
-            ${row.meta_description}, ${row.type}, ${row.status}, ${row.updated_at})
+    insert into content.pages (slug, title, h1, body_html, excerpt, meta_description,
+                               type, wp_type, status, updated_at)
+    values (
+      ${slug},
+      ${title ?? slug},
+      ${title ?? slug},
+      ${input.content ?? ""},
+      ${input.excerpt ?? ""},
+      ${input.metaDescription ?? ""},
+      ${type ?? typeForTitle(title ?? slug, input.postType)}::content.page_type,
+      ${input.postType},
+      ${status ?? "published"}::content.page_status,
+      now()
+    )
     on conflict (slug) do update set
-      title = excluded.title,
-      h1 = excluded.h1,
-      body_html = excluded.body_html,
-      excerpt = excluded.excerpt,
-      meta_description = excluded.meta_description,
-      type = excluded.type,
-      status = excluded.status,
-      updated_at = excluded.updated_at
-    returning slug, title, h1, meta_description, body_html, excerpt, type, hub_slug, status,
+      title            = coalesce(${title}, content.pages.title),
+      h1               = coalesce(${title}, content.pages.h1),
+      body_html        = coalesce(${input.content ?? null}, content.pages.body_html),
+      excerpt          = coalesce(${input.excerpt ?? null}, content.pages.excerpt),
+      meta_description = coalesce(${input.metaDescription ?? null}, content.pages.meta_description),
+      type             = coalesce(${type}::content.page_type, content.pages.type),
+      -- The caller's route wins, unlike every other column here. The pipeline
+      -- addresses a page only through the route it filed it under, so a row left
+      -- under the other one is a row it can never read or update again — the
+      -- exact un-addressable state 0002 exists to prevent. WordPress keeps posts
+      -- and pages in separate namespaces where both slugs can coexist; here the
+      -- slug is the key, so the collision has to resolve one way, and it resolves
+      -- towards whoever is writing.
+      wp_type          = excluded.wp_type,
+      status           = coalesce(${status}::content.page_status, content.pages.status),
+      updated_at       = now()
+    returning slug, title, h1, meta_description, body_html, excerpt, type, wp_type, hub_slug, status,
               faq, schema_json, canonical, in_nav, sort,
-              created_at::text as created_at, updated_at::text as updated_at
+              to_char(created_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as created_at,
+              to_char(updated_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as updated_at
   `) as unknown as ContentPage[]
   if (!rows.length) throw new Error(`could not write ${slug}`)
   const page = rows[0]

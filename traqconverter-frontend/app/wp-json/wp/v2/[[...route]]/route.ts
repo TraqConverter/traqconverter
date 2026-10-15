@@ -72,19 +72,24 @@ export async function GET(req: Request, ctx: { params: Promise<{ route?: string[
   }
 
   if (head && POST_TYPES.has(head)) {
-    const wantPosts = head === "posts"
-    const all = await listAllPages()
-    // `question` pages are the "posts"; everything else is a "page". The
-    // pipeline asks for each separately and expects them not to overlap.
-    const mine = all.filter((p) => (p.type === "question") === wantPosts)
+    const wpType = head === "posts" ? "post" : "page"
 
-    // /pages/<id>
+    // /pages/<id> — no status filter: the pipeline reads back a draft it just
+    // created, and the partition is on wp_type so the two routes never overlap.
     if (second && /^\d+$/.test(second)) {
       const slug = await slugForId(Number(second))
-      const page = slug ? mine.find((p) => p.slug === slug) : undefined
+      const all = await listAllPages({ wpType })
+      const page = slug ? all.find((p) => p.slug === slug) : undefined
       if (!page) return notFound()
       return NextResponse.json(await toWpObject(page))
     }
+
+    // `status=publish` is what listPosts sends, because site_pages is meant to
+    // hold live URLs and internal linking plans against them. Honour it: a
+    // mirrored draft is a planned link to a 404.
+    const statusParam = url.searchParams.get("status")
+    const status = statusParam === "publish" ? "publish" : statusParam === "draft" ? "draft" : undefined
+    const mine = await listAllPages({ wpType, status })
 
     const slugParam = url.searchParams.get("slug")
     const subset = slugParam
@@ -145,8 +150,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ route?: string
   }
 
   // An update addresses an existing id; a create does not.
+  const isUpdate = Boolean(second && /^\d+$/.test(second))
   let slug: string | undefined
-  if (second && /^\d+$/.test(second)) {
+  if (isUpdate) {
     const found = await slugForId(Number(second))
     if (!found) return notFound()
     slug = found
@@ -154,8 +160,15 @@ export async function POST(req: Request, ctx: { params: Promise<{ route?: string
     slug = normaliseSlug(payload.slug)
   }
 
-  const title = asText(payload.title)
-  if (!title && !slug) {
+  // A field absent from the body stays absent all the way into the upsert,
+  // where coalesce keeps what is stored. Passing "" for an omitted field is
+  // what made a content-only update blank the title, the excerpt and the meta
+  // description — see the note on upsertFromWp.
+  const maybe = (key: string): string | undefined =>
+    key in payload && payload[key] !== null ? asText(payload[key]) : undefined
+
+  const title = maybe("title")
+  if (!isUpdate && !title && !slug) {
     return NextResponse.json(
       { code: "rest_empty_title", message: "A title or an existing id is required.", data: { status: 400 } },
       { status: 400 },
@@ -163,16 +176,17 @@ export async function POST(req: Request, ctx: { params: Promise<{ route?: string
   }
 
   const { page, id } = await upsertFromWp({
-    title: title || (slug ?? ""),
-    content: asText(payload.content),
-    excerpt: asText(payload.excerpt),
+    title,
+    content: maybe("content"),
+    excerpt: maybe("excerpt"),
     status: typeof payload.status === "string" ? payload.status : undefined,
     slug,
     postType: head === "posts" ? "post" : "page",
     metaDescription:
-      typeof payload.meta === "object" && payload.meta
+      typeof payload.meta === "object" && payload.meta && "_yoast_wpseo_metadesc" in payload.meta
         ? String((payload.meta as Record<string, unknown>)._yoast_wpseo_metadesc ?? "")
-        : "",
+        : undefined,
+    isUpdate,
   })
 
   return NextResponse.json(await toWpObject(page), { status: second ? 200 : 201, headers: { "x-wp-id": String(id) } })
