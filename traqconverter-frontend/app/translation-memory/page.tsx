@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { api, apiErrorDetail } from "@/lib/api"
+import ImportSummary, { type ImportResult } from "@/components/ImportSummary"
 import ProPaywall from "@/components/ProPaywall"
+import { blobErrorDetail, downloadFrom } from "@/lib/download"
 import { useFeature } from "@/lib/plan"
 
 type Origin = "machine" | "approved" | "manual" | "import"
@@ -27,7 +29,17 @@ type Summary = {
   origins: Record<Origin, number>
   projects: { id: string; name: string; units: number }[]
   source_words_indexed: number
+  can_transfer: boolean
 }
+
+type ExportFormat = "tmx" | "xliff" | "xliff2" | "csv"
+
+const EXPORT_FORMATS: { value: ExportFormat; label: string }[] = [
+  { value: "tmx", label: "TMX 1.4 (Trados, memoQ, Phrase)" },
+  { value: "xliff", label: "XLIFF 1.2" },
+  { value: "xliff2", label: "XLIFF 2.0" },
+  { value: "csv", label: "CSV (spreadsheet)" },
+]
 
 type Page = { items: TmEntry[]; total: number; limit: number; offset: number }
 
@@ -82,11 +94,6 @@ function formatNumber(n: number) {
   return n.toLocaleString()
 }
 
-function downloadName(disposition: string | undefined, fallback: string) {
-  const m = /filename="?([^";]+)"?/i.exec(disposition || "")
-  return m ? m[1] : fallback
-}
-
 export default function TranslationMemoryPage() {
   const [summary, setSummary] = useState<Summary | null>(null)
   const [page, setPage] = useState<Page | null>(null)
@@ -110,6 +117,12 @@ export default function TranslationMemoryPage() {
   const [adding, setAdding] = useState(false)
   const [newEntry, setNewEntry] = useState({ source_language: "it", target_language: "en-GB", source_text: "", translated_text: "" })
   const fileInput = useRef<HTMLInputElement>(null)
+  const [panel, setPanel] = useState<"export" | "import" | null>(null)
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("tmx")
+  const [exportPair, setExportPair] = useState("all")
+  const [fullLocales, setFullLocales] = useState(true)
+  const [replaceExisting, setReplaceExisting] = useState(false)
+  const [importResult, setImportResult] = useState<ImportResult | null>(null)
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -230,16 +243,17 @@ export default function TranslationMemoryPage() {
     }
   }
 
-  const importTmx = async (file: File) => {
+  const importFile = async (file: File) => {
     const form = new FormData()
     form.append("file", file)
     try {
       setBusy("import")
       setError(null)
       setNotice(null)
-      const res = await api.post<{ imported: number; skipped: number; units: number }>("/tm/import", form)
-      const { imported, skipped } = res.data
-      setNotice(`Imported ${formatNumber(imported)} entr${imported === 1 ? "y" : "ies"}${skipped ? ` (${formatNumber(skipped)} skipped)` : ""}.`)
+      setImportResult(null)
+      const res = await api.post<ImportResult>("/tm/import", form, { params: { replace: replaceExisting } })
+      setImportResult(res.data)
+      setPanel(null)
       setOffset(0)
       await refresh()
     } catch (err: unknown) {
@@ -250,30 +264,28 @@ export default function TranslationMemoryPage() {
     }
   }
 
-  const exportTmx = async () => {
-    const params: Record<string, string> = {}
-    if (activePair !== "all") {
-      const [s, t] = activePair.split("→")
+  const exportFile = async () => {
+    const params: Record<string, string | boolean> = { format: exportFormat, regions: fullLocales }
+    if (exportPair !== "all") {
+      const [s, t] = exportPair.split("→")
       params.source = s
       params.target = t
     }
     try {
       setBusy("export")
       setError(null)
-      const res = await api.get<Blob>("/tm/export", { params, responseType: "blob" })
-      const href = window.URL.createObjectURL(res.data)
-      const a = document.createElement("a")
-      a.href = href
-      a.download = downloadName(res.headers["content-disposition"], "translation-memory.tmx")
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      window.URL.revokeObjectURL(href)
+      await downloadFrom("/tm/export", params, `translation-memory.${exportFormat === "csv" ? "csv" : exportFormat === "tmx" ? "tmx" : "xlf"}`)
     } catch (err: unknown) {
-      setError(apiErrorDetail(err, "Couldn't export the translation memory."))
+      setError(await blobErrorDetail(err, "Couldn't export the translation memory."))
     } finally {
       setBusy(null)
     }
+  }
+
+  const togglePanel = (name: "export" | "import") => {
+    setPanel((p) => (p === name ? null : name))
+    if (name === "export") setExportPair(activePair)
+    setNotice(null)
   }
 
   const pairs = summary?.language_pairs || []
@@ -285,6 +297,7 @@ export default function TranslationMemoryPage() {
   const total = page?.total ?? 0
   const filtered = !!(debouncedQuery.trim() || activePair !== "all" || origin || projectId)
   const top = pairs[0]
+  const canTransfer = !!summary?.can_transfer
 
   if (gated || access === "locked") {
     return (
@@ -322,20 +335,24 @@ export default function TranslationMemoryPage() {
           <ActionButton onClick={() => { setAdding((v) => !v); setNotice(null) }} primary>
             {adding ? "Close" : "Add entry"}
           </ActionButton>
-          <ActionButton onClick={() => fileInput.current?.click()} disabled={busy === "import"}>
-            {busy === "import" ? "Importing…" : "Import TMX"}
-          </ActionButton>
-          <ActionButton onClick={exportTmx} disabled={busy === "export" || totalUnits === 0}>
-            {busy === "export" ? "Exporting…" : "Export TMX"}
-          </ActionButton>
+          {canTransfer && (
+            <>
+              <ActionButton onClick={() => togglePanel("import")} disabled={busy === "import"}>
+                {busy === "import" ? "Importing…" : "Import TMX"}
+              </ActionButton>
+              <ActionButton onClick={() => togglePanel("export")} disabled={busy === "export" || totalUnits === 0}>
+                {busy === "export" ? "Exporting…" : "Export"}
+              </ActionButton>
+            </>
+          )}
           <input
             ref={fileInput}
             type="file"
-            accept=".tmx,.xml"
+            accept=".tmx,.xlf,.xliff,.sdlxliff,.xml"
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0]
-              if (f) void importTmx(f)
+              if (f) void importFile(f)
             }}
           />
         </div>
@@ -351,6 +368,70 @@ export default function TranslationMemoryPage() {
         <div className="text-sm rounded-lg px-3 py-2 flex justify-between gap-3" style={{ background: "#dcefe9", color: "#0a5e58" }}>
           <span>{notice}</span>
           <button type="button" onClick={() => setNotice(null)} className="font-semibold">×</button>
+        </div>
+      )}
+
+      {importResult && (
+        <ImportSummary result={importResult} unit="entries" onClose={() => setImportResult(null)} />
+      )}
+
+      {panel === "export" && (
+        <div className="rounded-2xl p-4 sm:p-5 space-y-3" style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}>
+          <div className="text-[11px] font-semibold tracking-[0.14em]" style={{ color: "#9a9178" }}>EXPORT</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <FilterSelect value={exportFormat} onChange={(v) => setExportFormat(v as ExportFormat)} label="Format">
+              {EXPORT_FORMATS.map((f) => (
+                <option key={f.value} value={f.value}>{f.label}</option>
+              ))}
+            </FilterSelect>
+            <FilterSelect value={exportPair} onChange={setExportPair} label="Language pair">
+              <option value="all">All language pairs ({formatNumber(totalUnits)})</option>
+              {pairs.map((p) => (
+                <option key={`${p.source}→${p.target}`} value={`${p.source}→${p.target}`}>
+                  {pairLabel(p.source, p.target)} ({formatNumber(p.units)})
+                </option>
+              ))}
+            </FilterSelect>
+          </div>
+          <label className="flex items-start gap-2 text-sm" style={{ color: "#4a4638" }}>
+            <input type="checkbox" className="mt-1" checked={fullLocales} onChange={(e) => setFullLocales(e.target.checked)} />
+            <span>
+              Use full locale codes, such as it-IT and en-GB, where only the language is stored. Trados needs these to
+              match a TM&apos;s languages.
+            </span>
+          </label>
+          {(exportFormat === "xliff" || exportFormat === "xliff2") && exportPair === "all" && pairs.length > 1 && (
+            <p className="text-xs" style={{ color: "#8a8270" }}>
+              XLIFF holds one language pair per file, so you&apos;ll get a zip with one file for each pair.
+            </p>
+          )}
+          <div className="flex gap-2 justify-end">
+            <ActionButton onClick={() => setPanel(null)}>Cancel</ActionButton>
+            <ActionButton onClick={exportFile} primary disabled={busy === "export"}>
+              {busy === "export" ? "Exporting…" : "Download"}
+            </ActionButton>
+          </div>
+        </div>
+      )}
+
+      {panel === "import" && (
+        <div className="rounded-2xl p-4 sm:p-5 space-y-3" style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}>
+          <div className="text-[11px] font-semibold tracking-[0.14em]" style={{ color: "#9a9178" }}>IMPORT</div>
+          <p className="text-sm" style={{ color: "#4a4638" }}>
+            Upload a TMX file exported from Trados, memoQ or Phrase (up to 20 MB). You can also upload an XLIFF or
+            Trados SDLXLIFF file: only the confirmed and approved segments come in. Formatting tags are removed, and
+            imported entries count as approved.
+          </p>
+          <label className="flex items-start gap-2 text-sm" style={{ color: "#4a4638" }}>
+            <input type="checkbox" className="mt-1" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} />
+            <span>Replace translations you already have when the file has a different one. Left unticked, yours are kept.</span>
+          </label>
+          <div className="flex gap-2 justify-end">
+            <ActionButton onClick={() => setPanel(null)}>Cancel</ActionButton>
+            <ActionButton onClick={() => fileInput.current?.click()} primary disabled={busy === "import"}>
+              {busy === "import" ? "Importing…" : "Choose file"}
+            </ActionButton>
+          </div>
         </div>
       )}
 

@@ -445,9 +445,9 @@ def test_tmx_import_reads_inline_codes_and_multiple_targets():
 <tmx version="1.4"><header srclang="it-IT" creationtool="x" creationtoolversion="1" segtype="sentence" o-tmf="x" adminlang="en" datatype="plaintext"/>
 <body><tu><tuv xml:lang="en-US"><seg>Registry <bpt i="1">&lt;b&gt;</bpt>Office<ept i="1">&lt;/b&gt;</ept></seg></tuv>
 <tuv xml:lang="it-IT"><seg>Ufficio Anagrafe</seg></tuv><tuv xml:lang="de"><seg>Meldeamt</seg></tuv></tu></body></tmx>"""
-    pairs, units = tmx.parse(data)
-    assert units == 1
-    assert pairs == [
+    parsed = tmx.parse(data)
+    assert parsed.units == 1 and parsed.invalid == 0
+    assert parsed.pairs == [
         {"source_language": "it-IT", "target_language": "en-US", "source_text": "Ufficio Anagrafe", "translated_text": "Registry Office"},
         {"source_language": "it-IT", "target_language": "de", "source_text": "Ufficio Anagrafe", "translated_text": "Meldeamt"},
     ]
