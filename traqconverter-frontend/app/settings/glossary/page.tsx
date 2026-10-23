@@ -411,7 +411,7 @@ export default function GlossaryPage() {
             <span>Source language</span>
             <PanelSelect value={importSource} onChange={setImportSource} label="Source language">
               <option value="">The file&apos;s first language</option>
-              {COMMON_LANGUAGES.map((l) => (
+              {GLOSSARY_LANGUAGES.map((l) => (
                 <option key={l} value={l}>{l}</option>
               ))}
             </PanelSelect>
