@@ -137,7 +137,7 @@ def get_document(
 
     project = get_user_project_or_404(db, project_id, user)
     data, version = document_editor.current_document(db, project, user, _initial_builder(db, project, user))
-    if not _can_download(db, user):
+    if not _can_download(db, user, project):
         data = _watermark_docx(data)
     return Response(
         content=data,

@@ -14,10 +14,15 @@ export default function ExportMenu({
   busy,
   onExport,
   onShare,
+  watermarked = false,
+  shareLocked = false,
 }: {
   busy: ExportKind | null
   onExport: (kind: ExportKind) => void
   onShare: () => void
+  // The trial: exports carry a watermark and client links are off.
+  watermarked?: boolean
+  shareLocked?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -65,6 +70,11 @@ export default function ExportMenu({
           className="absolute left-0 sm:left-auto sm:right-0 mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-xl py-1 z-30"
           style={{ background: "#ffffff", border: "1px solid #e7ddc5", boxShadow: "0 8px 24px rgba(30,30,20,0.12)" }}
         >
+          {watermarked && (
+            <div className="px-3 py-2 text-[12px]" style={{ color: "#8a6a14", background: "#fbf4e0" }}>
+              Trial: every page carries a &quot;Trial&quot; watermark. Subscribe or buy a page pack for clean files.
+            </div>
+          )}
           {ITEMS.map((item) => (
             <button
               key={item.kind}
@@ -98,7 +108,7 @@ export default function ExportMenu({
               Share with client…
             </div>
             <div className="text-[12px]" style={{ color: "#8a8270" }}>
-              A download link, no attachment
+              {shareLocked ? "Not on the trial: subscribe or buy a page pack" : "A download link, no attachment"}
             </div>
           </button>
         </div>

@@ -181,9 +181,9 @@ def test_unusable_original_is_reported(client, db, storage, make_user, make_proj
 
 
 def test_delivery_pdf_needs_download_feature_and_team_access(client, db, storage, make_user, make_project, stub_export):
-    trial = make_user(plan="TRIAL")
-    project = make_project(trial)
-    assert client.get(f"/projects/{project.id}/export/delivery.pdf", headers=trial["headers"]).status_code == 403
+    ended = make_user(plan="TRIAL", expires_in_days=-1)
+    project = make_project(ended)
+    assert client.get(f"/projects/{project.id}/export/delivery.pdf", headers=ended["headers"]).status_code == 403
 
     owner = make_user()
     stranger = make_user()

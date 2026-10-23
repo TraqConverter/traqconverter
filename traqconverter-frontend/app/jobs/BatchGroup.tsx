@@ -69,7 +69,7 @@ const KIND_LABEL: Record<string, string> = {
 
 async function blobErrorDetail(err: unknown, fallback: string) {
   const e = err as { response?: { status?: number; data?: unknown } }
-  if (e?.response?.status === 403) return "Downloads need a paid plan. Upgrade in Billing."
+  if (e?.response?.status === 403) return "Downloads need a plan or a page pack. Subscribe or buy pages in Billing."
   const raw = e?.response?.data
   if (raw instanceof Blob) {
     try {

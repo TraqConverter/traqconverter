@@ -98,11 +98,11 @@ def _clean_instructions(text: str | None) -> str | None:
         raise HTTPException(status_code=422, detail=str(e))
 
 
-def _can_download(db: Session, user: User) -> bool:
-    from app.core.plan_features import PLAN_FEATURES
-    from app.dependencies.feature_guard import effective_plan
+def _can_download(db: Session, user: User, project) -> bool:
+    """Whether the editor may hold the document without the preview banner: clean downloads only."""
+    from app.services.trial_watermark import CLEAN, export_mode
 
-    return bool(PLAN_FEATURES.get(effective_plan(db, user), {}).get("download_translation"))
+    return export_mode(db, project, user) == CLEAN
 
 
 def _watermark_docx(docx_bytes: bytes) -> bytes:
@@ -113,7 +113,7 @@ def _watermark_docx(docx_bytes: bytes) -> bytes:
     doc = Document(BytesIO(docx_bytes))
     for section in doc.sections:
         p = section.header.paragraphs[0] if section.header.paragraphs else section.header.add_paragraph()
-        run = p.insert_paragraph_before().add_run("PREVIEW ONLY - upgrade your plan to download this translation")
+        run = p.insert_paragraph_before().add_run("PREVIEW - subscribe or buy a page pack for clean downloads")
         run.bold = True
         run.font.size = Pt(9)
         run.font.color.rgb = RGBColor(0xB9, 0x1C, 0x1C)
@@ -1009,16 +1009,17 @@ def get_source_url(
 
 
 
-@router.get(
-    "/{project_id}/rebuild-url",
-    dependencies=[Depends(require_feature("download_translation"))],
-)
+@router.get("/{project_id}/rebuild-url")
 def get_rebuild_url(
     project_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from app.services.trial_watermark import require_clean_export
+
     project = get_user_project_or_404(db, project_id, current_user)
+    # The stored file has no watermark, so only accounts with clean downloads get a link to it.
+    require_clean_export(db, project, current_user)
     if not project.output_file:
 
 
@@ -1039,18 +1040,16 @@ def get_rebuild_url(
     return {"url": url, "kind": kind, "filename": name}
 
 
-@router.get(
-    "/{project_id}/download",
-    dependencies=[Depends(require_feature("download_translation"))],
-)
+@router.get("/{project_id}/download")
 def download_project(
     project_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-
+    from app.services.trial_watermark import require_clean_export
 
     project = get_user_project_or_404(db, project_id, current_user)
+    require_clean_export(db, project, current_user)
 
     if project.status != ProjectStatus.COMPLETED:
         raise HTTPException(

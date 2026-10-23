@@ -36,7 +36,10 @@ def test_plans_endpoint_is_public_and_lists_every_paid_plan(client):
     # CI sets prices for Basic and Pro only.
     assert plans["PRO"]["available"] and not plans["STUDIO"]["available"] and not plans["AGENCY"]["available"]
     assert body["trial"]["credits"] == 3 and body["trial"]["days"] == 7
-    assert body["trial"]["features"]["download_translation"] is False
+    assert body["trial"]["features"]["download_translation"] is True
+    assert body["trial"]["features"]["clean_download"] is False
+    assert body["trial"]["features"]["client_sharing"] is False
+    assert body["payg"]["seats"] == 1 and body["payg"]["features"]["certifications"] is True
     assert body["contact_email"] == "info@lumaxdigital.co.uk"
     assert [p["credits"] for p in body["credit_packs"]] == [10, 25, 50]
 
@@ -259,7 +262,7 @@ def test_registration_grants_three_trial_credits(client, db):
     assert (wallet.plan_type, wallet.subscription_credits) == ("TRIAL", 3)
     grants = db.query(CreditTransaction).filter(CreditTransaction.wallet_id == wallet.id).all()
     assert [(t.type, t.amount) for t in grants] == [("TRIAL_GRANT", 3)]
-    assert PLAN_FEATURES["TRIAL"]["download_translation"] is False
+    assert PLAN_FEATURES["TRIAL"]["clean_download"] is False
 
 
 def test_trial_top_up_raises_running_trials_once(db, make_user):

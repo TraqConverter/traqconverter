@@ -7,7 +7,7 @@ import stripe
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.dependencies.feature_guard import effective_plan
+from app.dependencies.feature_guard import buys_at_subscriber_price
 from app.dependencies.tenant import can_manage_team
 from app.models.user import User
 from app.models.team import Team
@@ -15,7 +15,7 @@ from app.models.credit import CreditTransaction, CreditWallet
 from app.models.stripe_event import StripeEvent
 from app.config import settings
 from app.core.plan_features import CREDIT_PACKS as PLAN_CREDIT_PACKS
-from app.core.plan_features import PAID_PLANS, SALES_EMAIL, SUBSCRIPTION_GRANTS
+from app.core.plan_features import PAID_PLANS, SALES_EMAIL, SUBSCRIPTION_GRANTS, credit_pack_lookup_key
 from app.services.stripe_billing import (
     has_active_subscription,
     stripe_id,
@@ -366,7 +366,11 @@ CREDIT_PACKS = {
     for pack in PLAN_CREDIT_PACKS
 }
 
-PACKS_NEED_A_PLAN = "Extra page packs are for subscribers. Choose a plan first."
+# The same packs at PAYG_MARKUP, for buyers without an active subscription.
+PAYG_CREDIT_PACKS = {
+    pack["credits"]: getattr(settings, f"STRIPE_PRICE_PAYG_CREDITS_{pack['credits']}", None)
+    for pack in PLAN_CREDIT_PACKS
+}
 
 
 
@@ -378,13 +382,13 @@ def purchase_credits(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Create a Stripe Checkout Session for a fixed credit pack.
+    """Create a Stripe Checkout Session for a fixed credit pack, open to every account.
 
     `amount` must match one of the configured pack sizes (10, 25, 50).
-    Each pack maps to a Stripe price ID supplied via .env so pricing
-    is owned by the Stripe dashboard rather than the server. The
-    Stripe webhook + /sync-session credit the wallet when payment
-    succeeds — same flow as the subscription upgrade path.
+    Subscribers pay STRIPE_PRICE_CREDITS_<N>; everyone else (trial,
+    expired, cancelled) pays STRIPE_PRICE_PAYG_CREDITS_<N>, PAYG_MARKUP
+    more. The Stripe webhook + /sync-session credit the wallet when
+    payment succeeds; purchased credits never expire.
     """
 
     if amount not in CREDIT_PACKS:
@@ -396,18 +400,13 @@ def purchase_credits(
             ),
         )
 
-    # A trial can't download yet, so a pack would buy pages it can't use.
-    if effective_plan(db, current_user) not in PAID_PLANS:
-        raise HTTPException(status_code=403, detail=PACKS_NEED_A_PLAN)
-
-    price_id = CREDIT_PACKS[amount]
+    subscriber = buys_at_subscriber_price(db, current_user)
+    price_id = (CREDIT_PACKS if subscriber else PAYG_CREDIT_PACKS)[amount]
     if not price_id:
+        # Never fall back to the subscriber price for a non-subscriber.
         raise HTTPException(
-            status_code=500,
-            detail=(
-                f"Credit pack of {amount} isn't fully configured "
-                "(missing STRIPE_PRICE_CREDITS_* env var)."
-            ),
+            status_code=503,
+            detail=f"This page pack isn't available yet. Contact us at {SALES_EMAIL}.",
         )
 
     team = _resolve_user_team(db, current_user)
@@ -439,6 +438,8 @@ def purchase_credits(
             "user_id": str(current_user.id),
             "team_id": str(team.id),
             "credits": str(amount),
+            "pricing": "subscriber" if subscriber else "payg",
+            "price_lookup_key": credit_pack_lookup_key(amount, payg=not subscriber),
         },
     )
 

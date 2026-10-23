@@ -400,6 +400,9 @@ def test_setup_dry_run_creates_nothing_when_prices_exist():
             "traq_studio_monthly_eur": _price("price_studio", "prod_studio", 7900),
             "traq_agency_monthly_eur": _price("price_agency", "prod_agency", 24900),
             "traq_credits_50_eur": _price("price_c50_lk", "prod_c50", 4000),
+            "traq_payg_credits_10_eur": _price("price_pg10", "prod_c", 1500),
+            "traq_payg_credits_25_eur": _price("price_pg25", "prod_c", 3375),
+            "traq_payg_credits_50_eur": _price("price_pg50", "prod_c50", 6000),
         },
         portals=[{"id": "bpc_existing", "metadata": {"traq_portal": "subscription"}}],
     )
@@ -409,6 +412,7 @@ def test_setup_dry_run_creates_nothing_when_prices_exist():
     assert result == {
         "prices": {"BASIC": "price_basic", "PRO": "price_pro", "STUDIO": "price_studio", "AGENCY": "price_agency"},
         "credit_packs": {10: "price_c10", 25: "price_c25", 50: "price_c50_lk"},
+        "payg_credit_packs": {10: "price_pg10", 25: "price_pg25", 50: "price_pg50"},
         "portal": "bpc_existing",
         "created": [],
     }
@@ -428,7 +432,9 @@ def test_setup_dry_run_plans_missing_prices_without_creating():
     out = []
     result = stripe_setup.run(fake, ENV, dry_run=True, say=out.append)
     assert fake.writes == []
-    assert result["created"] == ["STUDIO", "AGENCY", "CREDITS_50"]
+    assert result["created"] == [
+        "STUDIO", "AGENCY", "CREDITS_50", "PAYG_CREDITS_10", "PAYG_CREDITS_25", "PAYG_CREDITS_50",
+    ]
     assert result["portal"] == stripe_setup.PLANNED
     text = "\n".join(out)
     assert "STUDIO: would create price 7900 eur/month, lookup_key traq_studio_monthly_eur" in text
@@ -436,6 +442,9 @@ def test_setup_dry_run_plans_missing_prices_without_creating():
     assert "STUDIO: would create product" not in text
     assert "STRIPE_PRICE_CREDITS_50: would create product 'OnlineDocTranslator – 50 pages'" in text
     assert "STRIPE_PRICE_CREDITS_50: would create one-time price 4000 eur, lookup_key traq_credits_50_eur" in text
+    # The pay-as-you-go price goes on the pack's existing product; the 50 pack's is planned once.
+    assert "STRIPE_PRICE_PAYG_CREDITS_50: would create product" not in text
+    assert "STRIPE_PRICE_PAYG_CREDITS_50: would create one-time price 6000 eur, lookup_key traq_payg_credits_50_eur" in text
 
 
 def test_portal_allows_plan_switches_but_never_quantity_changes():
@@ -457,8 +466,10 @@ def test_setup_creates_missing_prices_and_the_portal():
     fake = FakeStripe(prices=EXISTING, products=[{"id": "prod_studio", "metadata": {"plan_code": "STUDIO"}}])
     stripe_setup.run(fake, ENV, dry_run=False, say=lambda s: None)
     kinds = [w[0] for w in fake.writes]
-    # STUDIO price, AGENCY product + price, portal, then the 50-credit pack (product + price).
-    assert kinds == ["price", "prod", "price", "bpc", "prod", "price"]
+    # STUDIO price, AGENCY product + price, portal, the 50-credit pack (product + price), three PAYG prices.
+    assert kinds == ["price", "prod", "price", "bpc", "prod", "price", "price", "price", "price"]
+    payg = [w[2] for w in fake.writes[-3:]]
+    assert [(p["product"], p["unit_amount"]) for p in payg] == [("prod_c", 1500), ("prod_c", 3375), ("prod_new_5", 6000)]
     studio_price = fake.writes[0][2]
     assert (studio_price["product"], studio_price["unit_amount"], studio_price["currency"]) == ("prod_studio", 7900, "eur")
     assert studio_price["lookup_key"] == "traq_studio_monthly_eur"
@@ -517,11 +528,18 @@ def test_setup_creates_the_three_credit_packs():
         (1000, "traq_credits_10_eur"),
         (2250, "traq_credits_25_eur"),
         (4000, "traq_credits_50_eur"),
+        (1500, "traq_payg_credits_10_eur"),
+        (3375, "traq_payg_credits_25_eur"),
+        (6000, "traq_payg_credits_50_eur"),
     ]
+    # Both prices of a pack sit on the one product.
+    assert [p["product"] for p in prices[:3]] == [p["product"] for p in prices[3:]]
     for p in prices:
         assert p["currency"] == "eur" and p["tax_behavior"] == "exclusive"
         assert "recurring" not in p
-    assert result["created"][-3:] == ["CREDITS_10", "CREDITS_25", "CREDITS_50"]
+    assert result["created"][-6:] == [
+        "CREDITS_10", "CREDITS_25", "CREDITS_50", "PAYG_CREDITS_10", "PAYG_CREDITS_25", "PAYG_CREDITS_50",
+    ]
     text = "\n".join(out)
     for credits, price_id in result["credit_packs"].items():
         assert f"STRIPE_PRICE_CREDITS_{credits}={price_id}" in text

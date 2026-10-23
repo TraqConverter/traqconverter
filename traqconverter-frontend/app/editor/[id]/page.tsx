@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { api, apiErrorDetail, fetchObjectUrl } from "@/lib/api"
 import LearningPanel from "@/components/learning/LearningPanel"
-import { useFeature } from "@/lib/plan"
+import { useFeature, useWallet } from "@/lib/plan"
 import { stageText } from "@/lib/jobProgress"
 import { deletionNotice } from "@/lib/retention"
 import { TARGET_LANGUAGES } from "@/lib/languages"
@@ -176,6 +176,8 @@ export default function EditorPage() {
 
   const [busy, setBusy] = useState<string | null>(null)
   const certLocked = useFeature("certifications") === "locked"
+  const exportsWatermarked = useWallet()?.tier === "TRIAL"
+  const shareLocked = useFeature("client_sharing") === "locked"
   const [showStatusMenu, setShowStatusMenu] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
   const [payment, setPayment] = useState<ProjectPayment | null>(null)
@@ -613,7 +615,7 @@ export default function EditorPage() {
       if (err?.response?.status === 403) {
         setError(
           detail ||
-            "Downloads are locked on the trial. Subscribe to Basic or Pro to export."
+            "Downloads need a plan or a page pack. Subscribe, or buy pages in Billing, to export."
         )
       } else if (err?.response?.status === 400) {
         setError(
@@ -1044,7 +1046,16 @@ export default function EditorPage() {
           onExport={(kind) =>
             kind === "delivery" ? void beforeDelivery("delivery", () => void exportFile(kind)) : void exportFile(kind)
           }
-          onShare={() => void beforeDelivery("share", () => setShareOpen(true))}
+          watermarked={exportsWatermarked}
+          shareLocked={shareLocked}
+          onShare={() => {
+            if (shareLocked) {
+              setError(null)
+              setNotice("Client links aren't part of the trial. Subscribe, or buy a page pack in Billing, to share with clients.")
+              return
+            }
+            void beforeDelivery("share", () => setShareOpen(true))
+          }}
         />
         {canCertify && (
           <button

@@ -39,6 +39,8 @@ type Wallet = {
   has_subscription?: boolean
   // Only the team owner and admins may open the portal or change plan.
   can_manage_billing?: boolean
+  // Which pack price a checkout started now would charge.
+  pack_pricing?: "subscriber" | "payg"
 }
 
 type Transaction = {
@@ -169,12 +171,13 @@ export default function BillingPage() {
   )
   const onTrial = tier === "TRIAL"
   const trialExpired = tier === "EXPIRED"
-  const currentPlan = (wallet?.plan_type || "TRIAL").toUpperCase()
+  const onPayg = tier === "PAYG"
+  const currentPlan = onPayg ? "PAY AS YOU GO" : (wallet?.plan_type || "TRIAL").toUpperCase()
   const trialDaysLeft = wallet?.trial_days_left ?? null
   const subscribed = !!wallet?.has_subscription
   const canManage = wallet?.can_manage_billing ?? true
-  // Matches the API: packs need an active paid plan (admins resolve to one).
-  const canBuyPacks = isPaidTier(tier)
+  // Matches the API: anyone can buy packs; without an active plan they cost more.
+  const paygPricing = wallet?.pack_pricing ? wallet.pack_pricing === "payg" : !isPaidTier(tier)
 
   if (loading) {
     return (
@@ -216,8 +219,8 @@ export default function BillingPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <StatusPill
-            active={planActive}
-            label={`${currentPlan} · ${planActive ? "Active" : onTrial ? "Trial" : "Inactive"}`}
+            active={planActive || onPayg}
+            label={onPayg ? currentPlan : `${currentPlan} · ${planActive ? "Active" : onTrial ? "Trial" : "Inactive"}`}
           />
           {subscribed && canManage && (
             <button
@@ -268,7 +271,8 @@ export default function BillingPage() {
               {catalog
                 ? `Your trial includes ${pagesLabel(catalog.trial.credits)} to test with. `
                 : ""}
-              Downloading the result is locked until you subscribe to a plan.
+              Downloads work, with a &quot;Trial&quot; watermark on every page. Subscribe, or buy a page
+              pack, for clean files and client links.
             </p>
           </div>
           <button
@@ -299,8 +303,8 @@ export default function BillingPage() {
               Your trial has ended
             </div>
             <p className="text-sm" style={{ color: "#7a2f24" }}>
-              Subscribe to a plan to continue translating and download your
-              work.
+              Subscribe to a plan, or buy a page pack and pay as you go, to
+              continue translating and download your work.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -327,6 +331,25 @@ export default function BillingPage() {
               Subscribe to Pro
             </button>
           </div>
+        </div>
+      )}
+
+      {onPayg && (
+        <div
+          className="rounded-2xl p-5"
+          style={{ background: "#e6f2ef", border: "1px solid #bfdcd6", color: "#1f2a2e" }}
+        >
+          <div className="text-[11px] font-semibold tracking-[0.18em] mb-1" style={{ color: "#0a7870" }}>
+            PAY AS YOU GO
+          </div>
+          <div className="text-[15px] font-semibold mb-0.5">
+            {pagesLabel(wallet?.purchased_credits ?? 0)} left from your page packs
+          </div>
+          <p className="text-sm" style={{ color: "#3d4a4e" }}>
+            Clean downloads, client links and certifications for one person, for as long as you have
+            purchased pages. Pages you&apos;ve paid for with a pack stay downloadable after you run out.
+            A subscription costs less per page.
+          </p>
         </div>
       )}
 
@@ -409,9 +432,9 @@ export default function BillingPage() {
           eyebrow="ONE-TIME"
           title="Buy more credits"
           subtitle={
-            canBuyPacks
-              ? "Top up at any time — purchased credits stack on top of your subscription and never expire. Bigger packs cost less per page."
-              : "Credit packs top up an active plan. Purchased credits never expire, and bigger packs cost less per page."
+            paygPricing
+              ? "No subscription needed: purchased credits never expire and give you pay-as-you-go access (clean downloads, client links, certifications) while you have them. Subscribers pay less for the same packs."
+              : "Top up at any time. Purchased credits stack on top of your subscription and never expire. Bigger packs cost less per page."
           }
         />
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
@@ -420,7 +443,7 @@ export default function BillingPage() {
               key={pack.credits}
               pack={pack}
               featured={i === 1}
-              locked={!canBuyPacks}
+              payg={paygPricing}
               busy={busy === `credits:${pack.credits}`}
               disabled={busy !== null}
               onBuy={() => handleBuyCredits(pack.credits)}
@@ -730,7 +753,7 @@ function PlanCard({
 function CreditPackCard({
   pack,
   featured,
-  locked,
+  payg,
   busy,
   disabled,
   onBuy,
@@ -738,12 +761,14 @@ function CreditPackCard({
 }: {
   pack: CreditPack
   featured: boolean
-  locked: boolean
+  // True: the buyer has no active subscription and pays the pay-as-you-go price.
+  payg: boolean
   busy: boolean
   disabled: boolean
   onBuy: () => void
   onSeePlans: () => void
 }) {
+  const locked = payg ? !pack.payg_available : !pack.available
   const highlight = featured && !locked
   return (
     <div
@@ -782,32 +807,30 @@ function CreditPackCard({
         </div>
         <div className="flex items-baseline flex-wrap gap-x-2 mb-1">
           <span className="text-[18px] font-semibold tabular-nums" style={{ color: "#1f2a2e" }}>
-            {euroCents(pack.price_cents)}
+            {euroCents(payg ? pack.payg_price_cents : pack.price_cents)}
           </span>
           <span className="text-sm tabular-nums" style={{ color: "#8a8270" }}>
-            {packPerPage(pack)}
+            {packPerPage(pack, payg)}
           </span>
         </div>
-        <div className="text-sm mb-5" style={{ color: "#4a4638" }}>
+        <div className="text-sm mb-3" style={{ color: "#4a4638" }}>
           {pack.note}
         </div>
-      </div>
-      {locked ? (
-        <>
-          <div className="text-sm font-medium mb-3 mt-auto" style={{ color: "#6b6558" }}>
-            Available once you subscribe to a plan
-          </div>
+        {payg && (
           <button
             type="button"
             onClick={onSeePlans}
-            className="w-full py-2.5 rounded-full text-sm font-semibold transition"
-            style={{ background: "#ffffff", color: "#1f2a2e", border: "1px solid #e7ddc5" }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "#f3ecdb")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "#ffffff")}
+            className="text-sm font-semibold mb-4 underline underline-offset-2 text-left"
+            style={{ color: "#0a7870" }}
           >
-            See the plans
+            Subscribe and pay {euroCents(Math.round(pack.subscriber_saving_eur * 100))} less
           </button>
-        </>
+        )}
+      </div>
+      {locked ? (
+        <div className="text-sm font-medium mt-auto" style={{ color: "#6b6558" }}>
+          Not on sale yet. Contact us to buy this pack.
+        </div>
       ) : (
       <button
         type="button"

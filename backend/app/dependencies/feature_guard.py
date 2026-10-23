@@ -23,7 +23,7 @@ def _resolve_team_id(db: Session, user: User):
 
 
 def _wallet_plan(db: Session, team_id) -> str:
-    """The plan the team's wallet grants: TRIAL, a paid plan, or EXPIRED."""
+    """The plan the team's wallet grants: a paid plan, PAYG, TRIAL, or EXPIRED."""
     if team_id is None:
         return "EXPIRED"
 
@@ -33,6 +33,14 @@ def _wallet_plan(db: Session, team_id) -> str:
     if not wallet:
         return "EXPIRED"
 
+    plan = _subscription_plan(wallet)
+    # Without an active subscription, purchased credits left buy pay-as-you-go access.
+    if plan not in PAID_PLANS and (wallet.purchased_credits or 0) > 0:
+        return "PAYG"
+    return plan
+
+
+def _subscription_plan(wallet: CreditWallet) -> str:
     plan = (wallet.plan_type or "TRIAL").upper()
     status = (wallet.subscription_status or "").upper()
 
@@ -57,7 +65,7 @@ def effective_plan(db: Session, user: User) -> str:
     and downgrades a TRIAL whose `subscription_expires_at` has passed to
     "EXPIRED" so feature checks fail closed.
 
-    Returns one of: TRIAL / BASIC / PRO / STUDIO / AGENCY / EXPIRED.
+    Returns one of: TRIAL / BASIC / PRO / STUDIO / AGENCY / PAYG / EXPIRED.
 
     Special-case: users with role SUPERUSER / SUPER_ADMIN / ADMIN are
     always treated as PRO regardless of their wallet state, so the
@@ -68,6 +76,11 @@ def effective_plan(db: Session, user: User) -> str:
         return "PRO"
 
     return _wallet_plan(db, _resolve_team_id(db, user))
+
+
+def buys_at_subscriber_price(db: Session, user: User) -> bool:
+    """Decided at checkout: an active subscription (or a staff account) pays the subscriber pack price."""
+    return effective_plan(db, user) in PAID_PLANS
 
 
 def team_plan(db: Session, team_id) -> str:
@@ -143,6 +156,8 @@ def require_any_feature(*feature_names: str):
 
 FEATURE_LABELS = {
     "download_translation": "Downloading translations",
+    "clean_download": "Downloads without the trial watermark",
+    "client_sharing": "Sharing with clients",
     "team_collaboration": "Team collaboration",
     "terminology_memory": "Translation memory",
     "glossaries": "The glossary",

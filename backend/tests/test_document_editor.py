@@ -176,9 +176,9 @@ def test_trial_sees_watermark_but_stored_document_stays_clean(client, db, storag
     owner, project = project_with_doc(plan="TRIAL")
     data, _ = _get(client, owner, project)
     header = lambda d: " ".join(p.text for s in Document(io.BytesIO(d)).sections for p in s.header.paragraphs)
-    assert "PREVIEW ONLY" in header(data)
+    assert "PREVIEW" in header(data)
     db.refresh(project)
-    assert "PREVIEW ONLY" not in header(storage["objects"][project.authored_docx_s3_key])
+    assert "PREVIEW" not in header(storage["objects"][project.authored_docx_s3_key])
 
 
 class _FakeClaude:

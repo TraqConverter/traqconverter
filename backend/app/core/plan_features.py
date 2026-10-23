@@ -2,10 +2,12 @@
 
 Tiers
 -----
-TRIAL  — Given automatically on registration. 7 days, 3 credits, can run
-         test translations but cannot download the result. No Translation
-         Memory, Glossary, Templates, Media or Certifications, in the UI or
-         in background work.
+TRIAL  — Given automatically on registration. 7 days, 3 credits. Downloads
+         carry a "Trial" watermark on every page; no client links. No
+         Translation Memory, Glossary, Templates, Media or Certifications,
+         in the UI or in background work.
+PAYG   — Computed, never stored: no active subscription but purchased
+         credits left. Basic plus Certifications, clean downloads, 1 seat.
 BASIC  — €19 / 19 credits / month. Full download access, team
          collaboration, templates and the media library, but no Translation Memory, Glossary
          or Certifications library.
@@ -27,6 +29,8 @@ TRIAL_CREDITS = 3
 
 _PRO_FEATURES = {
     "download_translation": True,
+    "clean_download": True,
+    "client_sharing": True,
     "team_collaboration": True,
     "terminology_memory": True,
     "glossaries": True,
@@ -38,7 +42,9 @@ _PRO_FEATURES = {
 
 PLAN_FEATURES = {
     "TRIAL": {
-        "download_translation": False,
+        "download_translation": True,
+        "clean_download": False,
+        "client_sharing": False,
         "team_collaboration": False,
         "terminology_memory": False,
         "glossaries": False,
@@ -49,6 +55,8 @@ PLAN_FEATURES = {
     },
     "BASIC": {
         "download_translation": True,
+        "clean_download": True,
+        "client_sharing": True,
         "team_collaboration": True,
         "terminology_memory": False,
         "glossaries": False,
@@ -61,6 +69,7 @@ PLAN_FEATURES = {
     "STUDIO": dict(_PRO_FEATURES),
     "AGENCY": dict(_PRO_FEATURES),
 }
+PLAN_FEATURES["PAYG"] = {**PLAN_FEATURES["BASIC"], "certifications": True}
 
 # Paid plans, cheapest first. price_eur and credits are what customers see; Stripe must match.
 PLANS = [
@@ -112,7 +121,7 @@ def price_lookup_key(plan: str) -> str:
     return f"traq_{plan.lower()}_monthly_eur"
 
 # Team size including the owner.
-SEAT_LIMITS = {"TRIAL": 1, **{p["code"]: p["seats"] for p in PLANS}}
+SEAT_LIMITS = {"TRIAL": 1, "PAYG": 1, **{p["code"]: p["seats"] for p in PLANS}}
 
 # Higher is claimed first by the job queue.
 JOB_PRIORITY = {p["code"]: 1 for p in PLANS if p["priority"]}
@@ -126,22 +135,45 @@ TRIAL_PLAN = {
     "seats": SEAT_LIMITS["TRIAL"],
 }
 
-# Sold to active subscribers only. price_cents is what Stripe's unit_amount must be.
+PAYG_PLAN = {
+    "code": "PAYG",
+    "name": "Pay as you go",
+    "seats": SEAT_LIMITS["PAYG"],
+}
+
+# price_cents is the subscriber price, and what that Stripe price's unit_amount must be.
 CREDIT_PACKS = [
     {"credits": 10, "price_cents": 1000, "name": "Starter pack", "note": "Top up a small project"},
     {"credits": 25, "price_cents": 2250, "name": "Standard pack", "note": "For a few documents"},
     {"credits": 50, "price_cents": 4000, "name": "Scale pack", "note": "For a busy month"},
 ]
 
+# Buyers without an active subscription pay this multiple of the subscriber price.
+PAYG_MARKUP = 1.5
+
+
+def payg_price_cents(pack: dict) -> int:
+    return round(pack["price_cents"] * PAYG_MARKUP)
+
+
+def credit_pack_lookup_key(credits: int, payg: bool = False) -> str:
+    """The lookup_key scripts/stripe_setup.py gives a pack's one-time EUR price."""
+    return f"traq_payg_credits_{credits}_eur" if payg else f"traq_credits_{credits}_eur"
+
 
 def credit_pack_prices(pack: dict) -> dict:
-    """Euro price, price per page, and the per-page saving against the smallest pack."""
+    """Subscriber and pay-as-you-go prices, per page, and the per-page saving against the smallest pack."""
     base = CREDIT_PACKS[0]["price_cents"] / CREDIT_PACKS[0]["credits"]
     per_page = pack["price_cents"] / pack["credits"]
+    payg = payg_price_cents(pack)
     return {
         "price_eur": pack["price_cents"] / 100,
         "price_per_page_eur": round(per_page / 100, 2),
         "save_percent": round((1 - per_page / base) * 100),
+        "payg_price_cents": payg,
+        "payg_price_eur": payg / 100,
+        "payg_price_per_page_eur": round(payg / pack["credits"] / 100, 2),
+        "subscriber_saving_eur": (payg - pack["price_cents"]) / 100,
     }
 
 

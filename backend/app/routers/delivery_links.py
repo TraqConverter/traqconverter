@@ -92,7 +92,7 @@ def _protected_amount(db: Session, project: TranslationProject, data: _CreatePay
 @router.post(
     "/{project_id}/delivery-links",
     dependencies=[
-        Depends(require_feature("download_translation")),
+        Depends(require_feature("client_sharing")),
         Depends(user_rate_limit("delivery_link_create", 30, 3600)),
     ],
 )
