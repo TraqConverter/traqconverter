@@ -28,16 +28,20 @@ export default function LegalPage({
   title,
   intro,
   updated = LAST_UPDATED,
+  eyebrow = "LEGAL",
+  actions,
   children,
 }: {
   title: string
   intro?: ReactNode
   updated?: string
+  eyebrow?: string
+  actions?: ReactNode
   children: ReactNode
 }) {
   return (
     <div style={{ background: CREAM, color: TEXT, minHeight: "100vh" }} className="flex flex-col">
-      <header style={{ background: CREAM, borderBottom: `1px solid ${BORDER}` }}>
+      <header className="print:hidden" style={{ background: CREAM, borderBottom: `1px solid ${BORDER}` }}>
         <div className="max-w-[1200px] mx-auto flex items-center justify-between gap-3" style={{ padding: "14px 24px" }}>
           <Link href="/" className="flex items-center gap-3" aria-label="OnlineDocTranslator home">
             <BrandMark size={36} />
@@ -62,9 +66,9 @@ export default function LegalPage({
         </div>
       </header>
 
-      <main className="flex-1" style={{ padding: "48px 20px 72px" }}>
+      <main className="flex-1 print:!p-0" style={{ padding: "48px 20px 72px" }}>
         <article className="max-w-[760px] mx-auto">
-          <nav className="flex flex-wrap gap-2 mb-8" aria-label="Legal documents">
+          <nav className="flex flex-wrap gap-2 mb-8 print:hidden" aria-label="Legal documents">
             {LEGAL_LINKS.map(([label, href]) => (
               <Link
                 key={href}
@@ -85,7 +89,7 @@ export default function LegalPage({
           </nav>
 
           <div style={{ fontSize: 11, letterSpacing: "0.18em", color: TEAL, fontWeight: 600, marginBottom: 10 }}>
-            LEGAL
+            {eyebrow}
           </div>
           <h1
             className="text-[34px] sm:text-[42px]"
@@ -94,6 +98,7 @@ export default function LegalPage({
             {title}
           </h1>
           <div style={{ fontSize: 13, color: SUBTLE, marginBottom: 28 }}>Last updated: {updated}</div>
+          {actions && <div className="mb-7 print:hidden">{actions}</div>}
           {intro && (
             <div style={{ fontSize: 17, lineHeight: 1.6, color: MUTED, marginBottom: 12 }}>{intro}</div>
           )}
@@ -103,7 +108,7 @@ export default function LegalPage({
         </article>
       </main>
 
-      <footer style={{ borderTop: `1px solid ${BORDER}`, background: CREAM_DARK, padding: "22px 20px" }}>
+      <footer className="print:hidden" style={{ borderTop: `1px solid ${BORDER}`, background: CREAM_DARK, padding: "22px 20px" }}>
         <div className="max-w-[1200px] mx-auto">
           <CompanyLine />
         </div>

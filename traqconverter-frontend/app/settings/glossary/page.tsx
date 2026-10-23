@@ -6,6 +6,7 @@ import ImportSummary, { type ImportResult } from "@/components/ImportSummary"
 import ProPaywall from "@/components/ProPaywall"
 import { blobErrorDetail, downloadFrom } from "@/lib/download"
 import { useFeature } from "@/lib/plan"
+import { BASE_LANGUAGES } from "@/lib/languages"
 
 type Term = {
   id: string
@@ -17,40 +18,19 @@ type Term = {
   usage_count: number
 }
 
-const COMMON_LANGUAGES = [
-  "English",
-  "Spanish",
-  "French",
-  "German",
-  "Italian",
-  "Portuguese",
-  "Dutch",
-  "Polish",
-  "Chinese",
-  "Japanese",
-  "Arabic",
-  "Swedish",
-]
+// Terms store the language by English name ("Italian"), as they always have.
+const GLOSSARY_LANGUAGES = BASE_LANGUAGES.map((l) => l.name)
 
 function toLangCode(raw?: string) {
   if (!raw) return "—"
   const s = raw.trim()
-  if (s.length <= 5 && /^[a-z]/i.test(s)) return s.toLowerCase()
-  const map: Record<string, string> = {
-    english: "en",
-    spanish: "es",
-    french: "fr",
-    german: "de",
-    italian: "it",
-    portuguese: "pt",
-    dutch: "nl",
-    polish: "pl",
-    chinese: "zh",
-    japanese: "ja",
-    arabic: "ar",
-    swedish: "sv",
-  }
-  return map[s.toLowerCase()] || s.slice(0, 2).toLowerCase()
+  const bare = (n: string) => n.replace(/\s*\(.*\)$/, "").toLowerCase()
+  const match =
+    BASE_LANGUAGES.find((l) => l.name.toLowerCase() === s.toLowerCase()) ??
+    BASE_LANGUAGES.find((l) => bare(l.name) === bare(s))
+  if (match) return match.code
+  if (s.length <= 6 && /^[a-z]{2,3}([-_][a-z0-9]{2,4})?$/i.test(s)) return s.toLowerCase()
+  return s.slice(0, 2).toLowerCase()
 }
 
 export default function GlossaryPage() {
@@ -923,7 +903,8 @@ function LangSelect({
       className="bg-transparent outline-none text-sm w-full"
       style={{ color: "#1f2a2e" }}
     >
-      {COMMON_LANGUAGES.map((l) => (
+      {!GLOSSARY_LANGUAGES.includes(value) && value && <option value={value}>{value}</option>}
+      {GLOSSARY_LANGUAGES.map((l) => (
         <option key={l} value={l}>
           {l}
         </option>

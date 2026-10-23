@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import date
 
+from app.services import tm_keys
+
 CERT_LANGS = ("en", "it", "es", "fr", "de", "pt")
 
 # Names of the languages the app translates between, as written in each certification language.
@@ -44,6 +46,45 @@ _NAMES: dict[str, tuple[str, str, str, str, str, str]] = {
     "fa": ("Persian", "persiano", "persa", "persan", "Persisch", "persa"),
     "ur": ("Urdu", "urdu", "urdu", "ourdou", "Urdu", "urdu"),
     "bn": ("Bengali", "bengalese", "bengalí", "bengali", "Bengalisch", "bengali"),
+    "lt": ("Lithuanian", "lituano", "lituano", "lituanien", "Litauisch", "lituano"),
+    "lv": ("Latvian", "lettone", "letón", "letton", "Lettisch", "letão"),
+    "et": ("Estonian", "estone", "estonio", "estonien", "Estnisch", "estónio"),
+    "bs": ("Bosnian", "bosniaco", "bosnio", "bosnien", "Bosnisch", "bósnio"),
+    "mk": ("Macedonian", "macedone", "macedonio", "macédonien", "Mazedonisch", "macedónio"),
+    "is": ("Icelandic", "islandese", "islandés", "islandais", "Isländisch", "islandês"),
+    "mt": ("Maltese", "maltese", "maltés", "maltais", "Maltesisch", "maltês"),
+    "ca": ("Catalan", "catalano", "catalán", "catalan", "Katalanisch", "catalão"),
+    "gl": ("Galician", "galiziano", "gallego", "galicien", "Galicisch", "galego"),
+    "eu": ("Basque", "basco", "euskera", "basque", "Baskisch", "basco"),
+    "ka": ("Georgian", "georgiano", "georgiano", "géorgien", "Georgisch", "georgiano"),
+    "hy": ("Armenian", "armeno", "armenio", "arménien", "Armenisch", "arménio"),
+    "az": ("Azerbaijani", "azero", "azerbaiyano", "azerbaïdjanais", "Aserbaidschanisch", "azerbaijano"),
+    "kk": ("Kazakh", "kazako", "kazajo", "kazakh", "Kasachisch", "cazaque"),
+    "uz": ("Uzbek", "uzbeko", "uzbeko", "ouzbek", "Usbekisch", "usbeque"),
+    "mn": ("Mongolian", "mongolo", "mongol", "mongol", "Mongolisch", "mongol"),
+    "prs": ("Dari", "dari", "darí", "dari", "Dari", "dari"),
+    "ps": ("Pashto", "pashto", "pastún", "pachto", "Paschtu", "pastó"),
+    "ku": ("Kurdish", "curdo", "kurdo", "kurde", "Kurdisch", "curdo"),
+    "ckb": ("Sorani Kurdish", "curdo sorani", "kurdo sorani", "kurde sorani", "Sorani-Kurdisch", "curdo sorani"),
+    "pa": ("Punjabi", "punjabi", "panyabí", "pendjabi", "Panjabi", "punjabi"),
+    "gu": ("Gujarati", "gujarati", "guyaratí", "goudjarati", "Gujarati", "guzerate"),
+    "ta": ("Tamil", "tamil", "tamil", "tamoul", "Tamil", "tâmil"),
+    "ne": ("Nepali", "nepalese", "nepalí", "népalais", "Nepali", "nepalês"),
+    "si": ("Sinhala", "singalese", "cingalés", "cingalais", "Singhalesisch", "cingalês"),
+    "ms": ("Malay", "malese", "malayo", "malais", "Malaiisch", "malaio"),
+    "fil": ("Filipino", "filippino", "filipino", "filipino", "Filipino", "filipino"),
+    "tl": ("Tagalog", "tagalog", "tagalo", "tagalog", "Tagalog", "tagalo"),
+    "my": ("Burmese", "birmano", "birmano", "birman", "Birmanisch", "birmanês"),
+    "km": ("Khmer", "khmer", "jemer", "khmer", "Khmer", "khmer"),
+    "sw": ("Swahili", "swahili", "suajili", "swahili", "Swahili", "suaíli"),
+    "am": ("Amharic", "amarico", "amárico", "amharique", "Amharisch", "amárico"),
+    "ti": ("Tigrinya", "tigrino", "tigriña", "tigrigna", "Tigrinya", "tigrínia"),
+    "so": ("Somali", "somalo", "somalí", "somali", "Somali", "somali"),
+    "af": ("Afrikaans", "afrikaans", "afrikáans", "afrikaans", "Afrikaans", "africâner"),
+    "yo": ("Yoruba", "yoruba", "yoruba", "yoruba", "Yoruba", "iorubá"),
+    "ig": ("Igbo", "igbo", "igbo", "igbo", "Igbo", "igbo"),
+    "ha": ("Hausa", "hausa", "hausa", "haoussa", "Hausa", "hauçá"),
+    "ht": ("Haitian Creole", "creolo haitiano", "criollo haitiano", "créole haïtien", "Haitianisch", "crioulo haitiano"),
 }
 
 _MONTHS = {
@@ -151,6 +192,10 @@ def language_code(value: str | None) -> str:
     base = raw.split("-")[0].split("_")[0].lower()
     if base in _NAMES:
         return base
+    # Names with a qualifier ("Kurdish (Sorani)") and other spellings ("Farsi") before the bare English name.
+    alias = tm_keys.source_lang(raw)
+    if alias in _NAMES:
+        return alias
     name = raw.split("(")[0].strip().lower()
     return _BY_ENGLISH_NAME.get(name, "")
 

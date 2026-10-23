@@ -10,7 +10,7 @@ from typing import Iterable, Optional
 ORIGINS = ("machine", "approved", "manual", "import")
 MAX_SOURCE_CHARS = 1500
 
-_NAMES = {
+NAME_CODES = {
     "english": "en", "english (uk)": "en-GB", "british english": "en-GB", "english (us)": "en-US",
     "american english": "en-US", "italian": "it", "italiano": "it", "german": "de", "deutsch": "de",
     "french": "fr", "français": "fr", "francais": "fr", "spanish": "es", "español": "es", "espanol": "es",
@@ -22,8 +22,18 @@ _NAMES = {
     "hindi": "hi", "thai": "th", "albanian": "sq", "bulgarian": "bg", "croatian": "hr", "serbian": "sr",
     "slovak": "sk", "slovenian": "sl", "lithuanian": "lt", "latvian": "lv", "estonian": "et",
     "catalan": "ca", "persian": "fa", "farsi": "fa", "urdu": "ur", "bengali": "bn", "punjabi": "pa",
-    "tagalog": "tl", "filipino": "fil", "malay": "ms", "inglese": "en", "tedesco": "de", "francese": "fr",
+    "tagalog": "fil", "filipino": "fil", "malay": "ms", "inglese": "en", "tedesco": "de", "francese": "fr",
     "spagnolo": "es", "portoghese": "pt",
+    "persian (farsi)": "fa", "dari": "prs", "dari persian": "prs", "pashto": "ps", "pashtu": "ps",
+    "kurdish": "ku", "kurmanji": "ku", "kurdish (kurmanji)": "ku", "northern kurdish": "ku",
+    "sorani": "ckb", "kurdish (sorani)": "ckb", "central kurdish": "ckb", "sorani kurdish": "ckb",
+    "bosnian": "bs", "macedonian": "mk", "icelandic": "is", "maltese": "mt", "galician": "gl", "basque": "eu",
+    "georgian": "ka", "armenian": "hy", "azerbaijani": "az", "azeri": "az", "kazakh": "kk", "uzbek": "uz",
+    "mongolian": "mn", "bangla": "bn", "punjabi (gurmukhi)": "pa", "panjabi": "pa", "gujarati": "gu",
+    "tamil": "ta", "nepali": "ne", "sinhala": "si", "sinhalese": "si", "filipino (tagalog)": "fil",
+    "burmese": "my", "myanmar": "my", "khmer": "km", "cambodian": "km", "swahili": "sw", "kiswahili": "sw",
+    "amharic": "am", "tigrinya": "ti", "somali": "so", "afrikaans": "af", "yoruba": "yo", "igbo": "ig",
+    "hausa": "ha", "haitian creole": "ht", "haitian": "ht", "malaysian": "ms",
 }
 _KNOWN_BASES = frozenset(code.split("-")[0] for code in _NAMES.values())
 _TAG_RE = re.compile(r"^([a-z]{2,3})(?:[-_]([a-z]{4}))?(?:[-_]([a-z]{2}|\d{3}))?$", re.I)
@@ -39,7 +49,7 @@ def _parse(value) -> Optional[tuple[str, str, str]]:
     if m:
         return m.group(1).lower(), (m.group(2) or "").title(), (m.group(3) or "").upper()
     low = s.lower()
-    code = _NAMES.get(low) or _NAMES.get(re.sub(r"\s*\(.*\)$", "", low).strip())
+    code = NAME_CODES.get(low) or NAME_CODES.get(re.sub(r"\s*\(.*\)$", "", low).strip())
     return _parse(code) if code else None
 
 

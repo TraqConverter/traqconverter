@@ -7,6 +7,7 @@ import LearningPanel from "@/components/learning/LearningPanel"
 import { useFeature } from "@/lib/plan"
 import { stageText } from "@/lib/jobProgress"
 import { deletionNotice } from "@/lib/retention"
+import { TARGET_LANGUAGES } from "@/lib/languages"
 import { SavedInstructionPicker, useSavedInstructions } from "@/components/SavedInstructions"
 import DocumentEditor, {
   STANDARD_PAGE,
@@ -116,7 +117,7 @@ function statusStyle(status?: string) {
 function langCode(raw?: string) {
   if (!raw) return "—"
   const s = raw.trim()
-  if (s.length <= 5 && /^[a-z]/i.test(s)) return s.toLowerCase()
+  if (/^[a-z]{2,3}([-_][a-z0-9]{2,4})?$/i.test(s)) return s.toLowerCase()
   const map: Record<string, string> = {
     english: "en", spanish: "es", french: "fr", german: "de", italian: "it",
     portuguese: "pt", dutch: "nl", polish: "pl", chinese: "zh", japanese: "ja",
@@ -128,10 +129,12 @@ function langCode(raw?: string) {
 function languageName(raw?: string) {
   const s = (raw || "").trim()
   if (!s || s.toLowerCase() === "auto") return "Auto-detected"
+  const listed = TARGET_LANGUAGES.find((l) => l.code.toLowerCase() === s.toLowerCase())
+  if (listed) return listed.name
   const code = langCode(s).split("-")[0]
   try {
     const name = new Intl.DisplayNames(["en"], { type: "language" }).of(code)
-    if (name && s.length <= 5) return name
+    if (name && /^[a-z]{2,3}([-_][a-z0-9]{2,4})?$/i.test(s)) return name
   } catch {}
   return s
 }

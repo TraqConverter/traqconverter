@@ -100,7 +100,9 @@ def _pdf_font_for_language(target_lang: str | None) -> str:
 
 
 
-_RTL_LANGS = {"ar", "he", "fa", "ur", "yi", "ji"}
+_RTL_LANGS = {"ar", "he", "fa", "prs", "ps", "ur", "ckb", "yi", "ji"}
+# Written in Arabic script, so the letters need joining before the bidi pass.
+_ARABIC_SCRIPT_LANGS = {"ar", "fa", "prs", "ps", "ur", "ckb"}
 
 
 def _is_rtl_language(target_lang: str | None) -> bool:
@@ -120,7 +122,7 @@ def _shape_rtl(text: str, target_lang: str | None) -> str:
     base = (target_lang or "").lower().split("-")[0]
     shaped = text
     try:
-        if base in ("ar", "fa", "ur"):
+        if base in _ARABIC_SCRIPT_LANGS:
             import arabic_reshaper
             shaped = arabic_reshaper.reshape(shaped)
     except Exception:
@@ -174,6 +176,17 @@ _SCRIPT_FONT_CANDIDATES: dict[str, list[str]] = {
         "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
     ],
 }
+
+# fonts-noto-core, installed in the backend image, covers these scripts.
+_NOTO_SCRIPT_FONTS = {
+    "prs": "NotoNaskhArabic", "ps": "NotoNaskhArabic", "ckb": "NotoNaskhArabic",
+    "ne": "NotoSansDevanagari", "bn": "NotoSansBengali", "pa": "NotoSansGurmukhi",
+    "gu": "NotoSansGujarati", "ta": "NotoSansTamil", "si": "NotoSansSinhala",
+    "ka": "NotoSansGeorgian", "hy": "NotoSansArmenian", "am": "NotoSansEthiopic",
+    "ti": "NotoSansEthiopic", "my": "NotoSansMyanmar", "km": "NotoSansKhmer",
+}
+for _lang, _family in _NOTO_SCRIPT_FONTS.items():
+    _SCRIPT_FONT_CANDIDATES.setdefault(_lang, []).append(f"/usr/share/fonts/truetype/noto/{_family}-Regular.ttf")
 
 
 def _find_script_font_file(target_lang: str | None) -> str | None:

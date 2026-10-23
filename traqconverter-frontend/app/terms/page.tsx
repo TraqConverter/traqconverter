@@ -14,7 +14,7 @@ export default function TermsPage() {
   return (
     <LegalPage
       title="Terms of Service"
-      updated="9 October 2026"
+      updated="23 October 2026"
       intro="These terms are the agreement between you and us for using OnlineDocTranslator. We've kept them short and plain. Please read them before you sign up."
     >
       <h2 id="who">1. Who we are</h2>
@@ -297,8 +297,8 @@ export default function TermsPage() {
         </li>
         <li>
           You confirm you have the right to upload each document, including a lawful basis for any personal data in
-          it. For that data you are the controller and we are your processor; a data processing agreement is
-          available on request (see the Privacy Policy).
+          it. For that data you are the controller and we are your processor, under our{" "}
+          <Link href="/dpa">data processing agreement</Link>, which forms part of these terms.
         </li>
       </ul>
 
@@ -325,7 +325,8 @@ export default function TermsPage() {
       <h2 id="confidentiality">16. Confidentiality</h2>
       <p>
         We treat your content as confidential. We access it only when needed to provide the service, to help you
-        when you ask for support, to keep the service secure, or when the law requires it.
+        when you ask for support, to keep the service secure, or when the law requires it. How we protect it is
+        described on our <Link href="/security">Security page</Link>.
       </p>
 
       <h2 id="data">17. Storing and deleting your files</h2>

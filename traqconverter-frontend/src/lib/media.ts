@@ -1,4 +1,6 @@
-import { TARGET_LANGUAGES } from "@/components/LangSelect"
+import { BASE_LANGUAGES, baseLanguage } from "@/lib/languages"
+
+export { baseLanguage }
 
 export type MediaKind = "stamp" | "logo" | "signature" | "other"
 
@@ -30,20 +32,8 @@ export function kindLabel(kind: MediaKind): string {
   return MEDIA_KINDS.find((k) => k.value === kind)?.label ?? kind
 }
 
-export function baseLanguage(code: string | null | undefined): string | null {
-  const base = (code || "").trim().toLowerCase().split(/[-_]/)[0]
-  return /^[a-z]{2,3}$/.test(base) ? base : null
-}
-
 // The New project language list, one entry per base language ("English", not UK and US).
-export const MEDIA_LANGUAGES: { code: string; name: string }[] = (() => {
-  const seen = new Map<string, string>()
-  for (const l of TARGET_LANGUAGES) {
-    const code = baseLanguage(l.code)
-    if (code && !seen.has(code)) seen.set(code, l.name.replace(/\s*\(.*\)$/, ""))
-  }
-  return Array.from(seen, ([code, name]) => ({ code, name }))
-})()
+export const MEDIA_LANGUAGES: { code: string; name: string }[] = BASE_LANGUAGES
 
 export function languageName(code: string | null): string {
   if (!code) return "Any language"
