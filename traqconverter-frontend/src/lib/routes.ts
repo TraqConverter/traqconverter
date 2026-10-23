@@ -5,7 +5,7 @@ export function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTES.has(pathname)
 }
 
-const LEGAL_ROUTES = new Set(["/terms", "/privacy", "/cookies"])
+const LEGAL_ROUTES = new Set(["/terms", "/privacy", "/cookies", "/security", "/dpa"])
 // Open rather than public: an emailed reset link must work even in a browser that is still signed in.
 const PASSWORD_RESET_ROUTES = new Set(["/forgot-password", "/reset-password"])
 

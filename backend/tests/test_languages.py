@@ -112,3 +112,27 @@ def test_the_picker_and_the_backend_list_the_same_languages():
     codes.discard("auto")
     assert codes, "no codes found in languages.ts"
     assert codes <= set(LANGUAGE_NAMES), codes - set(LANGUAGE_NAMES)
+
+
+@pytest.mark.skipif(not FRONTEND_LIST.exists(), reason="frontend not checked out")
+def test_help_chat_lists_every_picker_language():
+    from app.services import support_knowledge
+
+    bases = {re.split(r"[-_]", c)[0] for c in re.findall(r'code: "([^"]+)"', FRONTEND_LIST.read_text())} - {"auto"}
+    assert len(support_knowledge.LANGUAGES) == len(bases)
+    prompt = support_knowledge.system_blocks()[0]["text"]
+    assert f"{len(bases)} languages are supported" in prompt
+    for name in ("Dari", "Tigrinya", "Kurdish (Sorani)", "Haitian Creole"):
+        assert name in prompt
+
+
+def test_help_chat_knows_the_trust_pages():
+    from app.services import support_knowledge
+
+    prompt = support_knowledge.system_blocks()[0]["text"]
+    assert "onlinedoctranslator.ai/security" in prompt
+    assert "onlinedoctranslator.ai/dpa" in prompt
+    assert "deleted automatically 90 days after its translation is completed" in prompt
+    assert "nothing is deleted automatically" not in prompt
+    for name, _, _ in support_knowledge.SUB_PROCESSORS:
+        assert name in prompt

@@ -19,6 +19,8 @@ import {
 } from "@/lib/plans"
 import { BrandMark, BrandName } from "@/components/brand/Logo"
 import DemoVideo from "@/components/landing/DemoVideo"
+import Testimonials from "@/components/landing/Testimonials"
+import { LANGUAGE_COUNT } from "@/lib/languages"
 
 const CREAM = "#faf5ee"
 const CREAM_DARK = "#f3ecdb"
@@ -50,6 +52,7 @@ export default function LandingPage() {
         <Workbench />
         <GetPaid />
         <Security />
+        <Testimonials />
         <Pricing />
         <RiskReversal />
         <FAQ />
@@ -370,7 +373,7 @@ function TrustBar() {
         style={{ padding: "28px 20px" }}
       >
         {[
-          { n: "28", l: "Languages" },
+          { n: String(LANGUAGE_COUNT), l: "Languages" },
           { n: "PDF · DOCX · JPG · PNG", l: "Input formats, up to 20 MB" },
           { n: "DOCX · PDF", l: "Export formats" },
           { n: "5 AI edits", l: "Included per page" },
@@ -1440,8 +1443,8 @@ const SECURITY_POINTS: { icon: React.ReactNode; title: string; body: string }[] 
   },
   {
     icon: <IconTrash />,
-    title: "Delete whenever you want",
-    body: "Delete a project and its files, text and memory entries go with it. You can delete your whole account from Settings.",
+    title: "Deleted after 90 days",
+    body: "A project is deleted automatically 90 days after its translation is completed. Delete it sooner, or your whole account, from the app.",
   },
 ]
 
@@ -1464,7 +1467,16 @@ function Security() {
           style={{ fontSize: 14, color: MUTED }}
         >
           <span style={{ color: TEAL, fontWeight: 600 }}>GDPR-ready:</span>
-          <span>EU data storage, your data deleted when you delete it, and a data processing agreement (DPA) on request.</span>
+          <span>
+            EU data storage, automatic deletion after 90 days, and a{" "}
+            <Link href="/dpa" style={{ color: TEAL, fontWeight: 600 }}>
+              data processing agreement (DPA)
+            </Link>
+            .{" "}
+            <Link href="/security" style={{ color: TEAL, fontWeight: 600 }}>
+              How we protect your documents
+            </Link>
+          </span>
         </p>
       </div>
     </section>
@@ -1914,7 +1926,7 @@ function FAQ() {
     },
     {
       q: "What files and languages do you support?",
-      a: "PDF (single or multi-page, including scans), JPG, PNG and DOCX, up to 20 MB each. 28 languages, including Arabic, Hebrew, Chinese (Simplified and Traditional), Japanese and Korean; auto-detect can pick the source language. Exports are DOCX and PDF.",
+      a: `PDF (single or multi-page, including scans), JPG, PNG and DOCX, up to 20 MB each. ${LANGUAGE_COUNT} languages, including Arabic, Persian, Dari, Pashto, Urdu, Hebrew, Chinese (Simplified and Traditional), Japanese, Korean, the Balkan and Baltic languages, Ukrainian, Georgian, Armenian, Bengali, Punjabi, Tamil, Amharic, Tigrinya and Somali; auto-detect can pick the source language. Exports are DOCX and PDF.`,
     },
     {
       q: "What does a page credit include?",
@@ -1926,7 +1938,22 @@ function FAQ() {
     },
     {
       q: "What happens to my files?",
-      a: "They're stored in the EU (Ireland), encrypted at rest, and not used to train AI models. Projects stay in your account until you delete them; deleting a project removes its files, text and translation memory entries. A data processing agreement (DPA) is available on request.",
+      a: (
+        <>
+          They&apos;re stored in the EU (Ireland), encrypted at rest, and not used to train AI models. A project is
+          deleted automatically 90 days after its translation is completed, with a notice 7 days before, and you can
+          delete it sooner yourself. Translation memory and glossary entries stay until you delete them. The details
+          are on our{" "}
+          <Link href="/security" style={{ color: TEAL, fontWeight: 600 }}>
+            Security page
+          </Link>
+          , and our{" "}
+          <Link href="/dpa" style={{ color: TEAL, fontWeight: 600 }}>
+            data processing agreement (DPA)
+          </Link>{" "}
+          is published for you to save.
+        </>
+      ),
     },
     {
       q: "Can my team work together?",
@@ -2132,6 +2159,8 @@ function Footer() {
           links={[
             ["About", "#"],
             ["Contact", "mailto:hello@onlinedoctranslator.ai"],
+            ["Security", "/security"],
+            ["Data processing agreement", "/dpa"],
             ["Terms of service", "/terms"],
             ["Privacy policy", "/privacy"],
             ["Cookie policy", "/cookies"],
