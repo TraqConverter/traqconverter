@@ -11,9 +11,10 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.rate_limit import user_rate_limit
 from app.dependencies.tenant import get_user_project_or_404
+from app.models.project import is_dtp
 from app.models.user import User
-from app.routers.document import _initial_builder
-from app.services import document_editor, review_checks, source_map, source_pages
+from app.routers.document import _initial_builder, _locked_project
+from app.services import ai_allowance, ai_usage, deep_check, document_editor, review_checks, source_map, source_pages
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,40 @@ def pre_delivery_checks(
     project, data = _document(db, project_id, user)
     smap = _refresh_map(db, project, data, background)
     return review_checks.run(db, project, user, data, smap, refresh=refresh)
+
+
+@router.post(
+    "/{project_id}/checks/deep",
+    dependencies=[Depends(user_rate_limit("deep_check", max_requests=30, per_seconds=3600))],
+)
+def deep_meaning_check(
+    project_id: UUID,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Claude compares source and translation for meaning errors; counted as AI edits from the document's allowance."""
+    project, data = _document(db, project_id, user)
+    if is_dtp(project):
+        raise HTTPException(status_code=400, detail="An editable copy has no translation to compare")
+    smap = _refresh_map(db, project, data, background)
+    edits = deep_check.edits_for(project)
+    ai_allowance.reserve_edit(db, project, user, count=edits)
+    # The model call takes a while, so the row is only locked to write the result.
+    db.commit()
+    ctx = review_checks.context(db, project, user, data, smap)
+    try:
+        with ai_usage.ai_context(action="deep_check", project_id=project.id, team_id=project.team_id, user_id=user.id):
+            result = deep_check.run(project, ctx, review_checks._item)
+    except deep_check.DeepCheckError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    project = _locked_project(db, project_id, user)
+    ai_allowance.count_edit(db, project, user, count=edits)
+    review_checks.save_deep(db, project, data, result)
+    db.commit()
+    out = review_checks.run(db, project, user, data, smap)
+    out["ai_edits_remaining"] = ai_allowance.remaining_included(project)
+    return out
 
 
 @router.post("/{project_id}/checks/{item_id}/dismiss")
