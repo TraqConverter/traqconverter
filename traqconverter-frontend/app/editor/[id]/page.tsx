@@ -195,7 +195,7 @@ export default function EditorPage() {
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null)
   const [hoverBlockId, setHoverBlockId] = useState<string | null>(null)
   const [sourceFocus, setSourceFocus] = useState<(SourceRef & { key: number }) | null>(null)
-  const [certifyGate, setCertifyGate] = useState<CheckItem[] | null>(null)
+  const [certifyGate, setCertifyGate] = useState<{ items: CheckItem[]; action: GateAction; proceed: () => void } | null>(null)
   const [templatePick, setTemplatePick] = useState<CertChoice | null>(null)
   const review = useReview(id, docVersion)
 
@@ -522,11 +522,19 @@ export default function EditorPage() {
       // Certify adds a missing certification page itself, so that item doesn't hold it back.
       const open = (fresh?.items ?? []).filter((i) => blocking(i) && !(i.kind === "certification" && i.severity === "warning"))
       if (open.length) {
-        setCertifyGate(open)
+        setCertifyGate({ items: open, action: "certify", proceed: () => void certify(true) })
         return
       }
     }
     await deliver()
+  }
+
+  // Delivery steps warn about open errors in the page and let the translator go ahead; they never block.
+  const beforeDelivery = async (action: GateAction, proceed: () => void) => {
+    const fresh = await review.fetchChecks()
+    const open = (fresh?.items ?? []).filter((i) => !i.dismissed && i.severity === "error")
+    if (open.length) setCertifyGate({ items: open, action, proceed })
+    else proceed()
   }
 
   // templateId comes from the chooser; without it, a team with 2+ templates is asked first.
@@ -853,7 +861,11 @@ export default function EditorPage() {
                   <button
                     key={s.value}
                     type="button"
-                    onClick={() => updateReviewStatus(s.value)}
+                    onClick={() =>
+                      s.value === "CERTIFIED" && project.review_status !== "CERTIFIED"
+                        ? void beforeDelivery("status", () => void updateReviewStatus(s.value))
+                        : void updateReviewStatus(s.value)
+                    }
                     disabled={busy === "status"}
                     className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 transition"
                     style={{
@@ -1026,8 +1038,10 @@ export default function EditorPage() {
 
         <ExportMenu
           busy={busy?.startsWith("export:") ? (busy.slice(7) as ExportKind) : null}
-          onExport={(kind) => void exportFile(kind)}
-          onShare={() => setShareOpen(true)}
+          onExport={(kind) =>
+            kind === "delivery" ? void beforeDelivery("delivery", () => void exportFile(kind)) : void exportFile(kind)
+          }
+          onShare={() => void beforeDelivery("share", () => setShareOpen(true))}
         />
         {canCertify && (
           <button
@@ -1154,6 +1168,9 @@ export default function EditorPage() {
                 checksError={review.error}
                 onRecheck={() => void review.fetchChecks(true)}
                 onDismissCheck={(itemId, on) => void review.dismiss(itemId, on)}
+                onDeepCheck={() => void review.deepCheck()}
+                deepChecking={review.deepChecking}
+                deepError={review.deepError}
                 onActiveBlockChange={(blockId) => {
                   setActiveBlockId(blockId)
                   if (blockId) setSourceFocus(null)
@@ -1368,14 +1385,16 @@ export default function EditorPage() {
 
       {certifyGate && (
         <CertifyGate
-          items={certifyGate}
+          items={certifyGate.items}
+          action={certifyGate.action}
           onReview={() => {
             setCertifyGate(null)
             editorRef.current?.openChecks()
           }}
           onCertify={() => {
+            const { proceed } = certifyGate
             setCertifyGate(null)
-            void certify(true)
+            proceed()
           }}
           onClose={() => setCertifyGate(null)}
         />
@@ -1435,20 +1454,74 @@ export default function EditorPage() {
   )
 }
 
+type GateAction = "certify" | "delivery" | "share" | "status"
+
+const GATE_ANYWAY: Record<GateAction, string> = {
+  certify: "Certify anyway",
+  delivery: "Export anyway",
+  share: "Share anyway",
+  status: "Mark certified anyway",
+}
+
+function issuePhrase(item: CheckItem): [string, string] {
+  switch (item.kind) {
+    case "number":
+      return ["number missing", "numbers missing"]
+    case "number_format":
+      return ["number format to check", "number formats to check"]
+    case "date":
+      return item.message.includes(" reads ") ? ["date changed", "dates changed"] : ["date missing", "dates missing"]
+    case "code":
+    case "identifier":
+      return ["ID changed", "IDs changed"]
+    case "name":
+      return ["name missing", "names missing"]
+    case "missing":
+    case "short":
+      return ["passage possibly dropped", "passages possibly dropped"]
+    case "untranslated":
+    case "possibly_untranslated":
+      return ["passage untranslated", "passages untranslated"]
+    case "meaning":
+      return ["meaning issue", "meaning issues"]
+    case "consistency":
+      return ["inconsistent repeat", "inconsistent repeats"]
+    case "glossary":
+      return ["glossary term not used", "glossary terms not used"]
+    case "certification":
+      return ["certification field empty", "certification fields empty"]
+    default:
+      return ["other issue", "other issues"]
+  }
+}
+
+function issueSummary(items: CheckItem[]) {
+  const counts = new Map<string, { n: number; one: string; many: string }>()
+  for (const i of items) {
+    const [one, many] = issuePhrase(i)
+    const c = counts.get(one) ?? { n: 0, one, many }
+    c.n++
+    counts.set(one, c)
+  }
+  const parts = [...counts.values()].sort((a, b) => b.n - a.n).map((c) => `${c.n} ${c.n === 1 ? c.one : c.many}`)
+  return `${items.length} possible issue${items.length === 1 ? "" : "s"}: ${parts.join(", ")}`
+}
+
 function CertifyGate({
   items,
+  action,
   onReview,
   onCertify,
   onClose,
 }: {
   items: CheckItem[]
+  action: GateAction
   onReview: () => void
   onCertify: () => void
   onClose: () => void
 }) {
   const errors = items.filter((i) => i.severity === "error").length
-  const warnings = items.length - errors
-  const summary = [errors ? `${errors} to fix` : "", warnings ? `${warnings} to check` : ""].filter(Boolean).join(", ")
+  const summary = issueSummary(items)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose()
@@ -1474,7 +1547,7 @@ function CertifyGate({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Issues before certifying"
+        aria-label="Possible issues before delivery"
         onClick={(e) => e.stopPropagation()}
         className="tq-gate"
         style={{
@@ -1488,10 +1561,10 @@ function CertifyGate({
         }}
       >
         <div className="text-[11px] font-semibold tracking-[0.16em] mb-1" style={{ color: errors ? "#b14a3a" : "#a8741a" }}>
-          BEFORE YOU SIGN
+          {action === "certify" || action === "status" ? "BEFORE YOU SIGN" : "BEFORE YOU DELIVER"}
         </div>
         <div className="text-[16px] font-semibold mb-3" style={{ color: "#1f2a2e" }}>
-          The translation has {summary}
+          {summary}
         </div>
         <ul className="space-y-1.5 mb-5 max-h-56 overflow-auto">
           {items.slice(0, 6).map((i) => (
@@ -1513,7 +1586,7 @@ function CertifyGate({
             className="text-[13px] font-semibold px-4 py-2 rounded-full transition"
             style={{ background: "#ffffff", color: "#1f2a2e", border: "1px solid #e7ddc5" }}
           >
-            Certify anyway
+            {GATE_ANYWAY[action]}
           </button>
           <button
             type="button"

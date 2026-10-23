@@ -15,7 +15,19 @@ export type CheckItem = {
   block_id?: string
   source?: SourceRef
   reason?: string
+  category?: string
+  quote_source?: string
+  quote_translation?: string
+  stale?: boolean
   dismissed: boolean
+}
+
+export type DeepMeta = {
+  checked_at: string
+  version: number
+  stale: boolean
+  truncated: boolean
+  found: number
 }
 
 export type Checks = {
@@ -25,6 +37,8 @@ export type Checks = {
   checked_at: string
   pending: boolean
   counts: Record<Severity, number>
+  deep?: DeepMeta | null
+  deep_cost_edits?: number | null
 }
 
 export type SourceBlock = {
@@ -62,6 +76,8 @@ export function useReview(projectId: string, version: number) {
   const [map, setMap] = useState<SourceMap | null>(null)
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState("")
+  const [deepChecking, setDeepChecking] = useState(false)
+  const [deepError, setDeepError] = useState("")
   const checkSeq = useRef(0)
   const mapSeq = useRef(0)
   const pollTimer = useRef<number | null>(null)
@@ -139,5 +155,20 @@ export function useReview(projectId: string, version: number) {
     [projectId],
   )
 
-  return { checks, map, checking, error, fetchChecks, dismiss }
+  const deepCheck = useCallback(async () => {
+    setDeepChecking(true)
+    setDeepError("")
+    try {
+      const res = await api.post<Checks>(`/projects/${projectId}/checks/deep`)
+      ++checkSeq.current
+      setChecks(res.data)
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      setDeepError(typeof detail === "string" ? detail : "The AI check failed; try again in a minute.")
+    } finally {
+      setDeepChecking(false)
+    }
+  }, [projectId])
+
+  return { checks, map, checking, error, fetchChecks, dismiss, deepCheck, deepChecking, deepError }
 }

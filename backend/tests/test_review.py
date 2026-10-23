@@ -360,7 +360,7 @@ def test_missing_number_name_code_and_formatted_date(client, review_project, fak
     assert missing["block_id"] == ids["Esempio, on 14/09/2026, protocol no."]
     assert missing["source"]["page"] == 0 and len(missing["source"]["bbox"]) == 4
     assert by_msg["Name BIANCHI LUCA isn't in the translation"]["severity"] == "error"
-    assert by_msg["Date 12/03/1987 is written as 12 march 1987"]["severity"] == "info"
+    assert by_msg["Date 12/03/1987 is written as 12 March 1987"]["severity"] == "info"
 
 
 def test_missing_date_and_illegible_downgrade(client, review_project, fake):
