@@ -6,6 +6,7 @@ import ImportSummary, { type ImportResult } from "@/components/ImportSummary"
 import ProPaywall from "@/components/ProPaywall"
 import { blobErrorDetail, downloadFrom } from "@/lib/download"
 import { useFeature } from "@/lib/plan"
+import { BASE_LANGUAGES, REGIONAL_LANGUAGES } from "@/lib/languages"
 
 type Origin = "machine" | "approved" | "manual" | "import"
 
@@ -59,25 +60,7 @@ const ORIGIN_STYLES: Record<Origin, { background: string; color: string; border:
   import: { background: "#f6e6d3", color: "#7a4d1f", border: "#ecd3b4" },
 }
 
-const LANGUAGES: { code: string; name: string }[] = [
-  { code: "it", name: "Italian" },
-  { code: "en", name: "English" },
-  { code: "en-GB", name: "English (UK)" },
-  { code: "en-US", name: "English (US)" },
-  { code: "de", name: "German" },
-  { code: "fr", name: "French" },
-  { code: "es", name: "Spanish" },
-  { code: "pt", name: "Portuguese" },
-  { code: "pt-BR", name: "Portuguese (Brazil)" },
-  { code: "nl", name: "Dutch" },
-  { code: "pl", name: "Polish" },
-  { code: "ro", name: "Romanian" },
-  { code: "ru", name: "Russian" },
-  { code: "uk", name: "Ukrainian" },
-  { code: "ar", name: "Arabic" },
-  { code: "zh", name: "Chinese" },
-  { code: "ja", name: "Japanese" },
-]
+const LANGUAGES: { code: string; name: string }[] = [...BASE_LANGUAGES, ...REGIONAL_LANGUAGES]
 
 const SOURCE_LANGUAGES = LANGUAGES.filter((l) => !l.code.includes("-"))
 

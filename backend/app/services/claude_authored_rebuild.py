@@ -610,7 +610,8 @@ HARD RULES (never violate)
   * NEVER rotate text. NEVER set vertical text direction. All
     text in the output, in every paragraph and every table cell,
     must be normal horizontal left-to-right reading direction
-    (right-to-left for Arabic / Hebrew / Farsi / Urdu targets).
+    (right-to-left for Arabic / Hebrew / Persian (Farsi) / Dari /
+    Pashto / Urdu / Sorani Kurdish targets).
   * If a wide table doesn't fit at 10-11pt on portrait A4, drop
     the font to 8pt or 7pt — never rotate column headers, never
     switch to landscape mid-document, never split sideways.
