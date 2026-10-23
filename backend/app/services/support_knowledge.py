@@ -231,9 +231,12 @@ Credits, plans and packs
 1 credit = 1 page. Paid plans (EUR, no VAT added):
 {_plans()}
 Plan credits are added at the start of every billing period and unused ones don't carry over. Credit packs are \
-one-off purchases that add credits on top of a plan and don't expire while the account exists. Packs are only for \
-teams with an active paid subscription, not during the trial or after a plan has ended:
+one-off purchases of credits that don't expire while the account exists. Anyone can buy them, with or without a \
+subscription; without an active subscription they cost 50% more. Subscriber prices:
 {_packs()}
+Without a subscription, purchased credits give "pay as you go": one user, clean downloads, client links and \
+certification pages while purchased credits remain. If a subscription is cancelled, purchased credits left keep the \
+account on pay as you go.
 Buy plans and packs on the "Billing" page ("Billing & Credits"), which also shows total, subscription and purchased \
 credits, the renewal date and "Recent transactions". Credits have no cash value and can't move between teams.
 Billing portal: "Manage subscription" on the Billing page opens Stripe's portal to change plan, update the card, \
@@ -244,8 +247,9 @@ or billing question email {SUPPORT_EMAIL}.
 
 Free trial
 New accounts get a {TRIAL_DAYS}-day trial with {TRIAL_CREDITS} credits (pages) and the full editor, no card needed, \
-for one person. During the trial you can't download or export, create client links, invite teammates, buy packs, or \
-use Translation Memory, Glossary, Templates, Media or Certifications. When it ends you need a paid plan to continue.
+for one person. Trial downloads work but carry a "Trial" watermark on every page. During the trial you can't create \
+client links, invite teammates, or use Translation Memory, Glossary, Templates, Media or Certifications. To get clean \
+files, subscribe or buy a credit pack (no subscription needed).
 
 Team
 "Members" in the sidebar manages the team. The owner invites people with "Invite by email" and picks a role: Admin, \

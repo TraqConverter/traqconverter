@@ -66,10 +66,11 @@ export default function TermsPage() {
 
       <h2 id="trial">4. Free trial</h2>
       <p>
-        New accounts get a 7-day free trial with 3 pages. During the trial you can translate and edit, but you
-        can&apos;t download results, invite team members or buy credit packs, and some features (translation
-        memory, glossary, templates, media, certifications) aren&apos;t available. No card is needed. Trial credits
-        you don&apos;t use end with the trial. When the trial ends, you need a paid plan to continue.
+        New accounts get a 7-day free trial with 3 pages. During the trial you can translate, edit and download
+        results, but every page of a trial download carries a &quot;Trial – OnlineDocTranslator.ai&quot; watermark,
+        and you must not remove or obscure it. Client links, team invites and some features (translation memory,
+        glossary, templates, media, certifications) aren&apos;t available on the trial. No card is needed. Trial
+        credits you don&apos;t use end with the trial. To continue after the trial, subscribe or buy a credit pack.
       </p>
 
       <h2 id="credits">5. Plans and credits</h2>
@@ -84,10 +85,11 @@ export default function TermsPage() {
           don&apos;t carry over. When a subscription ends, its remaining monthly credits end with it.
         </li>
         <li>
-          <strong>Credit packs.</strong>{" "}Packs are one-off purchases that add credits on top of your plan. They are
-          sold only to teams with an active paid subscription, not during the free trial or after a plan has ended.
-          Purchased credits don&apos;t expire while your account exists, and they stay on the account if your plan
-          ends, but downloading results needs an active plan.
+          <strong>Credit packs.</strong>{" "}Packs are one-off purchases of credits, available with or without a
+          subscription. Without an active subscription they cost 50% more, and while purchased credits remain they give
+          pay-as-you-go access: one user, clean downloads, client links and certification pages. Purchased credits
+          don&apos;t expire while your account exists. Translations paid for with purchased credits stay downloadable
+          after the balance reaches zero, subject to document retention.
         </li>
         <li>
           <strong>Which credits are used first.</strong>{" "}A job uses your monthly credits first and purchased
