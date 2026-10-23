@@ -1,5 +1,6 @@
 import io
 import zipfile
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -7,6 +8,7 @@ import pytest
 from sqlalchemy import text
 
 from app.models.batch import Batch, BatchTerm
+from app.models.credit import CreditWallet
 from app.models.project import ProjectStatus, TranslationProject
 from app.services import batch_terms, learning
 from tests.conftest import make_pdf
@@ -275,6 +277,10 @@ def test_zip_export_respects_download_plan(client, db, make_user, make_project):
     trial = make_user(plan="TRIAL")
     bid = _batch(client, trial)
     make_project(trial).batch_id = bid
+    db.commit()
+    db.query(CreditWallet).filter(CreditWallet.team_id == trial["team"].id).update(
+        {"subscription_expires_at": datetime.utcnow() - timedelta(days=1)}
+    )
     db.commit()
     assert client.get(f"/batches/{bid}/export.zip", headers=trial["headers"]).status_code == 403
 

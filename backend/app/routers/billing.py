@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.dependencies.feature_guard import effective_plan
+from app.dependencies.feature_guard import buys_at_subscriber_price, effective_plan
 from app.dependencies.tenant import can_manage_team
 from app.services.stripe_billing import has_active_subscription
 
@@ -16,6 +16,7 @@ from app.core.plan_features import (
     CREDIT_PACKS,
     PLAN_FEATURES,
     credit_pack_prices,
+    PAYG_PLAN,
     PLANS,
     SALES_EMAIL,
     TRIAL_PLAN,
@@ -60,11 +61,13 @@ def list_plans():
             }
             for p in PLANS
         ],
+        "payg": {**PAYG_PLAN, "features": PLAN_FEATURES["PAYG"]},
         "credit_packs": [
             {
                 **pack,
                 **credit_pack_prices(pack),
                 "available": bool(getattr(settings, f"STRIPE_PRICE_CREDITS_{pack['credits']}", None)),
+                "payg_available": bool(getattr(settings, f"STRIPE_PRICE_PAYG_CREDITS_{pack['credits']}", None)),
             }
             for pack in CREDIT_PACKS
         ],
@@ -117,6 +120,8 @@ def get_wallet(
         "trial_days_left": trial_days_left,
         # True: plan changes go through the Stripe portal, not a new checkout.
         "has_subscription": has_active_subscription(db, team),
+        # Which pack price a checkout started now would charge.
+        "pack_pricing": "subscriber" if buys_at_subscriber_price(db, current_user) else "payg",
         # The Stripe portal and plan changes are for the owner and team admins.
         "can_manage_billing": can_manage_team(db, team, current_user),
     }

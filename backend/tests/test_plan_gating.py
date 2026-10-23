@@ -210,7 +210,8 @@ def test_certified_status_stores_what_the_plan_allows(client, db, gated_project,
 def test_trial_delivery_capture_stores_nothing(client, db, gated_project):
     owner, project = gated_project("TRIAL")
     learning.capture_template_in_background(project.id, owner["user"].id)
-    assert client.get(f"/projects/{project.id}/export", headers=owner["headers"]).status_code == 403
+    # The trial downloads (watermarked); the export still mustn't feed templates or memory.
+    assert client.get(f"/projects/{project.id}/export", headers=owner["headers"]).status_code == 200
     db.expire_all()
     assert db.query(DocumentTemplate).count() == 0 and db.query(TranslationMemory).count() == 0
 

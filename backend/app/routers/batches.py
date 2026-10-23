@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.dependencies.feature_guard import _resolve_team_id, require_feature
+from app.dependencies.feature_guard import _resolve_team_id
 from app.dependencies.tenant import is_team_lead, require_team_lead, team_ids_for
 from app.models.batch import Batch, BatchTerm
 from app.models.project import ProjectStatus, TranslationProject, is_dtp
@@ -167,7 +167,7 @@ def _zip_name(file_name: str, ext: str, used: set) -> str:
     return name
 
 
-@router.get("/{batch_id}/export.zip", dependencies=[Depends(require_feature("download_translation"))])
+@router.get("/{batch_id}/export.zip")
 def export_batch(
     batch_id: UUID,
     background_tasks: BackgroundTasks,
@@ -175,24 +175,28 @@ def export_batch(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.routers.export import render_export
-    from app.services.delivery_pdf import DeliveryError, build_delivery_pdf
+    from app.dependencies.feature_guard import upgrade_message
+    from app.routers.export import download_bytes
+    from app.services.delivery_pdf import DeliveryError
+    from app.services.trial_watermark import export_mode
 
     batch = _batch_or_404(db, batch_id, current_user)
     done = [p for p in _projects(db, batch) if p.status == ProjectStatus.COMPLETED]
     if not done:
         raise HTTPException(status_code=400, detail="No finished documents in this batch yet")
+    modes = {p.id: export_mode(db, p, current_user) for p in done}
+    locked = [f"{p.file_name}: {upgrade_message('download_translation')}" for p in done if not modes[p.id]]
+    done = [p for p in done if modes[p.id]]
+    if not done:
+        raise HTTPException(status_code=403, detail=upgrade_message("download_translation"))
 
     spool = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024)
     used: set = set()
-    failed = []
+    failed = locked
     with zipfile.ZipFile(spool, "w", zipfile.ZIP_DEFLATED) as zf:
         for p in done:
             try:
-                if format == "delivery":
-                    data = build_delivery_pdf(db, p, current_user)
-                else:
-                    data = render_export(db, p, current_user, format).getvalue()
+                data = download_bytes(db, p, current_user, format, modes[p.id])
             except DeliveryError as e:
                 failed.append(f"{p.file_name}: {e}")
                 continue

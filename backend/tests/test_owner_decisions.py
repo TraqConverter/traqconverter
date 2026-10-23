@@ -281,7 +281,7 @@ def test_upgrade_message_names_the_cheapest_plan(feature, plan):
 
 
 def test_trial_download_names_basic(client, make_user, make_project):
-    trial = make_user(plan="TRIAL")
+    trial = make_user(plan="TRIAL", expires_in_days=-1)
     project = make_project(trial)
     r = client.get(f"/projects/{project.id}/export", headers=trial["headers"])
     assert r.status_code == 403

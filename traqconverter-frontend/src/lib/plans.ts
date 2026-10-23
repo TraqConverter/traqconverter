@@ -29,22 +29,36 @@ export type TrialPlan = {
   features: PlanFeatures
 }
 
-// Sold to active subscribers only; save_percent is the per-page saving against the smallest pack.
+// Sold to everyone: price_* is the subscriber price, payg_* what buyers without a subscription pay.
+// save_percent is the per-page saving against the smallest pack.
 export type CreditPack = {
   credits: number
   price_cents: number
   price_eur: number
   price_per_page_eur: number
   save_percent: number
+  payg_price_cents: number
+  payg_price_eur: number
+  payg_price_per_page_eur: number
+  subscriber_saving_eur: number
   name: string
   note: string
   available: boolean
+  payg_available: boolean
+}
+
+export type PaygPlan = {
+  code: "PAYG"
+  name: string
+  seats: number
+  features: PlanFeatures
 }
 
 export type PlanCatalog = {
   currency: string
   contact_email: string
   trial: TrialPlan
+  payg: PaygPlan
   plans: Plan[]
   credit_packs: CreditPack[]
 }
@@ -88,10 +102,11 @@ export function findPlan(catalog: PlanCatalog | null | undefined, code: string):
 // Any tier the wallet reports that isn't the trial or a lapsed plan is a paid subscription.
 export function isPaidTier(tier: string | null | undefined): boolean {
   const t = (tier || "").toUpperCase()
-  return t !== "" && !["TRIAL", "EXPIRED", "CREDITS"].includes(t)
+  return t !== "" && !["TRIAL", "EXPIRED", "CREDITS", "PAYG"].includes(t)
 }
 
 export function planDisplayName(tier: string | null | undefined): string {
+  if ((tier || "").toUpperCase() === "PAYG") return "Pay as you go"
   const t = (tier || "").toLowerCase()
   return t.charAt(0).toUpperCase() + t.slice(1)
 }
@@ -105,8 +120,9 @@ export function euroCents(cents: number): string {
   return `€${(cents / 100).toFixed(2)}`
 }
 
-export function packPerPage(pack: CreditPack): string {
-  return `${euroCents(Math.round(pack.price_per_page_eur * 100))} a page`
+export function packPerPage(pack: CreditPack, payg = false): string {
+  const perPage = payg ? pack.payg_price_per_page_eur : pack.price_per_page_eur
+  return `${euroCents(Math.round(perPage * 100))} a page`
 }
 
 export function pagesLabel(n: number): string {

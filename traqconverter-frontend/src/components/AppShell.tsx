@@ -201,6 +201,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
     ? "Free trial"
     : tier === "EXPIRED"
     ? "Trial ended"
+    : tier === "PAYG"
+    ? "Pay as you go"
     : tier
     ? `${tier.charAt(0)}${tier.slice(1).toLowerCase()} plan`
     : "—"
@@ -236,7 +238,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
         }`
       return "Trial ending today"
     }
-    if (tier === "EXPIRED") return "Subscribe to continue"
+    if (tier === "EXPIRED") return "Subscribe or buy pages to continue"
+    if (tier === "PAYG") return `${purchasedRemaining.toLocaleString()} purchased page${purchasedRemaining === 1 ? "" : "s"} left`
     if (subscriptionAllowance === 0 && purchasedRemaining === 0)
       return "No credits yet"
     const sub = `${subscriptionUsed} / ${subscriptionAllowance} subscription used`
