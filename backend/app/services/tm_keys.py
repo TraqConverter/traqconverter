@@ -35,7 +35,7 @@ NAME_CODES = {
     "amharic": "am", "tigrinya": "ti", "somali": "so", "afrikaans": "af", "yoruba": "yo", "igbo": "ig",
     "hausa": "ha", "haitian creole": "ht", "haitian": "ht", "malaysian": "ms",
 }
-_KNOWN_BASES = frozenset(code.split("-")[0] for code in _NAMES.values())
+_KNOWN_BASES = frozenset(code.split("-")[0] for code in NAME_CODES.values())
 _TAG_RE = re.compile(r"^([a-z]{2,3})(?:[-_]([a-z]{4}))?(?:[-_]([a-z]{2}|\d{3}))?$", re.I)
 _UNKNOWN = {"", "auto", "auto-detect", "autodetect", "detect", "unknown", "und"}
 _TRADITIONAL_REGIONS = {"TW", "HK", "MO"}
