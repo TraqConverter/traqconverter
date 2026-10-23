@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -7,9 +8,10 @@ from uuid import UUID
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
-from app.dependencies.tenant import team_ids_for
+from app.dependencies.tenant import is_team_lead, require_team_lead, team_ids_for
 from app.models.user import User
 from app.models.glossary import Glossary
+from app.services import glossary_transfer, safe_xml
 
 router = APIRouter(
     prefix="/glossary",
@@ -156,3 +158,66 @@ def delete_term(
     db.delete(term)
     db.commit()
     return {"status": "deleted"}
+
+
+def _lead_team_id(db: Session, user: User, action: str):
+    team_id = _user_team_id(db, user)
+    if not team_id:
+        raise HTTPException(status_code=400, detail="No team found for this user")
+    require_team_lead(db, team_id, user, action)
+    return team_id
+
+
+@router.get("/access")
+def glossary_access(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    team_id = _user_team_id(db, current_user)
+    return {"can_transfer": bool(team_id) and is_team_lead(db, team_id, current_user)}
+
+
+@router.get("/export")
+def export_glossary(
+    format: str = Query(default="csv", pattern="^(csv|tbx)$"),
+    source: Optional[str] = Query(default=None),
+    target: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    team_id = _lead_team_id(db, current_user, "export the glossary")
+    terms = glossary_transfer.terms_for_export(db, team_id, source or "", target or "")
+    if not terms:
+        raise HTTPException(status_code=404, detail="There are no terms to export for this language pair")
+    if format == "tbx":
+        body, media = glossary_transfer.build_tbx(terms), "application/x-tbx+xml"
+    else:
+        body, media = glossary_transfer.build_csv(terms), "text/csv; charset=utf-8"
+    name = "-".join(["glossary", *(glossary_transfer.export_code(x) for x in (source, target) if x)])
+    return Response(
+        content=body,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{name}.{format}"', "Cache-Control": "no-store"},
+    )
+
+
+@router.post("/import")
+def import_glossary(
+    file: UploadFile = File(...),
+    source: Optional[str] = Query(default=None, max_length=40, description="Source language; the file's first language when empty"),
+    replace: bool = Query(default=False, description="Replace a different translation the team already has"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    team_id = _lead_team_id(db, current_user, "import into the glossary")
+    data = file.file.read(glossary_transfer.MAX_BYTES + 1)
+    if len(data) > glossary_transfer.MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"The file is larger than {safe_xml.size_label(glossary_transfer.MAX_BYTES)}")
+    try:
+        fmt, pairs, invalid = glossary_transfer.read_upload(data, source or "")
+    except (safe_xml.XmlError, glossary_transfer.GlossaryFileError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    counts = glossary_transfer.import_terms(db, team_id, pairs, replace=replace)
+    counts["invalid"] += invalid
+    skipped = counts["duplicates"] + counts["conflicts"] + counts["unsupported_language"] + counts["invalid"]
+    return {"format": fmt, "rows": len(pairs) + invalid, **counts, "skipped": skipped}

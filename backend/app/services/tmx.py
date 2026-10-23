@@ -1,112 +1,89 @@
-"""TMX 1.4b import and export. Parsing never resolves entities, loads DTDs or touches the network."""
+"""TMX 1.4b import and export."""
 from __future__ import annotations
 
-import re
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 from lxml import etree
 
-MAX_BYTES = 10 * 1024 * 1024
-MAX_UNITS = 50_000
-XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
-_INLINE_CODES = {"bpt", "ept", "ph", "it", "ut"}
-_ENTITY_DECL = re.compile(rb"<!ENTITY", re.I)
-_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+from app.services import safe_xml
+from app.services.safe_xml import XML_LANG, XmlError as TmxError, local
+
+MAX_BYTES = safe_xml.MAX_BYTES
+MAX_UNITS = 100_000
+# Native formatting codes: their content is markup, not text. <hi> and <sub> text stays.
+_INLINE_CODES = frozenset({"bpt", "ept", "ph", "it", "ut"})
 
 
-class TmxError(ValueError):
-    pass
-
-
-def _parser() -> etree.XMLParser:
-    return etree.XMLParser(
-        resolve_entities=False,
-        no_network=True,
-        load_dtd=False,
-        dtd_validation=False,
-        huge_tree=False,
-        remove_comments=True,
-        remove_pis=True,
-    )
-
-
-def _local(tag) -> str:
-    return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
+@dataclass
+class Parsed:
+    pairs: list[dict] = field(default_factory=list)
+    units: int = 0
+    invalid: int = 0
+    unconfirmed: int = 0
 
 
 def _seg_text(seg) -> str:
-    """Segment text without the native formatting codes inside bpt/ept/ph/it/ut."""
-    parts = [seg.text or ""]
-    for child in seg:
-        if _local(child.tag) not in _INLINE_CODES:
-            parts.append(_seg_text(child))
-        parts.append(child.tail or "")
-    return " ".join("".join(parts).split())
+    return safe_xml.flat_text(seg, _INLINE_CODES)
 
 
-def _lang(el) -> str:
-    return el.get(XML_LANG) or el.get("lang") or ""
+def check_units(units: int) -> None:
+    if units > MAX_UNITS:
+        raise TmxError(f"The file has more than {MAX_UNITS:,} translation units")
 
 
-def parse(data: bytes) -> tuple[list[dict], int]:
-    """Pairs (source_language, target_language, source_text, translated_text) and the number of units read."""
-    if len(data) > MAX_BYTES:
-        raise TmxError("The file is larger than 10 MB")
-    head = data[:4096]
-    utf16 = head.startswith((b"\xff\xfe", b"\xfe\xff"))
-    probe = data.decode("utf-16", errors="ignore").encode("utf-8") if utf16 else data
-    if _ENTITY_DECL.search(probe):
-        raise TmxError("Files that declare XML entities are not accepted")
-    try:
-        root = etree.fromstring(data, _parser())
-    except etree.XMLSyntaxError as e:
-        raise TmxError(f"Not a valid TMX file: {e.msg}") from e
-    if _local(root.tag) != "tmx":
+def parse_root(root) -> Parsed:
+    if local(root.tag) != "tmx":
         raise TmxError("Not a TMX file")
-    docinfo = root.getroottree().docinfo
-    if docinfo.internalDTD is not None and list(docinfo.internalDTD.iterentities()):
-        raise TmxError("Files that declare XML entities are not accepted")
-    header = next((el for el in root if _local(el.tag) == "header"), None)
+    header = safe_xml.child(root, "header")
     default_src = (header.get("srclang") if header is not None else "") or ""
-    body = next((el for el in root if _local(el.tag) == "body"), None)
+    body = safe_xml.child(root, "body")
+    out = Parsed()
     if body is None:
-        return [], 0
-    pairs, units = [], 0
-    for tu in body:
-        if _local(tu.tag) != "tu":
-            continue
-        units += 1
-        if units > MAX_UNITS:
-            raise TmxError(f"The file has more than {MAX_UNITS:,} translation units")
+        return out
+    for tu in safe_xml.children(body, "tu"):
+        out.units += 1
+        check_units(out.units)
         tuvs = []
-        for tuv in tu:
-            if _local(tuv.tag) != "tuv":
-                continue
-            seg = next((el for el in tuv if _local(el.tag) == "seg"), None)
-            if seg is not None and _lang(tuv):
-                tuvs.append((_lang(tuv), _seg_text(seg)))
-        if len(tuvs) < 2:
-            continue
+        for tuv in safe_xml.children(tu, "tuv"):
+            seg = safe_xml.child(tuv, "seg")
+            lang = safe_xml.lang_of(tuv)
+            if seg is not None and lang:
+                tuvs.append((lang, _seg_text(seg)))
         src_lang = tu.get("srclang") or default_src
-        source = next((t for t in tuvs if src_lang and src_lang != "*all*" and t[0].lower() == src_lang.lower()), tuvs[0])
+        source = next(
+            (t for t in tuvs if src_lang and src_lang != "*all*" and t[0].lower() == src_lang.lower()),
+            tuvs[0] if tuvs else None,
+        )
+        found = False
         for tuv in tuvs:
-            if tuv is not source and tuv[0].lower() != source[0].lower():
-                pairs.append({
-                    "source_language": source[0],
-                    "target_language": tuv[0],
-                    "source_text": source[1],
-                    "translated_text": tuv[1],
-                })
-    return pairs, units
+            if tuv is source or tuv[0].lower() == source[0].lower():
+                continue
+            if not source[1] or not tuv[1]:
+                continue
+            found = True
+            out.pairs.append({
+                "source_language": source[0],
+                "target_language": tuv[0],
+                "source_text": source[1],
+                "translated_text": tuv[1],
+            })
+        if not found:
+            out.invalid += 1
+    return out
+
+
+def parse(data: bytes) -> Parsed:
+    return parse_root(safe_xml.parse(data, "TMX", MAX_BYTES))
 
 
 def _stamp(value: Optional[datetime]) -> str:
     return (value or datetime.utcnow()).strftime("%Y%m%dT%H%M%SZ")
 
 
-def build(entries: Iterable, srclang: str = "*all*") -> bytes:
-    """TMX 1.4b document for TranslationMemory rows."""
+def build(entries: Iterable, srclang: str = "*all*", code: Callable[[str], str] = lambda c: c) -> bytes:
+    """TMX 1.4b document for TranslationMemory rows; `code` maps stored language codes to the exported ones."""
     root = etree.Element("tmx", version="1.4")
     etree.SubElement(
         root,
@@ -115,8 +92,8 @@ def build(entries: Iterable, srclang: str = "*all*") -> bytes:
         creationtoolversion="1.0",
         segtype="sentence",
         attrib={"o-tmf": "OnlineDocTranslator"},
-        adminlang="en",
-        srclang=srclang or "*all*",
+        adminlang="en-US",
+        srclang=code(srclang) if srclang and srclang != "*all*" else "*all*",
         datatype="plaintext",
         creationdate=_stamp(None),
     )
@@ -125,12 +102,12 @@ def build(entries: Iterable, srclang: str = "*all*") -> bytes:
         tu = etree.SubElement(
             body, "tu", tuid=str(e.id), creationdate=_stamp(e.created_at), changedate=_stamp(e.updated_at),
         )
-        tu.set("srclang", e.source_language)
+        tu.set("srclang", code(e.source_language))
         prop = etree.SubElement(tu, "prop", type="x-origin")
         prop.text = e.origin
         for lang, text in ((e.source_language, e.source_text), (e.target_language, e.translated_text)):
             tuv = etree.SubElement(tu, "tuv")
-            tuv.set(XML_LANG, lang)
+            tuv.set(XML_LANG, code(lang))
             seg = etree.SubElement(tuv, "seg")
-            seg.text = _CONTROL.sub("", text or "")
-    return etree.tostring(root, xml_declaration=True, encoding="UTF-8", pretty_print=True)
+            seg.text = safe_xml.clean(text)
+    return safe_xml.to_bytes(root)

@@ -25,6 +25,7 @@ _NAMES = {
     "tagalog": "tl", "filipino": "fil", "malay": "ms", "inglese": "en", "tedesco": "de", "francese": "fr",
     "spagnolo": "es", "portoghese": "pt",
 }
+_KNOWN_BASES = frozenset(code.split("-")[0] for code in _NAMES.values())
 _TAG_RE = re.compile(r"^([a-z]{2,3})(?:[-_]([a-z]{4}))?(?:[-_]([a-z]{2}|\d{3}))?$", re.I)
 _UNKNOWN = {"", "auto", "auto-detect", "autodetect", "detect", "unknown", "und"}
 _TRADITIONAL_REGIONS = {"TW", "HK", "MO"}
@@ -70,6 +71,37 @@ def family(tag: str) -> str:
         return ""
     base, script, region = parsed
     return "zh-Hant" if _traditional_chinese(base, script, region) else base
+
+
+# The locale CAT tools expect when the app only knows the language (Trados TMs are locale-specific).
+_DEFAULT_REGION = {
+    "en": "GB", "it": "IT", "de": "DE", "fr": "FR", "es": "ES", "pt": "PT", "nl": "NL", "sv": "SE",
+    "da": "DK", "no": "NO", "nb": "NO", "fi": "FI", "pl": "PL", "cs": "CZ", "ro": "RO", "hu": "HU",
+    "tr": "TR", "vi": "VN", "id": "ID", "ja": "JP", "zh": "CN", "ko": "KR", "ru": "RU", "uk": "UA",
+    "el": "GR", "ar": "SA", "he": "IL", "hi": "IN", "th": "TH", "sq": "AL", "bg": "BG", "hr": "HR",
+    "sr": "RS", "sk": "SK", "sl": "SI", "lt": "LT", "lv": "LV", "et": "EE", "ca": "ES", "fa": "IR",
+    "ur": "PK", "bn": "BD", "pa": "IN", "tl": "PH", "fil": "PH", "ms": "MY",
+}
+
+
+def supported(value) -> bool:
+    """A language the app knows by name, in any spelling ('it-IT', 'Italian', 'zh-Hant'); not just a well-formed tag."""
+    parsed = _parse(value)
+    return bool(parsed) and (parsed[0] in _DEFAULT_REGION or parsed[0] in _KNOWN_BASES)
+
+
+def cat_locale(tag: str) -> str:
+    """A full locale for a stored code: 'it' -> 'it-IT', 'zh-Hant' -> 'zh-TW'; codes with a region stay as they are."""
+    parsed = _parse(tag)
+    if not parsed:
+        return tag or ""
+    base, script, region = parsed
+    if region:
+        return "-".join(p for p in parsed if p)
+    if base == "zh" and script == "Hant":
+        return "zh-TW"
+    region = _DEFAULT_REGION.get(base, "")
+    return "-".join(p for p in (base, script, region) if p)
 
 
 def normalise_text(text: str) -> str:
