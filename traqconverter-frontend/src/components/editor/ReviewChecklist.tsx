@@ -9,6 +9,28 @@ const GROUPS: { severity: Severity; label: string; dot: string }[] = [
   { severity: "info", label: "Notes", dot: "#9a9178" },
 ]
 
+const KIND_LABELS: Record<string, string> = {
+  number: "Number",
+  number_format: "Number format",
+  date: "Date",
+  code: "Identifier",
+  identifier: "Identifier",
+  name: "Name",
+  missing: "Missing text",
+  short: "Missing text",
+  untranslated: "Untranslated",
+  possibly_untranslated: "Untranslated",
+  consistency: "Consistency",
+  placeholder: "Formatting",
+  brackets: "Formatting",
+  spacing: "Formatting",
+  glossary: "Glossary",
+  notation: "Notation",
+  certification: "Certification",
+  uncertain: "Reading",
+  meaning: "AI check",
+}
+
 export function checksLabel(checks: Checks | null, checking: boolean) {
   if (!checks) return checking ? "Checking…" : "Checks"
   const issues = checks.counts.error + checks.counts.warning
@@ -40,6 +62,9 @@ export default function ReviewChecklist({
   onDismiss,
   onRecheck,
   onClose,
+  onDeepCheck,
+  deepChecking = false,
+  deepError = "",
 }: {
   checks: Checks | null
   checking: boolean
@@ -49,6 +74,9 @@ export default function ReviewChecklist({
   onDismiss: (item: CheckItem, on: boolean) => void
   onRecheck: () => void
   onClose: () => void
+  onDeepCheck?: () => void
+  deepChecking?: boolean
+  deepError?: string
 }) {
   const [showDismissed, setShowDismissed] = useState(false)
   const listRef = useRef<HTMLDivElement | null>(null)
@@ -97,9 +125,12 @@ export default function ReviewChecklist({
             Reading the original for hard-to-read areas…
           </div>
         )}
+        {onDeepCheck && checks && checks.deep_cost_edits != null && (
+          <DeepCheckRow checks={checks} busy={deepChecking} error={deepError} onRun={onDeepCheck} />
+        )}
         {checks && open.length === 0 && (
           <div className="px-3 py-6 text-center text-[12px]" style={{ color: "#6b6558" }}>
-            Numbers, names, notes and terms match the original.
+            Numbers, dates, names, IDs and terms match the original.
           </div>
         )}
         {GROUPS.map((g) => {
@@ -178,7 +209,21 @@ function Row({
         className="flex-1 min-w-0 text-left leading-snug"
         style={{ color: item.dismissed ? "#9a9178" : "#1f2a2e", cursor: clickable ? "pointer" : "default" }}
       >
+        <span className="block text-[9px] font-semibold tracking-[0.1em] uppercase mb-0.5" style={{ color: "#9a9178" }}>
+          {KIND_LABELS[item.kind] ?? "Check"}
+          {item.stale && <span className="ml-1.5 normal-case tracking-normal font-normal">· from an earlier version</span>}
+        </span>
         {item.message}
+        {item.quote_source && (
+          <span className="block mt-1 text-[11px]" style={{ color: "#6b6558" }}>
+            Source: “{item.quote_source}”
+          </span>
+        )}
+        {item.quote_translation && (
+          <span className="block text-[11px]" style={{ color: "#6b6558" }}>
+            Translation: “{item.quote_translation}”
+          </span>
+        )}
       </button>
       <button
         type="button"
@@ -188,6 +233,43 @@ function Row({
         title={item.dismissed ? "Show this issue again" : "Dismiss for this document"}
       >
         {item.dismissed ? "Restore" : "Dismiss"}
+      </button>
+    </div>
+  )
+}
+
+function DeepCheckRow({ checks, busy, error, onRun }: { checks: Checks; busy: boolean; error: string; onRun: () => void }) {
+  const cost = checks.deep_cost_edits ?? 1
+  const deep = checks.deep
+  const status = busy
+    ? "Comparing meaning with the original…"
+    : deep
+      ? `${deep.found} possible meaning issue${deep.found === 1 ? "" : "s"} · ${ago(deep.checked_at)}${deep.stale ? " · edited since" : ""}`
+      : "Flipped negations, swapped parties, wrong dates or amounts, omissions"
+  return (
+    <div className="mx-1.5 my-1 px-2.5 py-2 rounded-lg flex items-start gap-2" style={{ background: "#faf5ee", border: "1px solid #f1e8d1" }}>
+      <div className="flex-1 min-w-0">
+        <div className="text-[11px] font-semibold" style={{ color: "#1f2a2e" }}>
+          Deep check with AI
+        </div>
+        <div className="text-[11px] leading-snug" style={{ color: error ? "#a14e2e" : "#6b6558" }}>
+          {error || status}
+        </div>
+        {deep?.truncated && !busy && !error && (
+          <div className="text-[10px] mt-0.5" style={{ color: "#8a8270" }}>
+            The document is long; only the first part was compared.
+          </div>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onRun}
+        disabled={busy}
+        title={`Uses ${cost} AI edit${cost === 1 ? "" : "s"} from this document's allowance`}
+        className="shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-md disabled:opacity-50"
+        style={{ background: "#ffffff", color: "#0a5e58", border: "1px solid #cfe6e2" }}
+      >
+        {busy ? "Checking…" : deep ? "Run again" : "Run"} · {cost} AI edit{cost === 1 ? "" : "s"}
       </button>
     </div>
   )
