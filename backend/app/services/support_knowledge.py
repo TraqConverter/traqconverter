@@ -137,8 +137,13 @@ every page", "Delete". Drag a picture to place it freely. To copy and paste a pi
 click in a paragraph and press Cmd/Ctrl+V. "Copy to every page" adds it to all other pages; one Undo removes them all.
 - Page stamp: under "Image", "Page stamp" puts a Media stamp at the bottom of every page (left, centre or right, \
 width in mm), and it is exported exactly as shown.
-- Checks: the checks button opens "READY TO CERTIFY", which compares numbers, names, notes and terms with the \
-original and groups issues under "MUST FIX", "CHECK" and "NOTES". Issues can be dismissed.
+- Checks: the checks button opens "READY TO CERTIFY", which compares the translation with the original: numbers \
+and amounts (even when reformatted, e.g. 1.234,56 to 1,234.56), dates, IBANs, tax codes and other IDs, names, dropped \
+or untranslated passages, inconsistent repeats, glossary terms and placeholders. Issues are grouped under "MUST FIX", \
+"CHECK" and "NOTES"; click one to jump to it, dismiss what's intentional. "Deep check with AI" also looks for meaning \
+errors such as a flipped "not", swapped buyer and seller, or a wrong date in context; it uses 1 AI edit per 4 pages \
+from the document's allowance. If errors are still open when you certify, export the delivery PDF or share with your \
+client, a summary appears and you can review them or continue anyway.
 - "Certify & deliver" (Pro and above): runs the checks ("Certify anyway" or "Review issues"), adds the certification \
 page at the end and marks the project Certified. The "Certification" toolbar button adds the page or opens it to \
 switch template or edit Date, languages, Translator and Document.
