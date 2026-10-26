@@ -29,6 +29,15 @@ export const metadata: Metadata = {
   title: "OnlineDocTranslator",
   description: DESCRIPTION,
   applicationName: "OnlineDocTranslator",
+  // Self-referencing canonical on every route. "./" resolves against
+  // metadataBase plus the current path, so each page gets its own.
+  //
+  // The homepage shipped no canonical at all and Search Console reported it as
+  // "Duplicate without user-selected canonical" — Google choosing its own
+  // canonical for the root of the site. The /guides routes set theirs
+  // explicitly and were unaffected; this covers the product pages, which are
+  // the ones reachable with query strings and with a trailing slash.
+  alternates: { canonical: "./" },
   openGraph: {
     type: "website",
     siteName: "OnlineDocTranslator",
