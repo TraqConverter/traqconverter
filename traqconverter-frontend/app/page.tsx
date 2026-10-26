@@ -19,6 +19,8 @@ import {
 } from "@/lib/plans"
 import { BrandMark, BrandName } from "@/components/brand/Logo"
 import DemoVideo from "@/components/landing/DemoVideo"
+import Testimonials from "@/components/landing/Testimonials"
+import { LANGUAGE_COUNT } from "@/lib/languages"
 
 const CREAM = "#faf5ee"
 const CREAM_DARK = "#f3ecdb"
@@ -50,6 +52,7 @@ export default function LandingPage() {
         <Workbench />
         <GetPaid />
         <Security />
+        <Testimonials />
         <Pricing />
         <RiskReversal />
         <FAQ />
@@ -370,7 +373,7 @@ function TrustBar() {
         style={{ padding: "28px 20px" }}
       >
         {[
-          { n: "28", l: "Languages" },
+          { n: String(LANGUAGE_COUNT), l: "Languages" },
           { n: "PDF · DOCX · JPG · PNG", l: "Input formats, up to 20 MB" },
           { n: "DOCX · PDF", l: "Export formats" },
           { n: "5 AI edits", l: "Included per page" },
@@ -1335,7 +1338,7 @@ function PlanFinder({ catalog }: { catalog: PlanCatalog }) {
         </table>
       </div>
       <p style={{ fontSize: 12, color: SUBTLE, marginTop: 14 }}>
-        Prices from the current plan list, in EUR. No VAT is added. Extra page packs are sold to subscribers and don&apos;t expire, so
+        Prices from the current plan list, in EUR. No VAT is added. Extra page packs at subscriber prices don&apos;t expire, so
         unused pack pages carry over.
       </p>
     </div>
@@ -1440,8 +1443,8 @@ const SECURITY_POINTS: { icon: React.ReactNode; title: string; body: string }[] 
   },
   {
     icon: <IconTrash />,
-    title: "Delete whenever you want",
-    body: "Delete a project and its files, text and memory entries go with it. You can delete your whole account from Settings.",
+    title: "Deleted after 90 days",
+    body: "A project is deleted automatically 90 days after its translation is completed. Delete it sooner, or your whole account, from the app.",
   },
 ]
 
@@ -1464,7 +1467,16 @@ function Security() {
           style={{ fontSize: 14, color: MUTED }}
         >
           <span style={{ color: TEAL, fontWeight: 600 }}>GDPR-ready:</span>
-          <span>EU data storage, your data deleted when you delete it, and a data processing agreement (DPA) on request.</span>
+          <span>
+            EU data storage, automatic deletion after 90 days, and a{" "}
+            <Link href="/dpa" style={{ color: TEAL, fontWeight: 600 }}>
+              data processing agreement (DPA)
+            </Link>
+            .{" "}
+            <Link href="/security" style={{ color: TEAL, fontWeight: 600 }}>
+              How we protect your documents
+            </Link>
+          </span>
         </p>
       </div>
     </section>
@@ -1596,8 +1608,8 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
             {pagesLabel(trial.credits)} free for {trial.days} days
           </div>
           <div style={{ fontSize: 14, color: MUTED, marginTop: 4 }}>
-            Layout-preserving translation and the full editor. Preview only:
-            downloads and client links need a paid plan. No card required.
+            Layout-preserving translation and the full editor. Downloads carry a
+            &quot;Trial&quot; watermark; client links need a plan or a page pack. No card required.
           </div>
         </div>
         <Link
@@ -1635,7 +1647,7 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
             marginBottom: 6,
           }}
         >
-          NEED MORE? TOP UP YOUR PLAN
+          NEED MORE? TOP UP, OR PAY AS YOU GO
         </div>
         <h3
           style={{
@@ -1649,7 +1661,7 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
           Extra page packs that never expire
         </h3>
         <p className="text-center" style={{ fontSize: 14, color: MUTED, marginBottom: 24 }}>
-          For subscribers: add pages to any active plan. Bigger packs cost less per page.
+          Add pages to any plan. Bigger packs cost less per page. Prices shown are for subscribers.
         </p>
         <div className="grid md:grid-cols-3 gap-4 max-w-[860px] mx-auto">
           {catalog.credit_packs.map((pack, i) => {
@@ -1734,10 +1746,15 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
                 >
                   {euroCents(pack.price_cents)}
                 </div>
-                <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>{packPerPage(pack)}</div>              </div>
+                <div style={{ fontSize: 13, color: MUTED, marginTop: 2 }}>{packPerPage(pack)}</div>
+                <div style={{ fontSize: 12, color: SUBTLE, marginTop: 8 }}>
+                  {euroCents(pack.payg_price_cents)} without a subscription
+                </div>
+              </div>
             )
           })}
         </div>
+        <PayAsYouGo catalog={catalog} />
         <p
           className="max-w-[860px] mx-auto text-center"
           style={{ fontSize: 12, color: SUBTLE, marginTop: 18, lineHeight: 1.5 }}
@@ -1752,6 +1769,34 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
         </p>
       </div>
     </>
+  )
+}
+
+function PayAsYouGo({ catalog }: { catalog: PlanCatalog }) {
+  const smallest = catalog.credit_packs[0]
+  if (!smallest) return null
+  return (
+    <div
+      className="max-w-[860px] mx-auto mt-6 flex flex-wrap items-center justify-between gap-4"
+      style={{ background: TEAL_SOFT, borderRadius: 16, padding: "18px 22px" }}
+    >
+      <div style={{ minWidth: 0, flex: "1 1 320px" }}>
+        <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.1em", color: TEAL_DARK }}>PAY AS YOU GO</div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginTop: 2 }}>
+          No subscription? Buy a pack from {euroCents(smallest.payg_price_cents)}.
+        </div>
+        <div style={{ fontSize: 14, color: MUTED, marginTop: 4 }}>
+          Clean downloads, client links and the certification page for one person, while you have pages left.
+          Pages never expire. Subscribers pay {Math.round((1 - smallest.price_cents / smallest.payg_price_cents) * 100)}% less.
+        </div>
+      </div>
+      <Link
+        href="/register"
+        style={{ color: TEAL_DARK, fontWeight: 600, fontSize: 14, whiteSpace: "nowrap" }}
+      >
+        Create an account →
+      </Link>
+    </div>
   )
 }
 
@@ -1874,15 +1919,16 @@ function FAQ() {
   const [open, setOpen] = useState<number | null>(0)
   const catalog = usePlans()
   const trialAnswer = catalog
-    ? `Sign up and you get ${pagesLabel(catalog.trial.credits)} to translate within ${catalog.trial.days} days, with the full editor. No credit card is needed. The trial is for trying the translation and the editor: downloads and client links need a paid plan, and the certification page needs Pro or above.`
-    : "Sign up and you get a few free pages with the full editor. No credit card is needed. The trial is for trying the translation and the editor: downloads and client links need a paid plan, and the certification page needs Pro or above."
+    ? `Sign up and you get ${pagesLabel(catalog.trial.credits)} to translate within ${catalog.trial.days} days, with the full editor. No credit card is needed. You can download the DOCX and PDF, with a "Trial" watermark on every page. Clean files and client links need a plan or a page pack, and the certification page needs Pro, Studio, Agency or pay as you go.`
+    : "Sign up and you get a few free pages with the full editor. No credit card is needed. You can download the DOCX and PDF, with a \"Trial\" watermark on every page. Clean files and client links need a plan or a page pack, and the certification page needs Pro, Studio, Agency or pay as you go."
+  const packList = catalog?.credit_packs
+    .map((c) => `${c.credits} for ${euroCents(c.price_cents)} (${euroCents(c.payg_price_cents)} without a subscription)`)
+    .join(", ")
   const pricingAnswer = catalog
     ? `Each page is one credit. Subscriptions include a monthly allowance (${catalog.plans
         .map((p) => `${p.credits} on ${p.name}`)
-        .join(", ")}) that resets each billing period. Subscribers can add credit packs of ${catalog.credit_packs
-        .map((c) => c.credits)
-        .join(", ")} credits, which don't expire.`
-    : "Each page is one credit. Subscriptions include a monthly allowance that resets each billing period, and subscribers can add credit packs that don't expire. The plans are listed above."
+        .join(", ")}) that resets each billing period. Anyone can buy credit packs, which never expire: ${packList}. With no subscription, a pack gives you pay as you go: clean downloads, client links and the certification page for one person while you have pages left.`
+    : "Each page is one credit. Subscriptions include a monthly allowance that resets each billing period. Anyone can buy credit packs, which never expire; subscribers pay less for them. The plans are listed above."
   const items = [
     {
       q: "Is the AI translation good enough to certify?",
@@ -1914,7 +1960,7 @@ function FAQ() {
     },
     {
       q: "What files and languages do you support?",
-      a: "PDF (single or multi-page, including scans), JPG, PNG and DOCX, up to 20 MB each. 28 languages, including Arabic, Hebrew, Chinese (Simplified and Traditional), Japanese and Korean; auto-detect can pick the source language. Exports are DOCX and PDF.",
+      a: `PDF (single or multi-page, including scans), JPG, PNG and DOCX, up to 20 MB each. ${LANGUAGE_COUNT} languages, including Arabic, Persian, Dari, Pashto, Urdu, Hebrew, Chinese (Simplified and Traditional), Japanese, Korean, the Balkan and Baltic languages, Ukrainian, Georgian, Armenian, Bengali, Punjabi, Tamil, Amharic, Tigrinya and Somali; auto-detect can pick the source language. Exports are DOCX and PDF.`,
     },
     {
       q: "What does a page credit include?",
@@ -1926,7 +1972,22 @@ function FAQ() {
     },
     {
       q: "What happens to my files?",
-      a: "They're stored in the EU (Ireland), encrypted at rest, and not used to train AI models. Projects stay in your account until you delete them; deleting a project removes its files, text and translation memory entries. A data processing agreement (DPA) is available on request.",
+      a: (
+        <>
+          They&apos;re stored in the EU (Ireland), encrypted at rest, and not used to train AI models. A project is
+          deleted automatically 90 days after its translation is completed, with a notice 7 days before, and you can
+          delete it sooner yourself. Translation memory and glossary entries stay until you delete them. The details
+          are on our{" "}
+          <Link href="/security" style={{ color: TEAL, fontWeight: 600 }}>
+            Security page
+          </Link>
+          , and our{" "}
+          <Link href="/dpa" style={{ color: TEAL, fontWeight: 600 }}>
+            data processing agreement (DPA)
+          </Link>{" "}
+          is published for you to save.
+        </>
+      ),
     },
     {
       q: "Can my team work together?",
@@ -2132,6 +2193,8 @@ function Footer() {
           links={[
             ["About", "#"],
             ["Contact", "mailto:hello@onlinedoctranslator.ai"],
+            ["Security", "/security"],
+            ["Data processing agreement", "/dpa"],
             ["Terms of service", "/terms"],
             ["Privacy policy", "/privacy"],
             ["Cookie policy", "/cookies"],

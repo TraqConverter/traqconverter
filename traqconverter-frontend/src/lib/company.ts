@@ -12,6 +12,8 @@ export const LEGAL_LINKS: [string, string][] = [
   ["Terms", "/terms"],
   ["Privacy", "/privacy"],
   ["Cookies", "/cookies"],
+  ["Security", "/security"],
+  ["DPA", "/dpa"],
 ]
 
 export const VAT_NOTE = "Prices in EUR. No VAT is added."

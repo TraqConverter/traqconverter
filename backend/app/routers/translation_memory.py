@@ -12,12 +12,12 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.dependencies.feature_guard import require_feature
-from app.dependencies.tenant import require_team_lead
+from app.dependencies.tenant import is_team_lead, require_team_lead
 from app.models.project import TranslationProject
 from app.models.team import Team
 from app.models.translation_memory import TranslationMemory
 from app.models.user import User
-from app.services import tm_keys, tmx
+from app.services import safe_xml, tm_keys, tm_transfer, tmx
 from app.services.translation_memory_service import upsert_entries
 
 
@@ -36,8 +36,6 @@ router = APIRouter(
     tags=["Translation Memory"],
     dependencies=[Depends(require_feature("terminology_memory"))],
 )
-
-IMPORT_CHUNK = 1000
 
 
 def _serialize(r: TranslationMemory, project_name: Optional[str] = None) -> dict:
@@ -160,6 +158,7 @@ def tm_summary(
         "origins": origins,
         "projects": [{"id": str(i), "name": name, "units": int(n)} for i, name, n in project_rows],
         "source_words_indexed": int(words or 0),
+        "can_transfer": is_team_lead(db, team.id, current_user),
     }
 
 
@@ -288,52 +287,62 @@ def bulk_delete_tm_entries(
 
 
 @router.post("/import")
-async def import_tmx(
+def import_tm(
     file: UploadFile = File(...),
+    replace: bool = Query(default=False, description="Replace an existing approved translation of the same source"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """TMX 1.4, XLIFF 1.2/2.0 or Trados sdlxliff; only confirmed segments of a bilingual file are read."""
     team = _resolve_user_team(db, current_user)
-    data = await file.read(tmx.MAX_BYTES + 1)
+    require_team_lead(db, team.id, current_user, "import into the translation memory")
+    # A plain def runs in the threadpool, so parsing a 20 MB file doesn't stall the event loop.
+    data = file.file.read(tmx.MAX_BYTES + 1)
     if len(data) > tmx.MAX_BYTES:
-        raise HTTPException(status_code=413, detail="The file is larger than 10 MB")
+        raise HTTPException(status_code=413, detail=f"The file is larger than {safe_xml.size_label(tmx.MAX_BYTES)}")
     try:
-        pairs, units = tmx.parse(data)
-    except tmx.TmxError as e:
+        fmt, parsed = tm_transfer.read_upload(data)
+    except safe_xml.XmlError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    usable = [
-        dict(p, origin="import")
-        for p in pairs
-        if tm_keys.source_lang(p["source_language"]) and tm_keys.target_lang(p["target_language"])
-        and p["source_text"].strip() and p["translated_text"].strip()
-        and len(p["source_text"]) <= tm_keys.MAX_SOURCE_CHARS
-    ]
-    written = 0
-    for i in range(0, len(usable), IMPORT_CHUNK):
-        written += upsert_entries(db, team.id, usable[i:i + IMPORT_CHUNK])
-    return {"units": units, "pairs": len(pairs), "imported": written, "skipped": len(pairs) - len(usable)}
+    try:
+        counts = tm_transfer.import_pairs(db, team.id, parsed.pairs, replace=replace)
+    except tm_transfer.ImportWriteError as e:
+        raise HTTPException(status_code=500, detail=f"The import stopped part-way. {e}. Try again.")
+    counts["invalid"] += parsed.invalid
+    skipped = counts["duplicates"] + counts["conflicts"] + counts["unsupported_language"] + counts["invalid"]
+    return {
+        "format": fmt,
+        "units": parsed.units,
+        "pairs": len(parsed.pairs),
+        **counts,
+        "unconfirmed": parsed.unconfirmed,
+        "skipped": skipped + parsed.unconfirmed,
+    }
 
 
 @router.get("/export")
-def export_tmx(
+def export_tm(
+    format: str = Query(default="tmx", pattern="^(tmx|xliff|xliff2|csv)$"),
     source: Optional[str] = Query(default=None),
     target: Optional[str] = Query(default=None),
+    regions: bool = Query(default=False, description="Write full locales (it-IT) where only the language is stored"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     team = _resolve_user_team(db, current_user)
+    require_team_lead(db, team.id, current_user, "export the translation memory")
     rows = (
         _filtered(db, team, source, target)
         .order_by(TranslationMemory.source_language, TranslationMemory.target_language, TranslationMemory.created_at)
         .all()
     )
+    if not rows:
+        raise HTTPException(status_code=404, detail="There are no entries to export for this language pair")
     src = tm_keys.source_lang(source) if source else ""
-    body = tmx.build(rows, srclang=src or "*all*")
-    name = "translation-memory"
-    if source or target:
-        name += "-" + "-".join(x for x in (src, tm_keys.target_lang(target) if target else "") if x)
+    tgt = tm_keys.target_lang(target) if target else ""
+    body, name, media = tm_transfer.export(rows, format, regions, src, tgt)
     return Response(
         content=body,
-        media_type="application/x-tmx+xml",
-        headers={"Content-Disposition": f'attachment; filename="{name}.tmx"', "Cache-Control": "no-store"},
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"},
     )

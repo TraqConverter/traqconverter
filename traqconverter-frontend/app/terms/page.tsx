@@ -14,7 +14,7 @@ export default function TermsPage() {
   return (
     <LegalPage
       title="Terms of Service"
-      updated="9 October 2026"
+      updated="23 October 2026"
       intro="These terms are the agreement between you and us for using OnlineDocTranslator. We've kept them short and plain. Please read them before you sign up."
     >
       <h2 id="who">1. Who we are</h2>
@@ -66,10 +66,11 @@ export default function TermsPage() {
 
       <h2 id="trial">4. Free trial</h2>
       <p>
-        New accounts get a 7-day free trial with 3 pages. During the trial you can translate and edit, but you
-        can&apos;t download results, invite team members or buy credit packs, and some features (translation
-        memory, glossary, templates, media, certifications) aren&apos;t available. No card is needed. Trial credits
-        you don&apos;t use end with the trial. When the trial ends, you need a paid plan to continue.
+        New accounts get a 7-day free trial with 3 pages. During the trial you can translate, edit and download
+        results, but every page of a trial download carries a &quot;Trial – OnlineDocTranslator.ai&quot; watermark,
+        and you must not remove or obscure it. Client links, team invites and some features (translation memory,
+        glossary, templates, media, certifications) aren&apos;t available on the trial. No card is needed. Trial
+        credits you don&apos;t use end with the trial. To continue after the trial, subscribe or buy a credit pack.
       </p>
 
       <h2 id="credits">5. Plans and credits</h2>
@@ -84,10 +85,11 @@ export default function TermsPage() {
           don&apos;t carry over. When a subscription ends, its remaining monthly credits end with it.
         </li>
         <li>
-          <strong>Credit packs.</strong>{" "}Packs are one-off purchases that add credits on top of your plan. They are
-          sold only to teams with an active paid subscription, not during the free trial or after a plan has ended.
-          Purchased credits don&apos;t expire while your account exists, and they stay on the account if your plan
-          ends, but downloading results needs an active plan.
+          <strong>Credit packs.</strong>{" "}Packs are one-off purchases of credits, available with or without a
+          subscription. Without an active subscription they cost 50% more, and while purchased credits remain they give
+          pay-as-you-go access: one user, clean downloads, client links and certification pages. Purchased credits
+          don&apos;t expire while your account exists. Translations paid for with purchased credits stay downloadable
+          after the balance reaches zero, subject to document retention.
         </li>
         <li>
           <strong>Which credits are used first.</strong>{" "}A job uses your monthly credits first and purchased
@@ -297,8 +299,8 @@ export default function TermsPage() {
         </li>
         <li>
           You confirm you have the right to upload each document, including a lawful basis for any personal data in
-          it. For that data you are the controller and we are your processor; a data processing agreement is
-          available on request (see the Privacy Policy).
+          it. For that data you are the controller and we are your processor, under our{" "}
+          <Link href="/dpa">data processing agreement</Link>, which forms part of these terms.
         </li>
       </ul>
 
@@ -325,7 +327,8 @@ export default function TermsPage() {
       <h2 id="confidentiality">16. Confidentiality</h2>
       <p>
         We treat your content as confidential. We access it only when needed to provide the service, to help you
-        when you ask for support, to keep the service secure, or when the law requires it.
+        when you ask for support, to keep the service secure, or when the law requires it. How we protect it is
+        described on our <Link href="/security">Security page</Link>.
       </p>
 
       <h2 id="data">17. Storing and deleting your files</h2>

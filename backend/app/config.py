@@ -113,6 +113,10 @@ class Settings(BaseSettings):
     STRIPE_PRICE_CREDITS_10: Optional[str] = None
     STRIPE_PRICE_CREDITS_25: Optional[str] = None
     STRIPE_PRICE_CREDITS_50: Optional[str] = None
+    # The same packs at PAYG_MARKUP for buyers with no active subscription; unset, they can't buy that pack.
+    STRIPE_PRICE_PAYG_CREDITS_10: Optional[str] = None
+    STRIPE_PRICE_PAYG_CREDITS_25: Optional[str] = None
+    STRIPE_PRICE_PAYG_CREDITS_50: Optional[str] = None
 
 
     SENTRY_DSN: Optional[str] = None

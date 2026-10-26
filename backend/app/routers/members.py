@@ -75,7 +75,7 @@ def _seats_taken(db: Session, team: Team) -> int:
 
 def seat_limit_message(plan: str) -> str:
     limit = SEAT_LIMITS.get(plan, 1)
-    name = next((p["name"] for p in PLANS if p["code"] == plan), plan.title())
+    name = next((p["name"] for p in PLANS if p["code"] == plan), "pay-as-you-go" if plan == "PAYG" else plan.title())
     upgrade = next_plan_with_more_seats(plan)
     if upgrade:
         then = f"Upgrade to {upgrade['name']} for up to {upgrade['seats']}."

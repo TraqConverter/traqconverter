@@ -64,3 +64,9 @@ body {
   background: #cfe6e2;
   color: #0a5e58;
 }
+
+@media print {
+  @page {
+    margin: 18mm;
+  }
+}

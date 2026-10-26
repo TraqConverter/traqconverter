@@ -90,7 +90,8 @@ def test_uploader_delete_removes_stored_files(client, db, storage, make_user, ma
 def test_trial_cannot_fetch_full_output(client, make_user, make_project):
     trial = make_user(plan="TRIAL", credits=1)
     project = make_project(trial)
-    for path in ("/projects/{pid}/rebuild-url", "/projects/{pid}/download", "/projects/{pid}/export"):
+    # The stored output is unwatermarked, so the trial only gets the watermarked exports.
+    for path in ("/projects/{pid}/rebuild-url", "/projects/{pid}/download"):
         assert client.get(path.format(pid=project.id), headers=trial["headers"]).status_code == 403, path
 
 

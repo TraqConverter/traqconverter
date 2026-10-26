@@ -16,7 +16,9 @@
 # stand-ins for Times New Roman/Arial, Calibri and Cambria (the fonts the
 # AI-built documents use); without them LibreOffice substitutes a wider
 # font and the PDF breaks pages where the editor doesn't. DejaVu covers
-# the scripts the others don't.
+# the scripts the others don't. Noto core adds Arabic, Hebrew, the Indic
+# scripts, Sinhala, Thai, Georgian, Armenian, Ethiopic, Myanmar and Khmer
+# (about 43 MB installed), so PDFs in those languages don't print boxes.
 
 [phases.setup]
 aptPkgs = [
@@ -27,4 +29,5 @@ aptPkgs = [
     "fonts-crosextra-carlito",
     "fonts-crosextra-caladea",
     "fonts-dejavu-core",
+    "fonts-noto-core",
 ]

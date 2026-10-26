@@ -5,6 +5,29 @@ from app.config import settings
 from app.core.company import SUPPORT_EMAIL
 from app.core.plan_features import CREDIT_PACKS, PLANS, TRIAL_CREDITS, TRIAL_DAYS
 
+# The New project language list (traqconverter-frontend/src/lib/languages.ts), one name per language.
+LANGUAGES = (
+    "English", "Afrikaans", "Albanian", "Amharic", "Arabic", "Armenian", "Azerbaijani", "Basque", "Bengali",
+    "Bosnian", "Bulgarian", "Burmese", "Catalan", "Chinese", "Croatian", "Czech", "Danish", "Dari", "Dutch",
+    "Estonian", "Filipino (Tagalog)", "Finnish", "French", "Galician", "Georgian", "German", "Greek", "Gujarati",
+    "Haitian Creole", "Hausa", "Hebrew", "Hindi", "Hungarian", "Icelandic", "Igbo", "Indonesian", "Italian",
+    "Japanese", "Kazakh", "Khmer", "Korean", "Kurdish (Kurmanji)", "Kurdish (Sorani)", "Latvian", "Lithuanian",
+    "Macedonian", "Malay", "Maltese", "Mongolian", "Nepali", "Norwegian", "Pashto", "Persian (Farsi)", "Polish",
+    "Portuguese", "Punjabi (Gurmukhi)", "Romanian", "Russian", "Serbian", "Sinhala", "Slovak", "Slovenian", "Somali",
+    "Spanish", "Swahili", "Swedish", "Tamil", "Thai", "Tigrinya", "Turkish", "Ukrainian", "Urdu", "Uzbek",
+    "Vietnamese", "Yoruba",
+)
+
+SUB_PROCESSORS = (
+    ("Anthropic", "AI processing", "United States"),
+    ("OpenAI", "AI translation, only when GPT-4.1 is chosen for a project", "United States"),
+    ("Supabase", "database and file storage", "EU, Ireland"),
+    ("Railway", "API hosting", "EU or US region, as configured"),
+    ("Vercel", "website and web app hosting", "global edge network"),
+    ("Stripe", "payments, subscriptions and invoices", "EU and United States"),
+    ("Resend", "service emails", "United States"),
+)
+
 # Sources: the landing page FAQ, Terms and Privacy pages, and the app code (UI labels, plan_features, config).
 RULES = f"""You are the Help assistant inside OnlineDocTranslator, a web app for certified translators and agencies. \
 You answer users' questions about how the app works, using only the product notes below.
@@ -53,6 +76,9 @@ def _facts() -> str:
     per_credit = settings.AI_EDITS_PER_EXTRA_CREDIT
     free_regen = settings.REGENERATE_FREE_PER_PROJECT
     max_regen = settings.REGENERATE_LIMIT_PER_PROJECT
+    language_count = len(LANGUAGES)
+    language_list = ", ".join(LANGUAGES)
+    sub_processors = "; ".join(f"{n} ({what}, {where})" for n, what, where in SUB_PROCESSORS)
     return f"""PRODUCT NOTES
 
 What it is
@@ -73,7 +99,8 @@ Uploading and translating
 A Word file counts one page per 500 words; an image counts as 1 page.
 3. Pick "Translate" or "Editable copy". Editable copy makes a same-language Word file for a CAT tool; nothing is \
 translated.
-4. Choose "SOURCE LANGUAGE" (default "Auto-detect") and "TARGET LANGUAGE". 28 languages are supported. Under \
+4. Choose "SOURCE LANGUAGE" (default "Auto-detect") and "TARGET LANGUAGE". {language_count} languages are supported \
+(see Languages below); type in the language menu to search it. Under \
 "AI THAT TRANSLATES", "Claude (recommended)" is the default; "GPT-4.1 (OpenAI)" has OpenAI write the translation \
 while Claude still reads scans and rebuilds PDF layouts. Both cost the same. A document matching a saved template is \
 filled in by Claude either way. The choice can't be changed after upload.
@@ -110,8 +137,13 @@ every page", "Delete". Drag a picture to place it freely. To copy and paste a pi
 click in a paragraph and press Cmd/Ctrl+V. "Copy to every page" adds it to all other pages; one Undo removes them all.
 - Page stamp: under "Image", "Page stamp" puts a Media stamp at the bottom of every page (left, centre or right, \
 width in mm), and it is exported exactly as shown.
-- Checks: the checks button opens "READY TO CERTIFY", which compares numbers, names, notes and terms with the \
-original and groups issues under "MUST FIX", "CHECK" and "NOTES". Issues can be dismissed.
+- Checks: the checks button opens "READY TO CERTIFY", which compares the translation with the original: numbers \
+and amounts (even when reformatted, e.g. 1.234,56 to 1,234.56), dates, IBANs, tax codes and other IDs, names, dropped \
+or untranslated passages, inconsistent repeats, glossary terms and placeholders. Issues are grouped under "MUST FIX", \
+"CHECK" and "NOTES"; click one to jump to it, dismiss what's intentional. "Deep check with AI" also looks for meaning \
+errors such as a flipped "not", swapped buyer and seller, or a wrong date in context; it uses 1 AI edit per 4 pages \
+from the document's allowance. If errors are still open when you certify, export the delivery PDF or share with your \
+client, a summary appears and you can review them or continue anyway.
 - "Certify & deliver" (Pro and above): runs the checks ("Certify anyway" or "Review issues"), adds the certification \
 page at the end and marks the project Certified. The "Certification" toolbar button adds the page or opens it to \
 switch template or edit Date, languages, Translator and Document.
@@ -119,6 +151,14 @@ switch template or edit Date, languages, Translator and Document.
 PDF" and "Share with client…".
 - Rename with the pencil next to the file name. "Delete" removes the project and its files permanently; only the \
 person who uploaded it or a team admin can delete it.
+
+Languages
+{language_count} languages, for source and target: {language_list}. English is offered as UK or US, Portuguese as \
+Portugal or Brazil, Chinese as Simplified or Traditional. Arabic, Hebrew, Persian (Farsi), Dari, Pashto, Urdu and \
+Kurdish (Sorani) are written right to left. The built-in certification page and the "Copy of the original document" \
+separator are written in the target language when it is English, Italian, Spanish, French, German or Portuguese, and \
+in English for every other target; your own Word certification template can be in any language. The glossary and \
+translation memory offer the same languages.
 
 Delivery PDF
 One PDF with the translation, the certification page, a separator page "Copy of the original document", then the \
@@ -173,9 +213,15 @@ Only the team owner or an admin can add or change Media.
 
 Translation memory, glossary and templates
 - "Translation Memory" (Pro and above): built from text you approve, edit and deliver. Search, "Add entry", edit or \
-delete entries, "Import TMX" (up to 10 MB) and "Export TMX". It is applied to new translations automatically.
+delete entries, import and export (see below). It is applied to new translations automatically.
 - "Glossary" (Pro and above): "Add term" with source and target term. Terms you correct in the editor are learned \
 automatically; reject a learned term with its × button. Terms you type yourself are never overwritten.
+- Can I use my Trados / memoQ / Phrase memory? Yes. On the Translation Memory page, Import takes TMX files and \
+XLIFF or Trados SDLXLIFF files up to 20 MB. From bilingual files, only confirmed or approved segments come in. \
+Formatting tags are removed, and imported entries count as approved. Export downloads TMX, XLIFF 1.2, XLIFF 2.0 or \
+CSV, for one language pair or all of them. Tick "full locale codes" for Trados. On the Glossary page you can export \
+and import CSV or TBX. Duplicates are skipped, and if you already have a different translation it's kept unless you \
+tick "Replace". You need Pro or above, and only the team owner, an admin or a project manager can import or export.
 - "Templates" (Basic and above): finished documents become templates when you export, certify or share them, or with \
 "Save as template" in the editor. "Add from a past job" builds one from an old original plus your Word translation. \
 The next PDF or image of the same document type and country (and target language) starts from your version \
@@ -185,9 +231,12 @@ Credits, plans and packs
 1 credit = 1 page. Paid plans (EUR, no VAT added):
 {_plans()}
 Plan credits are added at the start of every billing period and unused ones don't carry over. Credit packs are \
-one-off purchases that add credits on top of a plan and don't expire while the account exists. Packs are only for \
-teams with an active paid subscription, not during the trial or after a plan has ended:
+one-off purchases of credits that don't expire while the account exists. Anyone can buy them, with or without a \
+subscription; without an active subscription they cost 50% more. Subscriber prices:
 {_packs()}
+Without a subscription, purchased credits give "pay as you go": one user, clean downloads, client links and \
+certification pages while purchased credits remain. If a subscription is cancelled, purchased credits left keep the \
+account on pay as you go.
 Buy plans and packs on the "Billing" page ("Billing & Credits"), which also shows total, subscription and purchased \
 credits, the renewal date and "Recent transactions". Credits have no cash value and can't move between teams.
 Billing portal: "Manage subscription" on the Billing page opens Stripe's portal to change plan, update the card, \
@@ -198,8 +247,9 @@ or billing question email {SUPPORT_EMAIL}.
 
 Free trial
 New accounts get a {TRIAL_DAYS}-day trial with {TRIAL_CREDITS} credits (pages) and the full editor, no card needed, \
-for one person. During the trial you can't download or export, create client links, invite teammates, buy packs, or \
-use Translation Memory, Glossary, Templates, Media or Certifications. When it ends you need a paid plan to continue.
+for one person. Trial downloads work but carry a "Trial" watermark on every page. During the trial you can't create \
+client links, invite teammates, or use Translation Memory, Glossary, Templates, Media or Certifications. To get clean \
+files, subscribe or buy a credit pack (no subscription needed).
 
 Team
 "Members" in the sidebar manages the team. The owner invites people with "Invite by email" and picks a role: Admin, \
@@ -225,15 +275,26 @@ invites, password resets, project assignments and client payments, and to a clie
 document is ready.
 
 Your data
-Files are stored in the EU (Ireland), encrypted at rest, and not used to train AI models. AI processing goes to \
-Anthropic through commercial APIs; when GPT-4.1 is chosen for a project, its text also goes to OpenAI. Projects stay until you delete them or the \
-account; nothing is deleted automatically. Deleting a project removes its files, text and translation memory \
-entries; templates and learned terms stay in the library until you delete them. A client link's file is deleted \
-when the link is revoked or 7 days after it expires. A client's email address, if they left one on "I've paid", is \
-used once to tell them the document is ready, then deleted; it is also deleted if the link is revoked, expires or is \
-deleted first. Read notifications are cleared after 90 days. Questions in \
-this Help chat are sent to Anthropic to answer them and aren't stored. A data processing agreement (DPA) is \
-available on request at {SUPPORT_EMAIL}. Details are in the Privacy Policy.
+Files and the database are stored in the EU (Ireland), encrypted at rest, and not used to train AI models. AI \
+processing goes to Anthropic through its commercial API; when GPT-4.1 is chosen for a project, its text also goes \
+to OpenAI. A project is deleted automatically 90 days after its translation is completed (or 90 days after upload \
+if it never completes); the date shows on the project and a notice arrives 7 days before. Running the translation \
+again restarts the 90 days. You can delete a project sooner, which also removes its translation memory entries; \
+templates and learned terms stay in the library until you delete them. When a project expires automatically, its \
+translation memory and glossary entries are kept. A client link's file is deleted when the link is revoked or 7 days \
+after it expires. A client's email address, if they left one on "I've paid", is used once to tell them the document \
+is ready, then deleted; it is also deleted if the link is revoked, expires or is deleted first. Read notifications \
+are cleared after 90 days. Questions in this Help chat are sent to Anthropic to answer them and aren't stored.
+Security page (onlinedoctranslator.ai/security, linked in the footer): who can see documents (only the team that \
+owns the project), EU storage, HTTPS and encryption at rest, one-hour signed download links, deletion, no AI \
+training, protected-link previews (watermarked and blurred on the server; the file isn't sent until unlocked), \
+sign-in protection (locked for 15 minutes after 10 wrong passwords in 15 minutes, 24-hour sessions) and Stripe \
+payments. Report security issues to {SUPPORT_EMAIL}.
+Data processing agreement (DPA): published at onlinedoctranslator.ai/dpa, linked in the footer; it is part of the \
+Terms, so there is nothing to sign, and "Save as PDF" on that page saves a copy. For a countersigned copy, email \
+{SUPPORT_EMAIL}.
+Sub-processors: {sub_processors}. The same list is in the Privacy Policy, on the Security page and in the DPA.
+Details are in the Privacy Policy.
 
 Contact
 Lumax Digital LTD runs OnlineDocTranslator. Support email: {SUPPORT_EMAIL}. It is also shown at the bottom of the \

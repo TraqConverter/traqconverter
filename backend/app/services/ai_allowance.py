@@ -65,28 +65,31 @@ def _ensure_block_paid(db: Session, project: TranslationProject, block_index: in
         raise HTTPException(status_code=402, detail=out_of_edits_message())
 
 
-def reserve_edit(db: Session, project: TranslationProject, user: User) -> None:
-    """Before the model call: make sure the next edit is included or its block is paid for. Caller commits."""
+def _blocks_between(project: TranslationProject, first: int, last: int) -> list[int]:
+    return sorted({b for n in range(first, last + 1) if (b := _block_of(project, n)) is not None})
+
+
+def reserve_edit(db: Session, project: TranslationProject, user: User, count: int = 1) -> None:
+    """Before the model call: make sure the next `count` edits are included or their blocks are paid for. Caller commits."""
     if is_staff(user):
         return
-    block = _block_of(project, (project.ai_edits_used or 0) + 1)
-    if block is not None:
+    used = project.ai_edits_used or 0
+    for block in _blocks_between(project, used + 1, used + count):
         _ensure_block_paid(db, project, block)
 
 
-def count_edit(db: Session, project: TranslationProject, user: User) -> None:
+def count_edit(db: Session, project: TranslationProject, user: User, count: int = 1) -> None:
     """After a successful call, on the row-locked project. Caller commits."""
-    project.ai_edits_used = (project.ai_edits_used or 0) + 1
+    before = project.ai_edits_used or 0
+    project.ai_edits_used = before + count
     if is_staff(user):
-        return
-    block = _block_of(project, project.ai_edits_used)
-    if block is None:
         return
     # A concurrent edit can land on a block reserve_edit didn't see; charge it now, never fail the finished edit.
-    try:
-        _ensure_block_paid(db, project, block)
-    except HTTPException:
-        logger.warning("AI edit block %s on project %s went unpaid", block, project.id)
+    for block in _blocks_between(project, before + 1, project.ai_edits_used):
+        try:
+            _ensure_block_paid(db, project, block)
+        except HTTPException:
+            logger.warning("AI edit block %s on project %s went unpaid", block, project.id)
 
 
 def credits_charged(db: Session, project_id) -> int:

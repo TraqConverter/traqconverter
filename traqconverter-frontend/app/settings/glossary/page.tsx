@@ -1,9 +1,12 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import { api } from "@/lib/api"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { api, apiErrorDetail } from "@/lib/api"
+import ImportSummary, { type ImportResult } from "@/components/ImportSummary"
 import ProPaywall from "@/components/ProPaywall"
+import { blobErrorDetail, downloadFrom } from "@/lib/download"
 import { useFeature } from "@/lib/plan"
+import { BASE_LANGUAGES } from "@/lib/languages"
 
 type Term = {
   id: string
@@ -15,40 +18,19 @@ type Term = {
   usage_count: number
 }
 
-const COMMON_LANGUAGES = [
-  "English",
-  "Spanish",
-  "French",
-  "German",
-  "Italian",
-  "Portuguese",
-  "Dutch",
-  "Polish",
-  "Chinese",
-  "Japanese",
-  "Arabic",
-  "Swedish",
-]
+// Terms store the language by English name ("Italian"), as they always have.
+const GLOSSARY_LANGUAGES = BASE_LANGUAGES.map((l) => l.name)
 
 function toLangCode(raw?: string) {
   if (!raw) return "—"
   const s = raw.trim()
-  if (s.length <= 5 && /^[a-z]/i.test(s)) return s.toLowerCase()
-  const map: Record<string, string> = {
-    english: "en",
-    spanish: "es",
-    french: "fr",
-    german: "de",
-    italian: "it",
-    portuguese: "pt",
-    dutch: "nl",
-    polish: "pl",
-    chinese: "zh",
-    japanese: "ja",
-    arabic: "ar",
-    swedish: "sv",
-  }
-  return map[s.toLowerCase()] || s.slice(0, 2).toLowerCase()
+  const bare = (n: string) => n.replace(/\s*\(.*\)$/, "").toLowerCase()
+  const match =
+    BASE_LANGUAGES.find((l) => l.name.toLowerCase() === s.toLowerCase()) ??
+    BASE_LANGUAGES.find((l) => bare(l.name) === bare(s))
+  if (match) return match.code
+  if (s.length <= 6 && /^[a-z]{2,3}([-_][a-z0-9]{2,4})?$/i.test(s)) return s.toLowerCase()
+  return s.slice(0, 2).toLowerCase()
 }
 
 export default function GlossaryPage() {
@@ -68,10 +50,71 @@ export default function GlossaryPage() {
   const [notes, setNotes] = useState("")
   const [gated, setGated] = useState(false)
   const access = useFeature("glossaries")
+  const [canTransfer, setCanTransfer] = useState(false)
+  const [panel, setPanel] = useState<"export" | "import" | null>(null)
+  const [exportFormat, setExportFormat] = useState<"csv" | "tbx">("csv")
+  const [exportPair, setExportPair] = useState("all")
+  const [importSource, setImportSource] = useState("")
+  const [replaceExisting, setReplaceExisting] = useState(false)
+  const [importResult, setImportResult] = useState<ImportResult | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (access === "allowed") fetchTerms()
   }, [access])
+
+  useEffect(() => {
+    if (access !== "allowed") return
+    api
+      .get<{ can_transfer: boolean }>("/glossary/access")
+      .then((res) => setCanTransfer(!!res.data.can_transfer))
+      .catch(() => setCanTransfer(false))
+  }, [access])
+
+  const togglePanel = (name: "export" | "import") => {
+    setPanel((p) => (p === name ? null : name))
+    if (name === "export") setExportPair(activePair)
+    setError(null)
+  }
+
+  const exportGlossary = async () => {
+    const params: Record<string, string> = { format: exportFormat }
+    if (exportPair !== "all") {
+      const [s, t] = exportPair.split("→")
+      params.source = s
+      params.target = t
+    }
+    try {
+      setBusy("export")
+      setError(null)
+      await downloadFrom("/glossary/export", params, `glossary.${exportFormat}`)
+    } catch (err: unknown) {
+      setError(await blobErrorDetail(err, "Couldn't export the glossary."))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const importGlossary = async (file: File) => {
+    const form = new FormData()
+    form.append("file", file)
+    const params: Record<string, string | boolean> = { replace: replaceExisting }
+    if (importSource) params.source = importSource
+    try {
+      setBusy("import")
+      setError(null)
+      setImportResult(null)
+      const res = await api.post<ImportResult>("/glossary/import", form, { params })
+      setImportResult(res.data)
+      setPanel(null)
+      await fetchTerms()
+    } catch (err: unknown) {
+      setError(apiErrorDetail(err, "Couldn't import that file."))
+    } finally {
+      setBusy(null)
+      if (fileInput.current) fileInput.current.value = ""
+    }
+  }
 
   const resetForm = () => {
     setEditingId(null)
@@ -246,7 +289,7 @@ export default function GlossaryPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           <div
             className="flex items-center gap-2 px-4 py-2 rounded-full flex-1 min-w-0 sm:flex-none sm:w-72"
             style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}
@@ -303,8 +346,88 @@ export default function GlossaryPage() {
             </svg>
             {showAdd ? "Close" : "Add term"}
           </button>
+          {canTransfer && (
+            <>
+              <SecondaryButton onClick={() => togglePanel("import")} disabled={busy === "import"}>
+                {busy === "import" ? "Importing…" : "Import"}
+              </SecondaryButton>
+              <SecondaryButton onClick={() => togglePanel("export")} disabled={busy === "export" || terms.length === 0}>
+                {busy === "export" ? "Exporting…" : "Export"}
+              </SecondaryButton>
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".csv,.tsv,.txt,.tbx,.xml"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) void importGlossary(f)
+                }}
+              />
+            </>
+          )}
         </div>
       </div>
+
+      {importResult && (
+        <ImportSummary result={importResult} unit="terms" onClose={() => setImportResult(null)} />
+      )}
+
+      {panel === "export" && (
+        <div className="rounded-2xl p-5 space-y-3" style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}>
+          <div className="text-[11px] font-semibold tracking-[0.14em]" style={{ color: "#9a9178" }}>EXPORT</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <PanelSelect value={exportFormat} onChange={(v) => setExportFormat(v as "csv" | "tbx")} label="Format">
+              <option value="csv">CSV (spreadsheet)</option>
+              <option value="tbx">TBX-Basic (Trados MultiTerm, memoQ, Phrase)</option>
+            </PanelSelect>
+            <PanelSelect value={exportPair} onChange={setExportPair} label="Language pair">
+              <option value="all">All language pairs ({terms.length.toLocaleString()})</option>
+              {pairs.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.source} → {p.target} ({p.units.toLocaleString()})
+                </option>
+              ))}
+            </PanelSelect>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <SecondaryButton onClick={() => setPanel(null)}>Cancel</SecondaryButton>
+            <SecondaryButton onClick={exportGlossary} primary disabled={busy === "export"}>
+              {busy === "export" ? "Exporting…" : "Download"}
+            </SecondaryButton>
+          </div>
+        </div>
+      )}
+
+      {panel === "import" && (
+        <div className="rounded-2xl p-5 space-y-3" style={{ background: "#ffffff", border: "1px solid #e7ddc5" }}>
+          <div className="text-[11px] font-semibold tracking-[0.14em]" style={{ color: "#9a9178" }}>IMPORT</div>
+          <p className="text-sm" style={{ color: "#4a4638" }}>
+            Upload a TBX file or a CSV (up to 20 MB). A CSV can use the columns source_language, target_language,
+            source_term, target_term and notes, or one column per language with the language in the header, such as
+            it-IT and en-GB.
+          </p>
+          <div className="flex flex-wrap items-center gap-2 text-sm" style={{ color: "#4a4638" }}>
+            <span>Source language</span>
+            <PanelSelect value={importSource} onChange={setImportSource} label="Source language">
+              <option value="">The file&apos;s first language</option>
+              {GLOSSARY_LANGUAGES.map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </PanelSelect>
+          </div>
+          <label className="flex items-start gap-2 text-sm" style={{ color: "#4a4638" }}>
+            <input type="checkbox" className="mt-1" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} />
+            <span>Replace terms you already have when the file translates them differently. Left unticked, yours are kept.</span>
+          </label>
+          <div className="flex gap-2 justify-end">
+            <SecondaryButton onClick={() => setPanel(null)}>Cancel</SecondaryButton>
+            <SecondaryButton onClick={() => fileInput.current?.click()} primary disabled={busy === "import"}>
+              {busy === "import" ? "Importing…" : "Choose file"}
+            </SecondaryButton>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div
@@ -640,6 +763,58 @@ export default function GlossaryPage() {
   )
 }
 
+function SecondaryButton({
+  children,
+  onClick,
+  primary,
+  disabled,
+}: {
+  children: React.ReactNode
+  onClick: () => void
+  primary?: boolean
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="px-4 py-2.5 rounded-full text-sm font-semibold transition shrink-0 whitespace-nowrap disabled:opacity-50"
+      style={{
+        background: primary ? "#0a7870" : "#ffffff",
+        color: primary ? "#fff" : "#1f2a2e",
+        border: `1px solid ${primary ? "#0a7870" : "#e7ddc5"}`,
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function PanelSelect({
+  value,
+  onChange,
+  label,
+  children,
+}: {
+  value: string
+  onChange: (v: string) => void
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <select
+      aria-label={label}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="px-3 py-2 rounded-full text-sm outline-none max-w-full"
+      style={{ background: "#ffffff", border: "1px solid #e7ddc5", color: "#1f2a2e" }}
+    >
+      {children}
+    </select>
+  )
+}
+
 function UsageBadge({ count }: { count: number }) {
   const isUsed = count > 0
   return (
@@ -728,7 +903,8 @@ function LangSelect({
       className="bg-transparent outline-none text-sm w-full"
       style={{ color: "#1f2a2e" }}
     >
-      {COMMON_LANGUAGES.map((l) => (
+      {!GLOSSARY_LANGUAGES.includes(value) && value && <option value={value}>{value}</option>}
+      {GLOSSARY_LANGUAGES.map((l) => (
         <option key={l} value={l}>
           {l}
         </option>

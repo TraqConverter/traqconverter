@@ -5,8 +5,9 @@
     STRIPE_SECRET_KEY=sk_... venv/bin/python scripts/stripe_setup.py
     STRIPE_SECRET_KEY=sk_... venv/bin/python scripts/stripe_setup.py --with-webhooks --secrets-out ~/stripe-secrets.env
 
-Prices already set in STRIPE_PRICE_<PLAN> / STRIPE_PRICE_CREDITS_<N> are used as they are. Missing
-ones are found by lookup_key (traq_<plan>_monthly_eur, traq_credits_<n>_eur) or created. The portal
+Prices already set in STRIPE_PRICE_<PLAN> / STRIPE_PRICE_CREDITS_<N> / STRIPE_PRICE_PAYG_CREDITS_<N> are
+used as they are. Missing ones are found by lookup_key (traq_<plan>_monthly_eur, traq_credits_<n>_eur,
+traq_payg_credits_<n>_eur) or created. The portal
 configuration is found by its metadata and webhooks by their URL, so a second run changes nothing
 it doesn't need to. Webhook signing secrets go only to the --secrets-out file, never to stdout.
 """
@@ -17,7 +18,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.core.plan_features import CREDIT_PACKS, PLANS, price_lookup_key  # noqa: E402
+from app.core.plan_features import (  # noqa: E402
+    CREDIT_PACKS,
+    PLANS,
+    credit_pack_lookup_key,
+    payg_price_cents,
+    price_lookup_key,
+)
 
 PORTAL_METADATA_KEY = "traq_portal"
 PORTAL_METADATA_VALUE = "subscription"
@@ -56,8 +63,8 @@ WEBHOOKS = [
 ]
 
 
-def credit_lookup_key(credits):
-    return f"traq_credits_{credits}_eur"
+def credit_lookup_key(credits, payg=False):
+    return credit_pack_lookup_key(credits, payg=payg)
 
 
 def credit_product_name(credits):
@@ -164,23 +171,37 @@ def _plan_price(stripe, plan, env, dry_run, say):
     return product_id, _get(price, "id"), "created"
 
 
-def _credit_pack_price(stripe, pack, env, dry_run, say):
-    """(price_id, source) for one credit pack: env, then lookup_key, then a new one-time price."""
-    credits, cents = pack["credits"], pack["price_cents"]
-    name = f"STRIPE_PRICE_CREDITS_{credits}"
+def pack_env_name(credits, payg=False):
+    return f"STRIPE_PRICE_PAYG_CREDITS_{credits}" if payg else f"STRIPE_PRICE_CREDITS_{credits}"
+
+
+def _credit_pack_price(stripe, pack, env, dry_run, say, payg=False, products=None):
+    """(price_id, source) for one credit pack: env, then lookup_key, then a new one-time price.
+
+    payg=True is the non-subscriber price (PAYG_MARKUP), a second price on the same product.
+    `products` maps credits to the pack's product as found so far, so both prices share one.
+    """
+    products = {} if products is None else products
+    credits = pack["credits"]
+    cents = payg_price_cents(pack) if payg else pack["price_cents"]
+    name = pack_env_name(credits, payg)
     configured = env.get(name)
     if configured:
-        _check_amount(name, stripe.Price.retrieve(configured), cents, say)
+        price = stripe.Price.retrieve(configured)
+        _check_amount(name, price, cents, say)
+        products.setdefault(credits, _id(_get(price, "product")))
         return configured, "env"
 
-    lookup_key = credit_lookup_key(credits)
+    lookup_key = credit_lookup_key(credits, payg)
     existing = _find_price_by_lookup_key(stripe, lookup_key)
     if existing:
         _check_amount(f"{name} (lookup_key {lookup_key})", existing, cents, say)
+        products.setdefault(credits, _id(_get(existing, "product")))
         return _get(existing, "id"), "lookup_key"
 
     title = credit_product_name(credits)
-    product = _find_product(stripe, str(credits), key="credit_pack")
+    known = products.get(credits)
+    product = {"id": known} if known else _find_product(stripe, str(credits), key="credit_pack")
     if product:
         product_id = _get(product, "id")
     elif dry_run:
@@ -189,6 +210,7 @@ def _credit_pack_price(stripe, pack, env, dry_run, say):
     else:
         product_id = _get(stripe.Product.create(name=title, metadata={"credit_pack": str(credits)}), "id")
         say(f"  {name}: created product {product_id}")
+    products[credits] = product_id
 
     if dry_run:
         say(f"  {name}: would create one-time price {cents} {CURRENCY}, lookup_key {lookup_key}")
@@ -199,7 +221,8 @@ def _credit_pack_price(stripe, pack, env, dry_run, say):
         unit_amount=cents,
         tax_behavior="exclusive",
         lookup_key=lookup_key,
-        metadata={"credit_pack": str(credits)},
+        nickname="Pay as you go" if payg else "Subscriber",
+        metadata={"credit_pack": str(credits), "pricing": "payg" if payg else "subscriber"},
     )
     say(f"  {name}: created price {_get(price, 'id')}")
     return _get(price, "id"), "created"
@@ -321,11 +344,19 @@ def run(stripe, env, dry_run=False, say=print, webhooks=False, secrets_out=None)
 
     say("\nCredit packs")
     pack_prices = {}
+    payg_pack_prices = {}
+    pack_products = {}
     for pack in CREDIT_PACKS:
-        price_id, source = _credit_pack_price(stripe, pack, env, dry_run, say)
+        price_id, source = _credit_pack_price(stripe, pack, env, dry_run, say, products=pack_products)
         pack_prices[pack["credits"]] = price_id
         if source in ("created", "planned"):
             created.append(f"CREDITS_{pack['credits']}")
+    say("\nPay-as-you-go credit packs (no subscription)")
+    for pack in CREDIT_PACKS:
+        price_id, source = _credit_pack_price(stripe, pack, env, dry_run, say, payg=True, products=pack_products)
+        payg_pack_prices[pack["credits"]] = price_id
+        if source in ("created", "planned"):
+            created.append(f"PAYG_CREDITS_{pack['credits']}")
 
     endpoints = {}
     if webhooks:
@@ -355,10 +386,13 @@ def run(stripe, env, dry_run=False, say=print, webhooks=False, secrets_out=None)
         say(f"  STRIPE_PRICE_{code}={plan_prices[code][1]}")
     for credits, price_id in pack_prices.items():
         say(f"  STRIPE_PRICE_CREDITS_{credits}={price_id}")
+    for credits, price_id in payg_pack_prices.items():
+        say(f"  STRIPE_PRICE_PAYG_CREDITS_{credits}={price_id}")
     say(f"  STRIPE_PORTAL_CONFIGURATION={portal_id}")
     result = {
         "prices": {code: price_id for code, (_, price_id) in plan_prices.items()},
         "credit_packs": pack_prices,
+        "payg_credit_packs": payg_pack_prices,
         "portal": portal_id,
         "created": created,
     }

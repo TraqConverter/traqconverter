@@ -583,8 +583,8 @@ def upsert_terms(db: Session, project: TranslationProject, terms: list[dict], af
                 continue
             row.usage_count = (row.usage_count or 0) + 1
             row.confidence = max(row.confidence or 0, conf) if row.origin == "learned" else row.confidence
-        elif row.origin == "manual":
-            # A term the team typed in by hand is never overwritten by inference.
+        elif row.origin in ("manual", "import"):
+            # A term the team typed in or imported is never overwritten by inference.
             continue
         else:
             row.target_term = tgt

@@ -215,6 +215,9 @@ export default function DocumentEditor({
   checksError = "",
   onRecheck,
   onDismissCheck,
+  onDeepCheck,
+  deepChecking = false,
+  deepError = "",
   onActiveBlockChange,
   onIssuePick,
   hoverBlockId = null,
@@ -231,6 +234,9 @@ export default function DocumentEditor({
   checksError?: string
   onRecheck?: () => void
   onDismissCheck?: (id: string, on: boolean) => void
+  onDeepCheck?: () => void
+  deepChecking?: boolean
+  deepError?: string
   onActiveBlockChange?: (id: string | null) => void
   onIssuePick?: (item: CheckItem) => void
   hoverBlockId?: string | null
@@ -1748,7 +1754,7 @@ export default function DocumentEditor({
               onClick={() => (checksOpen ? setChecksOpen(false) : openChecks())}
               disabled={!hasDocument}
               aria-expanded={checksOpen}
-              title="Compare numbers, names, notes and terms with the original before certifying"
+              title="Compare numbers, dates, names, IDs and terms with the original before delivering"
               className={`${BTN} inline-flex items-center gap-1.5`}
               style={{ background: tone.background, color: tone.color, border: tone.border }}
             >
@@ -1825,6 +1831,9 @@ export default function DocumentEditor({
               onDismiss={(item, on) => onDismissCheck?.(item.id, on)}
               onRecheck={() => onRecheck?.()}
               onClose={() => setChecksOpen(false)}
+              onDeepCheck={editableCopy ? undefined : onDeepCheck}
+              deepChecking={deepChecking}
+              deepError={deepError}
             />
           )}
 

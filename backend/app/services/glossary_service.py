@@ -20,6 +20,11 @@ def _names() -> dict[str, str]:
             base = _code_key(code)
             _NAME_TO_CODE.setdefault(name.lower(), base)
             _NAME_TO_CODE.setdefault(re.sub(r"\s*\(.*\)$", "", name).strip().lower(), base)
+        from app.services.tm_keys import NAME_CODES
+
+        # Other spellings a document profile or an import may use ("Farsi", "Tagalog", "Bangla").
+        for name, code in NAME_CODES.items():
+            _NAME_TO_CODE.setdefault(name, _code_key(code))
     return _NAME_TO_CODE
 
 

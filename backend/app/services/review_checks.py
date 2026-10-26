@@ -14,13 +14,13 @@ import anthropic
 from sqlalchemy.orm import Session
 
 from app.models.project import TranslationProject, is_dtp
-from app.services import claude_params, source_map, source_pages
+from app.services import claude_params, qa_checks, source_map, source_pages
 from app.services.claude_multiturn_rebuild import extract_number_tokens, missing_source_numbers
 from app.services.glossary_service import fold_text, lang_key, language_name, project_source_language, term_in_text
 
 logger = logging.getLogger(__name__)
 
-CHECKS_VERSION = 2
+CHECKS_VERSION = 3
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
 MAX_SOURCE_CHARS = 14_000
 
@@ -46,7 +46,7 @@ _MONTHS = {
     11: "november nov novembre noviembre novembro listopad listopada",
     12: "december dec dicembre dic diciembre décembre déc dezember dezembro dez grudzień grudnia",
 }
-_MONTH_OF = {name: m for m, names in _MONTHS.items() for name in names.split()}
+_MONTH_OF = {source_map.fold(name): m for m, names in _MONTHS.items() for name in names.split()}
 _TEXT_DATE_RES = (
     re.compile(r"(\d{1,2})(?:st|nd|rd|th|º|°|\.)?\s+(?:de\s+|of\s+)?([^\W\d_]{3,})\.?,?\s+(?:de\s+)?(\d{4})", re.I),
     re.compile(r"([^\W\d_]{3,})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})", re.I),
@@ -114,9 +114,8 @@ def _translation_dates(text: str) -> tuple[dict, set]:
                 y += 2000 if y < 50 else 1900
         full.setdefault((a, b, y), tok)
         full.setdefault((b, a, y), tok)
-    folded = source_map.fold(text)
     for rx in _TEXT_DATE_RES:
-        for m in rx.finditer(folded):
+        for m in rx.finditer(text):
             g = m.groups()
             if g[0].isdigit():
                 day, month, year = int(g[0]), g[1], int(g[2])
@@ -188,46 +187,107 @@ class _Ctx:
         return None
 
 
-def check_numbers(ctx: _Ctx) -> list[dict]:
+def _changed_date(date: tuple, dates: dict) -> Optional[str]:
+    """A translation date sharing two of the three parts: the third was most likely changed."""
+    d, mo, y = date
+    for (a, b, c), tok in dates.items():
+        if (a == d and c == y and b != mo) or (a == d and b == mo and c != y):
+            return tok
+    return None
+
+
+def _date_item(ctx: _Ctx, seg: dict, label: str, date: tuple, dates: dict, partial: set) -> dict:
+    bid = ctx.block_for(seg)
+    ref = ctx.ref_for(seg, bid)
+    if date in dates:
+        return _item("date", label, "info", f"Date {label} is written as {dates[date]}", bid, ref)
+    changed = _changed_date(date, dates)
+    if changed:
+        return _number_missing(ctx, "date", label, f"Date {label} reads {changed} in the translation", seg)
+    if (date[0], date[2]) in partial:
+        return _item("date", label, "info", f"Date {label} is written out; check the month", bid, ref)
+    return _number_missing(ctx, "date", label, f"Date {label} from the source isn't in the translation", seg)
+
+
+def _source_text_dates(text: str) -> list[tuple[str, tuple, tuple[int, int]]]:
+    """Dates with a month name in the source ("12 luglio 2011", "März 3, 2020"): label, (d, m, y) and span."""
+    out = []
+    for rx in _TEXT_DATE_RES:
+        for m in rx.finditer(text):
+            g = m.groups()
+            if g[0].isdigit():
+                day, month, year = int(g[0]), g[1], int(g[2])
+            else:
+                month, day, year = g[0], int(g[1]), int(g[2])
+            mo = _MONTH_OF.get(source_map.fold(month).rstrip("."))
+            if mo and 1 <= day <= 31 and not any(s[0] <= m.start() < s[1] for _, _, s in out):
+                out.append((m.group(0), (day, mo, year), m.span()))
+    return out
+
+
+def check_numbers(ctx: _Ctx, qa=None) -> list[dict]:
+    from app.services import qa_checks
+
     items = []
     translation = ctx.translation
     exact = set(_NUM_RE.findall(translation))
     by_digits: dict[str, str] = {}
     for tok in exact:
         by_digits.setdefault(_digits(tok).lstrip("0") or "0", tok)
+    src_lang = qa.src if qa else ""
+    tgt_lang = qa.tgt if qa else ""
+    by_value: dict = {}
+    for tok in exact:
+        for comma in (qa_checks.decimal_comma(tgt_lang), qa_checks.decimal_comma(src_lang)):
+            value = qa_checks.parse_number(tok, comma)
+            if value is not None:
+                by_value.setdefault(value, tok)
     stream = " ".join(_digits(t) for t in _NUM_RE.findall(translation))
     dates, partial = _translation_dates(translation)
     missing_runs, _ = missing_source_numbers(ctx.source_text, translation)
     missing_runs = set(missing_runs)
     seen = set()
+    kept: list[str] = []
+    kept_block: dict[str, Optional[str]] = {}
     for seg in ctx.segments or [{"src": ctx.source_text, "index": -1, "bbox": None, "page": 0}]:
-        for tok in _NUM_RE.findall(seg["src"]):
+        text = qa_checks.numbers_text(seg["src"])
+        for label, date, (a, b) in _source_text_dates(text):
+            text = text[:a] + " " * (b - a) + text[b:]
+            if label not in seen:
+                seen.add(label)
+                items.append(_date_item(ctx, seg, label, date, dates, partial))
+        for tok in _NUM_RE.findall(text):
             if tok in seen:
                 continue
             seen.add(tok)
             digits = _digits(tok)
-            if len(digits) < 2 or tok in exact:
+            if len(digits) < 2:
+                continue
+            if tok in exact:
+                if qa and not _parse_date(tok) and qa_checks.kept_source_format(tok, src_lang, tgt_lang):
+                    kept.append(tok)
+                    kept_block[tok] = ctx.block_for(seg)
                 continue
             core = digits.lstrip("0") or "0"
             bid = ctx.block_for(seg)
             ref = ctx.ref_for(seg, bid)
             date = _parse_date(tok)
             if date:
-                if date in dates:
-                    items.append(_item("date", tok, "info", f"Date {tok} is written as {dates[date]}", bid, ref))
-                elif (date[0], date[2]) in partial:
-                    items.append(_item("date", tok, "info", f"Date {tok} is written out; check the month", bid, ref))
-                else:
-                    items.append(_number_missing(ctx, "date", tok, f"Date {tok} from the source isn't in the translation", seg))
+                items.append(_date_item(ctx, seg, tok, date, dates, partial))
                 continue
+            value = qa_checks.parse_number(tok, qa_checks.decimal_comma(src_lang)) if qa else None
             if core in by_digits:
                 items.append(_item("number", tok, "info", f"{tok} is formatted as {by_digits[core]}", bid, ref))
+            elif value is not None and value in by_value:
+                items.append(_item("number", tok, "info", f"{tok} is formatted as {by_value[value]}", bid, ref))
             elif len(core) >= 4 and core in stream.replace(" ", ""):
                 items.append(_item("number", tok, "info", f"{tok} appears split or reformatted in the translation", bid, ref))
             elif not (extract_number_tokens(tok) & missing_runs):
                 items.append(_item("number", tok, "info", f"{tok} appears only in parts in the translation", bid, ref))
             else:
                 items.append(_number_missing(ctx, "number", tok, f"Number {tok} from the source isn't in the translation", seg))
+    if qa:
+        items.extend(qa.number_formats(kept, kept_block))
     return items
 
 
@@ -248,10 +308,14 @@ def _number_missing(ctx: _Ctx, kind: str, tok: str, message: str, seg: dict) -> 
     return _item(kind, tok, "error", message, bid, ref)
 
 
-def check_codes(ctx: _Ctx) -> list[dict]:
+def check_codes(ctx: _Ctx, qa=None) -> list[dict]:
     items = []
     stream = re.sub(r"[^A-Z0-9]", "", source_map.fold(ctx.translation).upper())
     seen = set()
+    if qa:
+        found, handled = qa.identifiers()
+        items.extend(found)
+        seen |= handled
     for seg in ctx.segments:
         for tok in _CODE_RE.findall(seg["src"]):
             norm = re.sub(r"[^A-Z0-9]", "", tok)
@@ -700,19 +764,34 @@ def glossary_signature(db: Session, project: TranslationProject) -> str:
     return hashlib.sha1(raw.encode()).hexdigest()[:12]
 
 
-def compute(db: Session, project: TranslationProject, user, data: bytes, state, smap: dict) -> dict:
+def context(db: Session, project: TranslationProject, user, data: bytes, smap: dict, paras: Optional[list[dict]] = None) -> _Ctx:
+    """Source segments and translated paragraphs side by side, for any pipeline: segments and the authored DOCX alike."""
     info = source_pages.page_info(project)
+    paras = paras if paras is not None else source_map.document_paragraphs(data)
+    return _Ctx(db, project, user, paras, smap, source_map.segment_boxes(db, project, info))
+
+
+def compute(db: Session, project: TranslationProject, user, data: bytes, state, smap: dict) -> dict:
     paras = source_map.document_paragraphs(data)
-    segments = source_map.segment_boxes(db, project, info)
-    ctx = _Ctx(db, project, user, paras, smap, segments)
+    ctx = context(db, project, user, data, smap, paras)
     names = source_names(db, project, state, ctx.source_text)
     dtp = is_dtp(project)
+    try:
+        qa = qa_checks.QA(ctx, _item)
+    except Exception:
+        logger.exception("QA context failed (project=%s)", project.id)
+        qa = None
+    authored = bool(project.authored_docx_s3_key)
     items: list[dict] = []
     for name, fn in (
-        ("numbers", lambda: check_numbers(ctx)),
-        ("codes", lambda: check_codes(ctx)),
-        ("names", lambda: check_names(ctx, names)),
+        ("numbers", lambda: check_numbers(ctx, qa)),
+        ("codes", lambda: check_codes(ctx, qa)),
+        ("names", lambda: check_names(ctx, names) if names is not None else (qa.capitalised_names() if qa else [])),
         ("untranslated", lambda: check_untranslated(ctx, state)),
+        ("identical", lambda: [] if dtp else qa.identical_to_source(state.untranslated or {})),
+        ("missing", lambda: [] if dtp else qa.missing_text(authored)),
+        ("consistency", lambda: qa.consistency()),
+        ("formatting", lambda: qa.formatting()),
         ("possibly_untranslated", lambda: [] if dtp else check_possibly_untranslated(ctx, names)),
         ("notations", lambda: check_notations(ctx)),
         # An editable copy has no glossary to follow and is never certified.
@@ -726,14 +805,43 @@ def compute(db: Session, project: TranslationProject, user, data: bytes, state, 
             logger.exception("Check %s failed (project=%s)", name, project.id)
     unique: dict[str, dict] = {}
     for it in items:
-        unique.setdefault(it["id"], it)
+        # Two checks can flag the same thing; the more severe verdict stands.
+        prev = unique.get(it["id"])
+        if prev is None or SEVERITY_ORDER[it["severity"]] < SEVERITY_ORDER[prev["severity"]]:
+            unique[it["id"]] = it
     order = {p["id"]: i for i, p in enumerate(paras)}
     ordered = sorted(unique.values(), key=lambda i: (SEVERITY_ORDER[i["severity"]], order.get(i.get("block_id"), 10**6)))
     return {"items": ordered, "names_checked": names is not None}
 
 
-def view(result: dict, dismissed: dict, version: int, pending: bool, checked_at: str) -> dict:
+def _deep_view(deep: Optional[dict], digest: str, data: bytes) -> tuple[list[dict], Optional[dict]]:
+    """The last AI check's findings; after edits, only those whose quoted translation is still in the document."""
+    if not deep:
+        return [], None
+    stale = deep.get("digest") != digest
+    items = deep.get("items") or []
+    if stale:
+        current = qa_checks.norm("\n".join(p["text"] for p in source_map.document_paragraphs(data) if not p["cert"]))
+        items = [
+            {**i, "stale": True} for i in items
+            if not i.get("quote_translation") or qa_checks.norm(i["quote_translation"]) in current
+        ]
+    meta = {
+        "checked_at": deep.get("checked_at"),
+        "version": deep.get("version"),
+        "stale": stale,
+        "truncated": bool(deep.get("truncated")),
+        "found": len(deep.get("items") or []),
+    }
+    return items, meta
+
+
+def view(result: dict, dismissed: dict, version: int, pending: bool, checked_at: str,
+         deep_items: Optional[list[dict]] = None, deep: Optional[dict] = None, deep_cost: Optional[int] = None) -> dict:
     items = [{**i, "dismissed": i["id"] in dismissed} for i in result["items"]]
+    known = {i["id"] for i in items}
+    items += [{**i, "dismissed": i["id"] in dismissed} for i in deep_items or [] if i["id"] not in known]
+    items.sort(key=lambda i: SEVERITY_ORDER[i["severity"]])
     ready = not any(i["severity"] in ("error", "warning") and not i["dismissed"] for i in items)
     return {
         "ready": ready,
@@ -742,11 +850,15 @@ def view(result: dict, dismissed: dict, version: int, pending: bool, checked_at:
         "checked_at": checked_at,
         "pending": pending,
         "counts": {s: sum(1 for i in items if i["severity"] == s and not i["dismissed"]) for s in SEVERITY_ORDER},
+        "deep": deep,
+        "deep_cost_edits": deep_cost,
     }
 
 
 def run(db: Session, project: TranslationProject, user, data: bytes, smap: dict, refresh: bool = False) -> dict:
     """Checks for the current document version, cached until the version, the map or the glossary changes."""
+    from app.services import deep_check
+
     state = source_map.get_state(db, project)
     version = project.document_version or 0
     enabled = certifications_enabled(db, user)
@@ -755,15 +867,26 @@ def run(db: Session, project: TranslationProject, user, data: bytes, smap: dict,
     key = f"{CHECKS_VERSION}|{version}|{digest}|{state.map_revision or 0}|{glossary_signature(db, project)}|{int(enabled)}"
     pending = smap.get("status") == "running"
     cached = state.checks or {}
+    deep_items, deep = _deep_view(cached.get("deep"), digest, data)
+    cost = None if is_dtp(project) else deep_check.edits_for(project)
     if not refresh and cached.get("key") == key:
         db.commit()
-        return view(cached["result"], state.dismissed or {}, version, pending, cached["checked_at"])
+        return view(cached["result"], state.dismissed or {}, version, pending, cached["checked_at"], deep_items, deep, cost)
     result = compute(db, project, user, data, state, smap)
     checked_at = datetime.utcnow().isoformat() + "Z"
-    state.checks = {"key": key, "result": result, "checked_at": checked_at}
+    state.checks = {"key": key, "result": result, "checked_at": checked_at, "deep": cached.get("deep")}
     state.updated_at = datetime.utcnow()
     db.commit()
-    return view(result, state.dismissed or {}, version, pending, checked_at)
+    return view(result, state.dismissed or {}, version, pending, checked_at, deep_items, deep, cost)
+
+
+def save_deep(db: Session, project: TranslationProject, data: bytes, result: dict) -> None:
+    """Keep the AI check's findings next to the cached checks. Caller commits."""
+    state = source_map.get_state(db, project, lock=True)
+    checks = dict(state.checks or {})
+    checks["deep"] = {**result, "digest": hashlib.sha256(data).hexdigest()[:16], "version": project.document_version or 0}
+    state.checks = checks
+    state.updated_at = datetime.utcnow()
 
 
 def dismiss(db: Session, project: TranslationProject, item_id: str, on: bool = True) -> dict:

@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import Link from "next/link"
 
 import LegalPage, { TableScroll } from "@/components/legal/LegalPage"
+import SubProcessorTable from "@/components/legal/SubProcessorTable"
 import { COMPANY } from "@/lib/company"
 
 export const metadata: Metadata = {
@@ -15,7 +16,7 @@ export default function PrivacyPage() {
   return (
     <LegalPage
       title="Privacy Policy"
-      updated="9 October 2026"
+      updated="23 October 2026"
       intro="This policy explains what personal data OnlineDocTranslator handles, why, who else processes it, how long we keep it, and the rights you have."
     >
       <h2 id="who-we-are">1. Who we are</h2>
@@ -43,8 +44,8 @@ export default function PrivacyPage() {
           <strong>Documents you upload and everything made from them</strong>{" "}(text, translations, memory, glossary,
           templates, certification files). You, or the client you work for, decide why these are processed, so you
           are the <strong>controller</strong>{" "}and we are your <strong>processor</strong>. We process them only to
-          provide the service to you. A data processing agreement (DPA) is available on request at{" "}
-          <a href={mail}>{COMPANY.email}</a>.
+          provide the service to you, under our{" "}
+          <Link href="/dpa">data processing agreement (DPA)</Link>, which you can save as a PDF.
         </li>
       </ul>
       <p>
@@ -188,55 +189,11 @@ export default function PrivacyPage() {
       </p>
 
       <h2 id="processors">6. Who processes data for us</h2>
-      <p>We use these sub-processors. Each is bound by a data processing agreement.</p>
-      <TableScroll>
-        <table>
-          <thead>
-            <tr>
-              <th>Provider</th>
-              <th>What it does</th>
-              <th>Location</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Anthropic</td>
-              <td>AI processing: translation, reading scans, layout rebuild, editor assistant</td>
-              <td>United States</td>
-            </tr>
-            <tr>
-              <td>OpenAI</td>
-              <td>AI translation, only for projects where GPT-4.1 (OpenAI) is chosen</td>
-              <td>United States</td>
-            </tr>
-            <tr>
-              <td>Supabase</td>
-              <td>Database and file storage for your account and documents</td>
-              <td>EU (Ireland)</td>
-            </tr>
-            <tr>
-              <td>Railway</td>
-              <td>API hosting: the servers that run the application and process your documents</td>
-              <td>EU or US region, as configured</td>
-            </tr>
-            <tr>
-              <td>Vercel</td>
-              <td>Hosting of the website and web app</td>
-              <td>Global edge network</td>
-            </tr>
-            <tr>
-              <td>Stripe</td>
-              <td>Payment processing for {COMPANY.name}: payments, subscriptions and invoices</td>
-              <td>EU and United States</td>
-            </tr>
-            <tr>
-              <td>Resend</td>
-              <td>Sending service emails, such as team invitations</td>
-              <td>United States</td>
-            </tr>
-          </tbody>
-        </table>
-      </TableScroll>
+      <p>
+        We use these sub-processors. Each is bound by a data processing agreement. The same list is on our{" "}
+        <Link href="/security#sub-processors">Security page</Link>{" "}and in our <Link href="/dpa#sub-processors">DPA</Link>.
+      </p>
+      <SubProcessorTable />
       <p>
         Stripe also acts as an independent controller for some purposes, such as fraud prevention and its own legal
         obligations; see Stripe&apos;s privacy policy. We will update this list before adding a new sub-processor.
@@ -302,7 +259,8 @@ export default function PrivacyPage() {
         All connections use HTTPS, stored files are encrypted at rest, and passwords are stored only as hashes.
         Projects are visible only to your team, and roles control what each member can do. Delivery links use
         long random tokens. We look them up by a one-way hash and keep the token itself only encrypted, so your
-        team can copy a link again.
+        team can copy a link again. Our <Link href="/security">Security page</Link>{" "}describes these measures in
+        more detail.
       </p>
 
       <h2 id="rights">10. Your rights</h2>

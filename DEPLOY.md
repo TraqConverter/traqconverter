@@ -36,6 +36,7 @@ One supported path:
    | `S3_BUCKET_NAME` | `traqconverter` |
    | `stripe_secret_key`, `stripe_publishable_key`, `stripe_webhook_secret` | Stripe dashboard |
    | `STRIPE_PRICE_BASIC`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_CREDITS_10/25/50` | Stripe price IDs |
+   | `STRIPE_PRICE_PAYG_CREDITS_10/25/50` | Pay-as-you-go pack prices (1.5x, for buyers with no subscription), printed by `python scripts/stripe_setup.py`. Unset: non-subscribers can't buy that pack |
    | `STRIPE_PRICE_STUDIO`, `STRIPE_PRICE_AGENCY` | Optional Stripe price IDs (€79/month and €249/month). Unset: the plan shows "Contact us" |
    | `STRIPE_PORTAL_CONFIGURATION` | `bpc_...` printed by `python scripts/stripe_setup.py` |
    | `STRIPE_AUTOMATIC_TAX` | `false` (default). The seller, Lumax Digital LTD, is not VAT-registered, so checkout sends no `automatic_tax` or `tax_id_collection`; it still requires the billing address for invoices. Set `true` only after registering for VAT and enabling Stripe Tax |

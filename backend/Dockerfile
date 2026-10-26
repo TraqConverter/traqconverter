@@ -20,6 +20,9 @@ FROM python:3.11-slim AS base
 #     a wider font and the PDF breaks pages where the editor doesn't. The
 #     editor serves the same Carlito/Caladea builds (public/fonts/office).
 #   * fonts-dejavu-core — fallback for scripts the others don't cover.
+#   * fonts-noto-core — Arabic, Hebrew, Devanagari, Bengali, Gurmukhi, Gujarati,
+#     Tamil, Sinhala, Thai, Georgian, Armenian, Ethiopic, Myanmar and Khmer, so
+#     PDFs in those scripts don't print empty boxes (about 43 MB installed).
 #   * build-essential — for any Python wheels that don't ship binaries.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -32,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice \
     libreoffice-writer \
     fonts-dejavu-core \
+    fonts-noto-core \
     fonts-liberation \
     fonts-crosextra-carlito \
     fonts-crosextra-caladea \

@@ -29,7 +29,7 @@ class Glossary(Base):
     notes = Column(Text, nullable=True)
     usage_count = Column(Integer, nullable=False, default=0)
 
-    # 'manual' (typed by the team), 'learned' (mined from edits) or 'rejected' (kept so it isn't relearned).
+    # 'manual' (typed by the team), 'import' (from a CSV/TBX file), 'learned' (mined from edits) or 'rejected' (kept so it isn't relearned).
     origin = Column(String, nullable=False, default="manual", server_default="manual")
     confidence = Column(Float, nullable=True)
     learned_from_project_id = Column(

@@ -10,7 +10,7 @@ from typing import Iterable, Optional
 ORIGINS = ("machine", "approved", "manual", "import")
 MAX_SOURCE_CHARS = 1500
 
-_NAMES = {
+NAME_CODES = {
     "english": "en", "english (uk)": "en-GB", "british english": "en-GB", "english (us)": "en-US",
     "american english": "en-US", "italian": "it", "italiano": "it", "german": "de", "deutsch": "de",
     "french": "fr", "français": "fr", "francais": "fr", "spanish": "es", "español": "es", "espanol": "es",
@@ -22,9 +22,20 @@ _NAMES = {
     "hindi": "hi", "thai": "th", "albanian": "sq", "bulgarian": "bg", "croatian": "hr", "serbian": "sr",
     "slovak": "sk", "slovenian": "sl", "lithuanian": "lt", "latvian": "lv", "estonian": "et",
     "catalan": "ca", "persian": "fa", "farsi": "fa", "urdu": "ur", "bengali": "bn", "punjabi": "pa",
-    "tagalog": "tl", "filipino": "fil", "malay": "ms", "inglese": "en", "tedesco": "de", "francese": "fr",
+    "tagalog": "fil", "filipino": "fil", "malay": "ms", "inglese": "en", "tedesco": "de", "francese": "fr",
     "spagnolo": "es", "portoghese": "pt",
+    "persian (farsi)": "fa", "dari": "prs", "dari persian": "prs", "pashto": "ps", "pashtu": "ps",
+    "kurdish": "ku", "kurmanji": "ku", "kurdish (kurmanji)": "ku", "northern kurdish": "ku",
+    "sorani": "ckb", "kurdish (sorani)": "ckb", "central kurdish": "ckb", "sorani kurdish": "ckb",
+    "bosnian": "bs", "macedonian": "mk", "icelandic": "is", "maltese": "mt", "galician": "gl", "basque": "eu",
+    "georgian": "ka", "armenian": "hy", "azerbaijani": "az", "azeri": "az", "kazakh": "kk", "uzbek": "uz",
+    "mongolian": "mn", "bangla": "bn", "punjabi (gurmukhi)": "pa", "panjabi": "pa", "gujarati": "gu",
+    "tamil": "ta", "nepali": "ne", "sinhala": "si", "sinhalese": "si", "filipino (tagalog)": "fil",
+    "burmese": "my", "myanmar": "my", "khmer": "km", "cambodian": "km", "swahili": "sw", "kiswahili": "sw",
+    "amharic": "am", "tigrinya": "ti", "somali": "so", "afrikaans": "af", "yoruba": "yo", "igbo": "ig",
+    "hausa": "ha", "haitian creole": "ht", "haitian": "ht", "malaysian": "ms",
 }
+_KNOWN_BASES = frozenset(code.split("-")[0] for code in NAME_CODES.values())
 _TAG_RE = re.compile(r"^([a-z]{2,3})(?:[-_]([a-z]{4}))?(?:[-_]([a-z]{2}|\d{3}))?$", re.I)
 _UNKNOWN = {"", "auto", "auto-detect", "autodetect", "detect", "unknown", "und"}
 _TRADITIONAL_REGIONS = {"TW", "HK", "MO"}
@@ -38,7 +49,7 @@ def _parse(value) -> Optional[tuple[str, str, str]]:
     if m:
         return m.group(1).lower(), (m.group(2) or "").title(), (m.group(3) or "").upper()
     low = s.lower()
-    code = _NAMES.get(low) or _NAMES.get(re.sub(r"\s*\(.*\)$", "", low).strip())
+    code = NAME_CODES.get(low) or NAME_CODES.get(re.sub(r"\s*\(.*\)$", "", low).strip())
     return _parse(code) if code else None
 
 
@@ -70,6 +81,37 @@ def family(tag: str) -> str:
         return ""
     base, script, region = parsed
     return "zh-Hant" if _traditional_chinese(base, script, region) else base
+
+
+# The locale CAT tools expect when the app only knows the language (Trados TMs are locale-specific).
+_DEFAULT_REGION = {
+    "en": "GB", "it": "IT", "de": "DE", "fr": "FR", "es": "ES", "pt": "PT", "nl": "NL", "sv": "SE",
+    "da": "DK", "no": "NO", "nb": "NO", "fi": "FI", "pl": "PL", "cs": "CZ", "ro": "RO", "hu": "HU",
+    "tr": "TR", "vi": "VN", "id": "ID", "ja": "JP", "zh": "CN", "ko": "KR", "ru": "RU", "uk": "UA",
+    "el": "GR", "ar": "SA", "he": "IL", "hi": "IN", "th": "TH", "sq": "AL", "bg": "BG", "hr": "HR",
+    "sr": "RS", "sk": "SK", "sl": "SI", "lt": "LT", "lv": "LV", "et": "EE", "ca": "ES", "fa": "IR",
+    "ur": "PK", "bn": "BD", "pa": "IN", "tl": "PH", "fil": "PH", "ms": "MY",
+}
+
+
+def supported(value) -> bool:
+    """A language the app knows by name, in any spelling ('it-IT', 'Italian', 'zh-Hant'); not just a well-formed tag."""
+    parsed = _parse(value)
+    return bool(parsed) and (parsed[0] in _DEFAULT_REGION or parsed[0] in _KNOWN_BASES)
+
+
+def cat_locale(tag: str) -> str:
+    """A full locale for a stored code: 'it' -> 'it-IT', 'zh-Hant' -> 'zh-TW'; codes with a region stay as they are."""
+    parsed = _parse(tag)
+    if not parsed:
+        return tag or ""
+    base, script, region = parsed
+    if region:
+        return "-".join(p for p in parsed if p)
+    if base == "zh" and script == "Hant":
+        return "zh-TW"
+    region = _DEFAULT_REGION.get(base, "")
+    return "-".join(p for p in (base, script, region) if p)
 
 
 def normalise_text(text: str) -> str:
