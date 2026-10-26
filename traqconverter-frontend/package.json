@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.2.0",
     "axios": "^1.14.0",
     "docx-preview": "^0.3.6",
     "jszip": "^3.10.1",

@@ -54,6 +54,16 @@ const nextConfig: NextConfig = {
     ]
   },
 
+  async rewrites() {
+    return [
+      // IndexNow verifies ownership by fetching /<key>.txt from the apex. A
+      // rewrite rather than a root dynamic route: `app/[key]/route.ts` would
+      // also answer every other unmatched root path and replace the 404 page
+      // for an ordinary typo'd URL. Scoped to .txt, nothing else is affected.
+      { source: "/:key.txt", destination: "/api/indexnow/:key" },
+    ]
+  },
+
   async headers() {
     return [
       {
