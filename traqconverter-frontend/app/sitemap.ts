@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next"
-import { listPages } from "@/lib/content/pages"
+import { listPageIndex } from "@/lib/content/pages"
 import { CONTENT_BASE, SITE_URL, contentUrl } from "@/lib/content/config"
 
 // GENERATED PER REQUEST, not cached.
@@ -20,7 +20,7 @@ export const revalidate = 0
  * The site had no sitemap and no robots.txt at all — /sitemap.xml and
  * /robots.txt both answered 404 — so nothing told Google what exists here.
  *
- * Only PUBLISHED pages appear: listPages filters drafts. The count must equal
+ * Only PUBLISHED pages appear: listPageIndex filters drafts. The count must equal
  * the number of published pages, and on the sibling sites that equality is the
  * check that catches a broken content layer, because a sitemap that silently
  * lists fewer URLs than the site serves is indistinguishable from a small site.
@@ -41,7 +41,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   let guides: MetadataRoute.Sitemap = []
   try {
-    const pages = await listPages()
+    const pages = await listPageIndex()
     guides = pages.map((p) => ({
       url: contentUrl(p.slug),
       lastModified: new Date(p.updated_at),

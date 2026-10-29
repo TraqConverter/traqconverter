@@ -57,6 +57,23 @@ export function sql() {
 
 /** True when a content database is configured at all, so a route can degrade
  *  to the product pages rather than throwing during a build. */
+/**
+ * "The database is unavailable" is NOT "this page does not exist".
+ *
+ * getPage used to return null when no connection string was configured, and the
+ * route turns null into notFound() — so a renamed or dropped env var would have
+ * served a 404 on all ~190 guides and told Google to forget every one of them.
+ * A thrown error becomes a 500, which Google retries. The failure that actually
+ * happened on 2026-10-29 was a query error (HTTP 402, quota exceeded) and threw
+ * by itself; this closes the silent variant of the same outage.
+ */
+export class ContentDbUnavailableError extends Error {
+  constructor(detail: string) {
+    super(`Content database unavailable: ${detail}`)
+    this.name = "ContentDbUnavailableError"
+  }
+}
+
 export function hasContentDb(): boolean {
   return Boolean(
     process.env.CONTENT_DATABASE_URL ?? process.env.DATABASE_URL ?? process.env.POSTGRES_URL,
