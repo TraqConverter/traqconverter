@@ -1,7 +1,7 @@
 import type { Metadata } from "next"
 import Link from "next/link"
 import { notFound, redirect } from "next/navigation"
-import { getPage, getRedirect, listPages, relatedPages, normaliseSlug } from "@/lib/content/pages"
+import { getPage, getRedirect, listPageIndex, relatedPages, normaliseSlug } from "@/lib/content/pages"
 import { CONTENT_BASE, COLOR, SITE_NAME, TYPE_LABEL, contentHref, contentUrl } from "@/lib/content/config"
 import { BrandMark, BrandName } from "@/components/brand/Logo"
 
@@ -9,7 +9,11 @@ export const runtime = "nodejs"
 // Revalidate rather than rebuild: the pipeline publishes through the WP shim at
 // any hour, and a statically exported section would not show a new page until
 // the next deploy.
-export const revalidate = 300
+// 300 meant every page re-queried the database twelve times an hour, and the
+// bodies of every other page with it. An hour is still well inside the
+// pipeline's publishing cadence, and on-demand revalidation is the right tool
+// when a page must appear sooner.
+export const revalidate = 3600
 
 type Props = { params: Promise<{ slug?: string[] }> }
 
@@ -47,7 +51,11 @@ export default async function GuidePage({ params }: Props) {
     notFound()
   }
 
-  const all = await listPages()
+  // The INDEX, not the pages: the related rail and the breadcrumb need slugs
+  // and titles, and listPages() carries every page's body_html — ~7MB of egress
+  // per render across the section, which is what exhausted the content
+  // database's quota and 500'd all 45 guides.
+  const all = await listPageIndex()
   const related = relatedPages(page, all, 6)
   const hub = page.hub_slug ? all.find((p) => p.slug === page.hub_slug) : null
   const label = TYPE_LABEL[page.type] ?? ""
