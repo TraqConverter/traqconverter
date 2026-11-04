@@ -2,6 +2,7 @@ import "server-only"
 import { cache } from "react"
 import { ContentDbUnavailableError, hasContentDb, sql } from "./client"
 import { normaliseSlug, type ContentPage, type Faq, type PageType } from "./shim-naming"
+import { snapshotHasContent, snapshotPages } from "./snapshot"
 
 // Re-exported: these are the public names of the content layer, and they stay
 // importable from here even though the pure definitions live next door so a
@@ -27,6 +28,10 @@ export type { ContentPage, Faq, PageType }
  * response at 1000 rows; SQL has no such ceiling.
  */
 export const listPages = cache(async (): Promise<ContentPage[]> => {
+  // The committed snapshot first: reading bodies out of the database on every
+  // revalidation is what spent the egress allowance and 402'd the whole
+  // section for a week. See ./snapshot.ts.
+  if (snapshotHasContent()) return snapshotPages()
   if (!hasContentDb()) return []
   const rows = (await sql()`
     select slug, title, h1, meta_description, body_html, excerpt, type, wp_type, hub_slug, status,
@@ -64,6 +69,12 @@ export type ContentPageIndex = Pick<
 >
 
 export const listPageIndex = cache(async (): Promise<ContentPageIndex[]> => {
+  if (snapshotHasContent()) {
+    return snapshotPages().map((r) => ({
+      slug: normaliseSlug(r.slug), title: r.title, type: r.type, wp_type: r.wp_type,
+      hub_slug: r.hub_slug, in_nav: r.in_nav, sort: r.sort, updated_at: r.updated_at,
+    }))
+  }
   if (!hasContentDb()) return []
   const rows = (await sql()`
     select slug, title, type, wp_type, hub_slug, in_nav, sort,
@@ -77,6 +88,14 @@ export const listPageIndex = cache(async (): Promise<ContentPageIndex[]> => {
 
 /** One page by slug. A draft 404s for the public. */
 export const getPage = cache(async (slug: string): Promise<ContentPage | null> => {
+  const wanted = normaliseSlug(slug)
+  // A snapshot that holds this section answers for it entirely — including
+  // "no such page", which is why this returns null rather than falling
+  // through to the database on a miss. Falling through would reintroduce a
+  // query per 404, and crawlers generate plenty of those.
+  if (snapshotHasContent()) {
+    return snapshotPages().find((p) => normaliseSlug(p.slug) === wanted) ?? null
+  }
   // Throw, never return null: the route turns null into notFound(), and a
   // missing connection string would 404 the whole section instead of failing
   // loudly. null here means "the database answered and has no such page".
