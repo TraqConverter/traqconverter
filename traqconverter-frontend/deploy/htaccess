@@ -1,0 +1,62 @@
+Options -Indexes
+AddDefaultCharset UTF-8
+DirectoryIndex proxy.php
+
+<IfModule mod_deflate.c>
+AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript application/javascript application/json application/xml image/svg+xml
+</IfModule>
+
+<IfModule mod_expires.c>
+ExpiresActive On
+ExpiresByType image/jpeg "access plus 1 year"
+ExpiresByType image/png "access plus 1 year"
+ExpiresByType image/webp "access plus 1 year"
+ExpiresByType image/svg+xml "access plus 1 year"
+ExpiresByType font/woff2 "access plus 1 year"
+ExpiresByType text/css "access plus 1 year"
+ExpiresByType application/javascript "access plus 1 year"
+</IfModule>
+
+<IfModule mod_headers.c>
+<FilesMatch "\.(js|css|woff2|png|jpg|jpeg|webp|svg|ico)$">
+Header set Cache-Control "public, max-age=31536000, immutable"
+</FilesMatch>
+</IfModule>
+
+<FilesMatch "\.(php|db|sqlite|env)$">
+<IfModule mod_authz_core.c>
+Require all denied
+</IfModule>
+</FilesMatch>
+<Files "proxy.php">
+<IfModule mod_authz_core.c>
+Require all granted
+</IfModule>
+</Files>
+
+RewriteEngine On
+RewriteBase /
+# THIS SITE IS www-CANONICAL, the opposite of its siblings. Verified three
+# ways before writing it: SITE_URL in src/lib/content/config.ts, the live
+# canonical tag, and the apex's own redirect. Copying the sibling rule
+# verbatim would have redirected the canonical host away from itself.
+#
+# It is also a 301 here. The Vercel deployment answered the apex with a 307
+# (temporary), which tells Google to keep the apex indexed alongside www.
+RewriteCond %{HTTP_HOST} ^onlinedoctranslator\.ai$ [NC]
+RewriteRule ^ https://www.onlinedoctranslator.ai%{REQUEST_URI} [R=301,L]
+# nginx terminates TLS and proxies to Apache, so %{HTTPS} reads "off" even on
+# an https request: testing it would redirect https traffic to itself forever.
+# The forwarded header is the only truth about the client's protocol here, and
+# an absent header fails open rather than looping.
+#
+# This lives in the repo because Cloudways' own per-app "Force HTTPS Redirection"
+# toggle was set on five sites and missed on three, and BCT, USCIS and GHL served
+# their whole estate over plain http for weeks as a result. A rule here cannot be
+# missed on the next launch.
+RewriteCond %{HTTP:X-Forwarded-Proto} =http
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteCond %{REQUEST_URI} !\.php$
+RewriteRule ^ - [L]
+RewriteRule ^ proxy.php [L]
