@@ -1,5 +1,6 @@
 import "server-only"
 import { sql } from "./client"
+import * as store from "./store-sqlite"
 import { contentUrl } from "./config"
 import { normaliseSlug, type ContentPage } from "./pages"
 import { extractLeadingH1, slugForTitle, statusFor, typeForTitle, wpDate } from "./shim-naming"
@@ -44,6 +45,7 @@ export function authorized(req: Request): boolean {
 }
 
 export async function idForSlug(slug: string): Promise<number> {
+  if (store.usingSqlite()) return store.idForSlug(slug)
   // One statement, so a concurrent create for the same slug cannot lose a race
   // between a select and an insert. `do update` rather than `do nothing`
   // because `do nothing` returns no row on conflict and there would be nothing
@@ -57,6 +59,7 @@ export async function idForSlug(slug: string): Promise<number> {
 }
 
 export async function slugForId(id: number): Promise<string | null> {
+  if (store.usingSqlite()) return store.slugForId(id)
   const rows = (await sql()`
     select slug from content.wp_ids where id = ${id} limit 1
   `) as unknown as Array<{ slug: string }>
@@ -105,6 +108,12 @@ export async function toWpObject(page: ContentPage): Promise<Record<string, unkn
 export async function listAllPages(opts: { wpType?: "page" | "post"; status?: "publish" | "draft" } = {}): Promise<ContentPage[]> {
   const wpType = opts.wpType ?? null
   const status = opts.status === "publish" ? "published" : opts.status === "draft" ? "draft" : null
+  if (store.usingSqlite()) {
+    return store.listPages({
+      wpType: wpType ?? undefined,
+      status: (status as "published" | "draft" | null) ?? undefined,
+    })
+  }
   return (await sql()`
     select slug, title, h1, meta_description, body_html, excerpt, type, wp_type, hub_slug, status,
            faq, schema_json, canonical, in_nav, sort,
@@ -167,6 +176,25 @@ export async function upsertFromWp(input: {
   // was actually sent. wp_type is the route and is set once, on insert.
   const type = title ? typeForTitle(title, input.postType) : null
   const status = statusFor(input.status)
+
+  if (store.usingSqlite()) {
+    // Same contract as the SQL below: an omitted field is left alone. The
+    // store's own tests assert that, because an early version of this write
+    // replaced a page's title with its slug on every content-only update.
+    const page = store.upsert({
+      slug,
+      title,
+      h1: h1 ?? undefined,
+      body: lifted.body,
+      excerpt: input.excerpt,
+      metaDescription: input.metaDescription,
+      type: type ?? undefined,
+      wpType: input.postType,
+      status: (status as "published" | "draft" | null) ?? undefined,
+      fallbackType: typeForTitle(title ?? slug, input.postType),
+    })
+    return { page, id: store.idForSlug(page.slug) }
+  }
 
   const rows = (await sql()`
     insert into content.pages (slug, title, h1, body_html, excerpt, meta_description,

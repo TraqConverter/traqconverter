@@ -3,6 +3,7 @@ import { cache } from "react"
 import { ContentDbUnavailableError, hasContentDb, sql } from "./client"
 import { normaliseSlug, type ContentPage, type Faq, type PageType } from "./shim-naming"
 import { snapshotHasContent, snapshotPages } from "./snapshot"
+import * as store from "./store-sqlite"
 
 // Re-exported: these are the public names of the content layer, and they stay
 // importable from here even though the pure definitions live next door so a
@@ -28,9 +29,16 @@ export type { ContentPage, Faq, PageType }
  * response at 1000 rows; SQL has no such ceiling.
  */
 export const listPages = cache(async (): Promise<ContentPage[]> => {
-  // The committed snapshot first: reading bodies out of the database on every
-  // revalidation is what spent the egress allowance and 402'd the whole
-  // section for a week. See ./snapshot.ts.
+  /**
+   * PRECEDENCE: live store, then snapshot, then the old hosted database.
+   *
+   * SQLite first because it is the only one that is always current — a page
+   * published a minute ago is in it, and the snapshot is a point-in-time copy
+   * that would hide it until the next export. The snapshot still answers where
+   * there is no local store (the serverless deployment, and any build before
+   * the seed has run), which is what keeps the section up without a database.
+   */
+  if (store.usingSqlite()) return store.listPages({ status: "published" })
   if (snapshotHasContent()) return snapshotPages()
   if (!hasContentDb()) return []
   const rows = (await sql()`
@@ -69,8 +77,9 @@ export type ContentPageIndex = Pick<
 >
 
 export const listPageIndex = cache(async (): Promise<ContentPageIndex[]> => {
-  if (snapshotHasContent()) {
-    return snapshotPages().map((r) => ({
+  const source = store.usingSqlite() ? store.listPages({ status: "published" }) : snapshotHasContent() ? snapshotPages() : null
+  if (source) {
+    return source.map((r) => ({
       slug: normaliseSlug(r.slug), title: r.title, type: r.type, wp_type: r.wp_type,
       hub_slug: r.hub_slug, in_nav: r.in_nav, sort: r.sort, updated_at: r.updated_at,
     }))
@@ -93,6 +102,11 @@ export const getPage = cache(async (slug: string): Promise<ContentPage | null> =
   // "no such page", which is why this returns null rather than falling
   // through to the database on a miss. Falling through would reintroduce a
   // query per 404, and crawlers generate plenty of those.
+  if (store.usingSqlite()) {
+    const page = store.getPage(wanted)
+    // A draft is not public, exactly as the SQL below filters.
+    return page && page.status === "published" ? page : null
+  }
   if (snapshotHasContent()) {
     return snapshotPages().find((p) => normaliseSlug(p.slug) === wanted) ?? null
   }
