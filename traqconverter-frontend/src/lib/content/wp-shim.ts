@@ -1,6 +1,7 @@
 import "server-only"
 import { sql } from "./client"
 import * as store from "./store-sqlite"
+import { sanitiseBody } from "./sanitise"
 import { contentUrl } from "./config"
 import { normaliseSlug, type ContentPage } from "./pages"
 import { extractLeadingH1, slugForTitle, statusFor, typeForTitle, wpDate } from "./shim-naming"
@@ -169,7 +170,11 @@ export async function upsertFromWp(input: {
 
   // The body's own H1 becomes the page's h1 and leaves the markup, so the
   // template's heading is the only one on the page.
-  const lifted = input.content === undefined ? { h1: null, body: undefined } : extractLeadingH1(input.content)
+  // Strip the WordPress chrome BEFORE storing: the pipeline writes a designed
+  // page for a theme this site does not have, and un-stripped it renders as
+  // Gutenberg comments, invisible white-on-white text and a duplicated banner.
+  const incoming = input.content === undefined ? undefined : sanitiseBody(input.content)
+  const lifted = incoming === undefined ? { h1: null, body: undefined } : extractLeadingH1(incoming)
   const h1 = lifted.h1 ?? title
 
   // The editorial type follows the title, so it is recomputed only when a title
