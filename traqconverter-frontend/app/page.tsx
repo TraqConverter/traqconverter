@@ -106,6 +106,19 @@ function TopBar() {
           <a href="#faq" style={navLink}>FAQ</a>
         </nav>
         <div className="flex items-center gap-1 sm:gap-3 whitespace-nowrap">
+          {/* 60 guide pages had no link from this page, which is the most
+              linked page on the site. Nothing could reach them but search. */}
+          <Link
+            href="/guides"
+            style={{
+              fontSize: 14,
+              fontWeight: 500,
+              color: TEXT,
+              padding: "8px 12px",
+            }}
+          >
+            Guides
+          </Link>
           <Link
             href="/login"
             style={{
@@ -2199,6 +2212,10 @@ function Footer() {
             ["Privacy policy", "/privacy"],
             ["Cookie policy", "/cookies"],
           ]}
+        />
+        <FooterCol
+          title="Learn"
+          links={[["Translation guides", "/guides"]]}
         />
         <FooterCol
           title="Get started"
