@@ -404,7 +404,7 @@ def delete_account(
                         db.execute(
                             text(
                                 "DELETE FROM translation_jobs "
-                                "WHERE project_id = ANY(:pids)"
+                                "WHERE project_id = ANY(CAST(:pids AS uuid[]))"
                             ),
                             {"pids": [str(p) for p in project_ids]},
                         )
@@ -432,13 +432,23 @@ def delete_account(
                             db.execute(
                                 text(
                                     "DELETE FROM translation_memory "
-                                    "WHERE project_id = ANY(:pids)"
+                                    "WHERE project_id = ANY(CAST(:pids AS uuid[]))"
                                 ),
                                 {"pids": [str(p) for p in project_ids]},
                             )
                     except Exception as e2:
                         logger.info("TM project_id cleanup also skipped: %s", e2)
 
+                # A translation still running can write segments after the first sweep; lock the projects and sweep again.
+                db.query(TranslationProject.id).filter(
+                    TranslationProject.team_id == team_id
+                ).with_for_update().all()
+                late = [r[0] for r in db.query(TranslationSegment.id).filter(TranslationSegment.project_id.in_(project_ids)).all()]
+                if late:
+                    db.query(SegmentComment).filter(SegmentComment.segment_id.in_(late)).delete(synchronize_session=False)
+                    db.query(TranslationSegment).filter(
+                        TranslationSegment.project_id.in_(project_ids)
+                    ).delete(synchronize_session=False)
                 db.query(TranslationProject).filter(
                     TranslationProject.team_id == team_id
                 ).delete(synchronize_session=False)
