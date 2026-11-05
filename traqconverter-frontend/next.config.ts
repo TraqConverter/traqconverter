@@ -44,6 +44,21 @@ const nextConfig: NextConfig = {
   // Used by the Dockerfile; Vercel ignores it.
   output: "standalone",
 
+  /**
+   * Pin the trace root to THIS directory.
+   *
+   * Next infers it by walking up for a lockfile, and an unrelated
+   * package-lock.json in the home directory made it choose that — so the
+   * standalone bundle came out at
+   * `.next/standalone/dev/onlinedoctranslator/traqconverter-frontend/server.js`
+   * instead of `.next/standalone/server.js`, and the deploy shipped a bundle
+   * with no server in the place anything looks for one.
+   *
+   * It depends on a file OUTSIDE the repository, so without this the output
+   * layout differs between machines for reasons nothing in here explains.
+   */
+  outputFileTracingRoot: import.meta.dirname,
+
   poweredByHeader: false,
   compress: true,
 
