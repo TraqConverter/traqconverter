@@ -22,7 +22,7 @@ from app.models.team import Team
 from app.models.credit import CreditTransaction, CreditWallet
 from app.models.password_reset import PasswordResetToken
 from app.schemas.auth import ForgotPassword, ResetPassword, UserRegister, UserLogin, TokenResponse
-from app.services import email_service, owner_notifications
+from app.services import email_service, onboarding_emails, owner_notifications
 from app.core.security import hash_password, verify_password, create_access_token
 from app.core.plan_features import TRIAL_DAYS, TRIAL_CREDITS
 from app.routers.members import auto_accept_invites
@@ -616,6 +616,7 @@ def register(user_data: UserRegister, background_tasks: BackgroundTasks, db: Ses
 
         user.subscription_plan = "TRIAL"
         user.subscription_status = "TRIAL"
+        onboarding_emails.start(db, user)
     else:
 
 
@@ -644,6 +645,8 @@ def register(user_data: UserRegister, background_tasks: BackgroundTasks, db: Ses
     owner_notifications.notify(
         background_tasks, "signup", owner_notifications.signup, db, user, signup_team_id, pending_invite is not None
     )
+    if pending_invite is None:
+        background_tasks.add_task(onboarding_emails.send_welcome, user.id)
 
 
     token = create_access_token(
@@ -654,6 +657,22 @@ def register(user_data: UserRegister, background_tasks: BackgroundTasks, db: Ses
 
 
 
+
+
+class OnboardingUnsubscribe(BaseModel):
+    token: str
+
+
+_unsubscribe_limit = rate_limit("onboarding_unsubscribe", max_requests=20, per_seconds=300)
+
+
+@router.post("/onboarding-emails/unsubscribe", dependencies=[Depends(_unsubscribe_limit)])
+def unsubscribe_onboarding_emails(body: OnboardingUnsubscribe, db: Session = Depends(get_db)):
+    """The "Don't send me tips" link: stops onboarding emails only, no sign-in needed."""
+    user_id = onboarding_emails.user_id_from_token(body.token[:200])
+    if user_id is None or not onboarding_emails.unsubscribe(db, user_id):
+        raise HTTPException(status_code=400, detail="This link is not valid.")
+    return {"status": "unsubscribed"}
 
 
 LOGIN_MAX_FAILURES = 10

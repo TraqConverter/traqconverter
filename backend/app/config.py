@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     # Business inbox told about sign-ups, subscriptions, credit packs and cancellations; empty turns it off.
     OWNER_NOTIFY_EMAIL: str = SUPPORT_EMAIL
 
+    # Welcome, nudge and end-of-trial emails to trial sign-ups.
+    ONBOARDING_EMAILS_ENABLED: bool = True
+
     FRONTEND_URL: str = "http://localhost:3000"
 
 
