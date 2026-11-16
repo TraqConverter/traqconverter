@@ -19,11 +19,12 @@ def test_every_watchdog_step_runs_in_a_thread(monkeypatch):
         raise AssertionError("ran on the event loop")
 
     for name in ("recover_stalled_jobs", "process_pending_learning", "purge_template_uploads",
-                 "purge_delivery_files", "purge_old_notifications", "purge_expired_documents"):
+                 "purge_delivery_files", "purge_old_notifications", "purge_expired_documents",
+                 "send_onboarding_emails"):
         monkeypatch.setattr(main, name, on_loop)
     monkeypatch.setattr(main.asyncio, "to_thread", fake_to_thread)
     monkeypatch.setattr(main.asyncio, "sleep", stop)
 
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(main._watchdog_loop())
-    assert len(in_thread) == 6
+    assert len(in_thread) == 7

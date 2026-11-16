@@ -25,7 +25,8 @@ export function isOpenRoute(pathname: string): boolean {
     pathname === "/guides" ||
     pathname.startsWith("/guides/") ||
     LEGAL_ROUTES.has(pathname) ||
-    PASSWORD_RESET_ROUTES.has(pathname)
+    PASSWORD_RESET_ROUTES.has(pathname) ||
+    pathname === "/unsubscribe"
   )
 }
 

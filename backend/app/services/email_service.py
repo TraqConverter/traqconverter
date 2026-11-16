@@ -44,6 +44,8 @@ def send_email(
     html: str,
     text_fallback: Optional[str] = None,
     from_email: Optional[str] = None,
+    reply_to: Optional[str] = None,
+    headers: Optional[dict] = None,
 ) -> bool:
     """Send a transactional email via Resend. Returns True on success.
 
@@ -83,6 +85,10 @@ def send_email(
         "subject": subject,
         "html": html,
     }
+    if reply_to:
+        payload["reply_to"] = reply_to
+    if headers:
+        payload["headers"] = headers
     if text_fallback:
         payload["text"] = text_fallback
     else:

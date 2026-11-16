@@ -331,6 +331,7 @@ from app.services.template_upload import purge_expired as purge_template_uploads
 from app.services.delivery_links import purge_expired_files as purge_delivery_files
 from app.services.notifications import purge_old_read as purge_old_notifications
 from app.services.document_retention import run_if_due as purge_expired_documents
+from app.services.onboarding_emails import run_if_due as send_onboarding_emails
 
 WATCHDOG_INTERVAL_SECONDS = 60
 
@@ -363,6 +364,10 @@ async def _watchdog_loop():
             await asyncio.to_thread(purge_expired_documents)
         except Exception:
             logger.exception("Document retention errored")
+        try:
+            await asyncio.to_thread(send_onboarding_emails)
+        except Exception:
+            logger.exception("Onboarding emails errored")
         await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)
 
 

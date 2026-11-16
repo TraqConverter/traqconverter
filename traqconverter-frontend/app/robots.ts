@@ -35,6 +35,7 @@ export default function robots(): MetadataRoute.Robots {
           "/register",
           "/forgot-password",
           "/reset-password",
+          "/unsubscribe",
           // Signed, expiring links to a customer's own files.
           "/d/",
         ],
