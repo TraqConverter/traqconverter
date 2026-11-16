@@ -1,11 +1,11 @@
 "use client"
 
-import { Suspense, useEffect, useState } from "react"
+import { Suspense, useState } from "react"
 import { useSearchParams } from "next/navigation"
 import { api } from "@/lib/api"
 import AuthCard, { Notice } from "@/components/auth/AuthCard"
 
-type State = "working" | "done" | "invalid" | "error"
+type State = "ask" | "working" | "done" | "invalid" | "error"
 
 export default function UnsubscribePage() {
   return (
@@ -17,10 +17,12 @@ export default function UnsubscribePage() {
 
 function Unsubscribe() {
   const token = useSearchParams().get("token")
-  const [state, setState] = useState<State>(token ? "working" : "invalid")
+  const [state, setState] = useState<State>(token ? "ask" : "invalid")
 
-  useEffect(() => {
+  // Needs a click: mail scanners open links on their own and would unsubscribe people by accident.
+  const unsubscribe = () => {
     if (!token) return
+    setState("working")
     api
       .post("/auth/onboarding-emails/unsubscribe", { token })
       .then(() => setState("done"))
@@ -28,7 +30,7 @@ function Unsubscribe() {
         const status = (err as { response?: { status?: number } })?.response?.status
         setState(status === 400 ? "invalid" : "error")
       })
-  }, [token])
+  }
 
   if (state === "done") {
     return (
@@ -50,9 +52,21 @@ function Unsubscribe() {
   if (state === "error") {
     return (
       <AuthCard title="Something went wrong">
-        <Notice tone="error">Couldn&apos;t save that. Open the link again in a minute.</Notice>
+        <Notice tone="error">Couldn&apos;t save that. Try again in a minute.</Notice>
       </AuthCard>
     )
   }
-  return <AuthCard title="One moment…">{null}</AuthCard>
+  return (
+    <AuthCard title="Stop onboarding tips?" subtitle="You won't get any more tips about getting started. Emails about your account, like password resets, still arrive.">
+      <button
+        type="button"
+        onClick={unsubscribe}
+        disabled={state === "working"}
+        className="w-full rounded-full px-5 py-3 text-[15px] font-semibold"
+        style={{ background: "#0a7870", color: "#ffffff", opacity: state === "working" ? 0.7 : 1 }}
+      >
+        {state === "working" ? "Saving…" : "Stop sending me tips"}
+      </button>
+    </AuthCard>
+  )
 }
