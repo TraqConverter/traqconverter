@@ -13,7 +13,7 @@ MAX_SOURCE_CHARS = 1500
 NAME_CODES = {
     "english": "en", "english (uk)": "en-GB", "british english": "en-GB", "english (us)": "en-US",
     "american english": "en-US", "italian": "it", "italiano": "it", "german": "de", "deutsch": "de",
-    "french": "fr", "français": "fr", "francais": "fr", "spanish": "es", "español": "es", "espanol": "es",
+    "french": "fr", "français": "fr", "francais": "fr", "spanish": "es", "spanish (spain)": "es-ES", "spanish (latin america)": "es-419", "latin american spanish": "es-419", "español": "es", "espanol": "es",
     "portuguese": "pt", "portuguese (brazilian)": "pt-BR", "brazilian portuguese": "pt-BR", "dutch": "nl",
     "swedish": "sv", "danish": "da", "norwegian": "no", "finnish": "fi", "polish": "pl", "czech": "cs",
     "romanian": "ro", "hungarian": "hu", "turkish": "tr", "vietnamese": "vi", "indonesian": "id",

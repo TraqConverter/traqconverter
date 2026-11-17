@@ -26,14 +26,10 @@ export const revalidate = 0
  * lists fewer URLs than the site serves is indistinguishable from a small site.
  */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  // The product pages a visitor can reach without signing in. Listed by hand
-  // because the app's other twenty-two routes are behind auth and must not be
-  // advertised.
+  // The marketing pages, listed by hand. Everything else is the app, which
+  // lives on its own noindexed host and must not be advertised here.
   const appPages: MetadataRoute.Sitemap = [
     { url: `${SITE_URL}/`, changeFrequency: "weekly", priority: 1 },
-    { url: `${SITE_URL}/certifications`, changeFrequency: "monthly", priority: 0.7 },
-    { url: `${SITE_URL}/templates`, changeFrequency: "monthly", priority: 0.6 },
-    { url: `${SITE_URL}/translation-memory`, changeFrequency: "monthly", priority: 0.6 },
     { url: `${SITE_URL}/terms`, changeFrequency: "yearly", priority: 0.1 },
     { url: `${SITE_URL}/privacy`, changeFrequency: "yearly", priority: 0.1 },
     { url: `${SITE_URL}/cookies`, changeFrequency: "yearly", priority: 0.1 },

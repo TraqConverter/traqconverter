@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict, field_validator
 from typing import List, Literal, Optional
+from urllib.parse import urlsplit
 
 from app.core.company import SUPPORT_EMAIL
 
@@ -21,7 +22,7 @@ class Settings(BaseSettings):
 
 
 
-    CORS_ORIGINS: str = "http://localhost:3000"
+    CORS_ORIGINS: str = "http://localhost:3000,https://app.onlinedoctranslator.ai,https://www.onlinedoctranslator.ai"
 
     @property
     def cors_origins(self) -> List[str]:
@@ -94,7 +95,15 @@ class Settings(BaseSettings):
     # Business inbox told about sign-ups, subscriptions, credit packs and cancellations; empty turns it off.
     OWNER_NOTIFY_EMAIL: str = SUPPORT_EMAIL
 
+    # Welcome, nudge and end-of-trial emails to trial sign-ups.
+    ONBOARDING_EMAILS_ENABLED: bool = True
+
     FRONTEND_URL: str = "http://localhost:3000"
+
+    @property
+    def frontend_origin(self) -> str:
+        parts = urlsplit(self.FRONTEND_URL.strip())
+        return f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else ""
 
 
     CREDIT_PRICE_CENTS: int = 100

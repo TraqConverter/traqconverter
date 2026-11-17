@@ -3,6 +3,7 @@
 import { ReactNode, useEffect, useSyncExternalStore } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { getToken } from "@/lib/auth"
+import { classifyHost } from "@/lib/origins"
 import { isOpenRoute, isPublicRoute, loginUrl, safeNextPath } from "@/lib/routes"
 
 function subscribeToStorage(onChange: () => void) {
@@ -12,6 +13,8 @@ function subscribeToStorage(onChange: () => void) {
 
 const noopSubscribe = () => () => {}
 
+const isOnMarketingHost = () => classifyHost(window.location.host) === "marketing"
+
 // Client-only: the token lives in localStorage/sessionStorage, which middleware can't read.
 // The server snapshot is "no token", so public pages render on the server and
 // protected pages render the loading state until the client knows better.
@@ -20,8 +23,10 @@ export default function AuthGuard({ children }: { children: ReactNode }) {
   const pathname = usePathname() || "/"
   const token = useSyncExternalStore(subscribeToStorage, getToken, () => null)
   const hydrated = useSyncExternalStore(noopSubscribe, () => true, () => false)
+  const onMarketingHost = useSyncExternalStore(noopSubscribe, isOnMarketingHost, () => false)
   const isPublic = isPublicRoute(pathname)
-  const allowed = isOpenRoute(pathname) || (isPublic ? !token : Boolean(token))
+  // The marketing host only ever serves marketing pages (proxy.ts sends the rest to the app), so it bounces no one.
+  const allowed = onMarketingHost || isOpenRoute(pathname) || (isPublic ? !token : Boolean(token))
 
   useEffect(() => {
     // The hydration pass sees the server snapshot (no token); wait for the client one.

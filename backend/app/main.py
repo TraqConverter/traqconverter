@@ -183,6 +183,12 @@ app.add_middleware(
 
 
 
+# The editor embeds the source preview, so the app's own origin (FRONTEND_URL) must be allowed to frame it.
+_PREVIEW_FRAME_ANCESTORS = "frame-ancestors " + " ".join(
+    o for o in dict.fromkeys(["'self'", _settings.frontend_origin, *_settings.cors_origins, "http://localhost:3000"]) if o
+)
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -198,12 +204,7 @@ async def security_headers(request: Request, call_next):
     path = request.url.path
     is_preview = "/preview/source" in path
     if is_preview:
-        response.headers["Content-Security-Policy"] = (
-            "frame-ancestors 'self' "
-            "https://www.onlinedoctranslator.ai "
-            "https://onlinedoctranslator.ai "
-            "http://localhost:3000"
-        )
+        response.headers["Content-Security-Policy"] = _PREVIEW_FRAME_ANCESTORS
     else:
         response.headers.setdefault("X-Frame-Options", "DENY")
 
@@ -331,6 +332,7 @@ from app.services.template_upload import purge_expired as purge_template_uploads
 from app.services.delivery_links import purge_expired_files as purge_delivery_files
 from app.services.notifications import purge_old_read as purge_old_notifications
 from app.services.document_retention import run_if_due as purge_expired_documents
+from app.services.onboarding_emails import run_if_due as send_onboarding_emails
 
 WATCHDOG_INTERVAL_SECONDS = 60
 
@@ -363,6 +365,10 @@ async def _watchdog_loop():
             await asyncio.to_thread(purge_expired_documents)
         except Exception:
             logger.exception("Document retention errored")
+        try:
+            await asyncio.to_thread(send_onboarding_emails)
+        except Exception:
+            logger.exception("Onboarding emails errored")
         await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)
 
 

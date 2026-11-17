@@ -41,11 +41,11 @@ One supported path:
    | `STRIPE_PORTAL_CONFIGURATION` | `bpc_...` printed by `python scripts/stripe_setup.py` |
    | `STRIPE_AUTOMATIC_TAX` | `false` (default). The seller, Lumax Digital LTD, is not VAT-registered, so checkout sends no `automatic_tax` or `tax_id_collection`; it still requires the billing address for invoices. Set `true` only after registering for VAT and enabling Stripe Tax |
    | `STRIPE_CONNECT_WEBHOOK_SECRET` | Signing secret of the Connect webhook (step 4) |
-   | `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | `https://<vercel-domain>/success`, `/cancel` |
-   | `FRONTEND_URL` | `https://<vercel-domain>`. Every link we send (password reset, invites, client links, Stripe return pages) starts with it; unset, they point at localhost |
+   | `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | `https://app.onlinedoctranslator.ai/success`, `/cancel` |
+   | `FRONTEND_URL` | `https://app.onlinedoctranslator.ai`, the app host (not www). Every link we send (password reset, invites, client links, Stripe return pages) starts with it; unset, they point at localhost |
    | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` | Resend key and a sender on a verified domain. Unset, no email is sent: no password resets, invites or payment notices |
    | `OWNER_NOTIFY_EMAIL` | Optional. Inbox told about each sign-up, new subscription, plan change, credit pack and cancellation. Default `info@lumaxdigital.co.uk`; empty turns these emails off |
-   | `CORS_ORIGINS` | `https://<vercel-domain>` |
+   | `CORS_ORIGINS` | `https://app.onlinedoctranslator.ai,https://www.onlinedoctranslator.ai`. The source preview's `frame-ancestors` is built from these plus `FRONTEND_URL` |
 
 3. Deploy. `railway.json` runs `python -m alembic upgrade head` as the pre-deploy step, so every deploy migrates before the new version starts. A failed migration stops the deploy.
 4. The queue worker runs inside the API process: `RUN_WORKER_INLINE=1` is the default, so one Railway service handles HTTP and translation jobs. To split them later, set `RUN_WORKER_INLINE=0` on the API and add a second service with start command `python -m app.workers.sqs_worker`.
@@ -72,10 +72,20 @@ python -m alembic upgrade head
    | Variable | Value |
    |---|---|
    | `NEXT_PUBLIC_API_URL` | Railway API URL, no trailing slash |
+   | `NEXT_PUBLIC_APP_ORIGIN` | Optional. Default `https://app.onlinedoctranslator.ai`. Log in / sign up links on the marketing pages point here, and `proxy.ts` sends app routes on the marketing host here |
+   | `NEXT_PUBLIC_MARKETING_ORIGIN` | Optional. Default `NEXT_PUBLIC_SITE_URL`, else `https://www.onlinedoctranslator.ai`. Canonicals, the sitemap, and where the app host sends `/guides` |
    | `NEXT_PUBLIC_STORAGE_ORIGIN` | Optional. Only if files are stored somewhere other than Supabase (`*.supabase.co` is always allowed), e.g. `https://my-bucket.s3.eu-west-1.amazonaws.com` |
 
    They are inlined at build time, and the Content-Security-Policy is built from them: the API origin (and its `wss://`) and the storage origin are the only outside hosts pages may load from. A production build without it fails on purpose, so redeploy after changing it.
-3. Deploy, then set `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`, `FRONTEND_URL` and `CORS_ORIGINS` on Railway to the Vercel domain and redeploy the backend.
+3. Deploy, then set `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`, `FRONTEND_URL` and `CORS_ORIGINS` on Railway to the app host and redeploy the backend.
+
+### Two hosts, one build
+
+The same build runs on `www` (Cloudways: landing, `/guides`, legal pages) and on `app` (Vercel: everything else). `proxy.ts` decides by the `Host` header, using `src/lib/origins.ts`:
+
+- On www, the apex and `*.cloudwaysapps.com`, any route that is not marketing or shared gets a 308 to the same path and query on the app host. Old emailed links (`/reset-password`, `/accept-invite`, `/unsubscribe`, `/d/...`) keep working that way.
+- On the app host, `/` goes to `/login` (307; a signed-in visitor is then sent to `/dashboard`), `/guides*` and `/sitemap.xml` go to www, `/robots.txt` disallows everything, and every response carries `X-Robots-Tag: noindex, nofollow`.
+- localhost, `*.vercel.app` and any other host are never redirected.
 
 ## 4. Stripe products, portal and webhooks
 

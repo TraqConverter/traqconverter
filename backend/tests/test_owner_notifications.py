@@ -36,6 +36,14 @@ def prices(monkeypatch):
         )
 
 
+@pytest.fixture(autouse=True)
+def no_onboarding_emails(monkeypatch):
+    from app.config import settings
+
+    # These tests count business-inbox emails; the welcome to the new user has its own tests.
+    monkeypatch.setattr(settings, "ONBOARDING_EMAILS_ENABLED", False)
+
+
 @pytest.fixture()
 def notify_off(monkeypatch):
     from app.config import settings

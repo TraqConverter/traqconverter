@@ -14,7 +14,7 @@ LANGUAGES = (
     "Japanese", "Kazakh", "Khmer", "Korean", "Kurdish (Kurmanji)", "Kurdish (Sorani)", "Latvian", "Lithuanian",
     "Macedonian", "Malay", "Maltese", "Mongolian", "Nepali", "Norwegian", "Pashto", "Persian (Farsi)", "Polish",
     "Portuguese", "Punjabi (Gurmukhi)", "Romanian", "Russian", "Serbian", "Sinhala", "Slovak", "Slovenian", "Somali",
-    "Spanish", "Swahili", "Swedish", "Tamil", "Thai", "Tigrinya", "Turkish", "Ukrainian", "Urdu", "Uzbek",
+    "Spanish (Spain and Latin America)", "Swahili", "Swedish", "Tamil", "Thai", "Tigrinya", "Turkish", "Ukrainian", "Urdu", "Uzbek",
     "Vietnamese", "Yoruba",
 )
 
