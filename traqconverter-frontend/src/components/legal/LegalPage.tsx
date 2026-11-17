@@ -4,6 +4,7 @@ import type { ReactNode } from "react"
 import CompanyLine from "@/components/legal/CompanyLine"
 import { LEGAL_LINKS } from "@/lib/company"
 import { BrandMark, BrandName } from "@/components/brand/Logo"
+import { appUrl } from "@/lib/origins"
 
 const CREAM = "#faf5ee"
 const CREAM_DARK = "#f3ecdb"
@@ -49,14 +50,14 @@ export default function LegalPage({
           </Link>
           <div className="flex items-center gap-1 sm:gap-3 whitespace-nowrap">
             <Link
-              href="/login"
+              href={appUrl("/login")}
               className="hidden sm:inline-block"
               style={{ fontSize: 14, fontWeight: 500, color: TEXT, padding: "8px 16px" }}
             >
               Sign in
             </Link>
             <Link
-              href="/register"
+              href={appUrl("/register")}
               style={{ fontSize: 14, fontWeight: 600, color: "#fff", background: TEAL, padding: "9px 18px", borderRadius: 999 }}
             >
               <span className="sm:hidden">Try free</span>

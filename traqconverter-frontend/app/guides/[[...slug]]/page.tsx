@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation"
 import { getPage, getRedirect, listPageIndex, relatedPages, normaliseSlug } from "@/lib/content/pages"
 import { CONTENT_BASE, COLOR, SITE_NAME, TYPE_LABEL, contentHref, contentUrl } from "@/lib/content/config"
 import { BrandMark, BrandName } from "@/components/brand/Logo"
+import { appUrl } from "@/lib/origins"
 
 export const runtime = "nodejs"
 // Revalidate rather than rebuild: the pipeline publishes through the WP shim at
@@ -187,7 +188,7 @@ export default async function GuidePage({ params }: Props) {
             Translate the document, keep the layout, and generate the certification page your client needs.
           </p>
           <Link
-            href="/register"
+            href={appUrl("/register")}
             style={{ display: "inline-block", background: COLOR.teal, color: "#fff", textDecoration: "none", padding: "11px 20px", borderRadius: 8, fontWeight: 600 }}
           >
             Start free
