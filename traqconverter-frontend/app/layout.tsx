@@ -4,6 +4,7 @@ import "./globals.css"
 
 import AppShell from "@/components/AppShell"
 import AuthGuard from "@/components/auth/AuthGuard"
+import { MARKETING_ORIGIN } from "@/lib/origins"
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -25,7 +26,7 @@ const OG_IMAGE = {
 }
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://www.onlinedoctranslator.ai"),
+  metadataBase: new URL(MARKETING_ORIGIN),
   title: "OnlineDocTranslator",
   description: DESCRIPTION,
   applicationName: "OnlineDocTranslator",

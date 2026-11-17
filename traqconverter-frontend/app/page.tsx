@@ -6,6 +6,7 @@ import { useState } from "react"
 import Link from "next/link"
 import CompanyLine from "@/components/legal/CompanyLine"
 import { VAT_NOTE } from "@/lib/company"
+import { appUrl } from "@/lib/origins"
 import {
   contactHref,
   euro,
@@ -107,7 +108,7 @@ function TopBar() {
         </nav>
         <div className="flex items-center gap-1 sm:gap-3 whitespace-nowrap">
           <Link
-            href="/login"
+            href={appUrl("/login")}
             style={{
               fontSize: 14,
               fontWeight: 500,
@@ -118,7 +119,7 @@ function TopBar() {
             Sign in
           </Link>
           <Link
-            href="/register"
+            href={appUrl("/register")}
             style={{
               fontSize: 14,
               fontWeight: 600,
@@ -233,7 +234,7 @@ function Hero() {
             </p>
             <div className="flex flex-wrap items-center gap-3 mb-8">
               <Link
-                href="/register"
+                href={appUrl("/register")}
                 style={{
                   background: TEAL,
                   color: "#fff",
@@ -1137,7 +1138,7 @@ function DemoCTA() {
       </div>
       <div className="flex flex-wrap gap-3">
         <Link
-          href="/register"
+          href={appUrl("/register")}
           style={{ background: "#ffffff", color: TEAL_DARK, padding: "13px 24px", borderRadius: 999, fontWeight: 700, fontSize: 15 }}
         >
           Start free trial <span aria-hidden="true">→</span>
@@ -1388,7 +1389,7 @@ function RiskReversal() {
         </ul>
         <div className="flex flex-wrap items-center justify-center gap-3 mt-10">
           <Link
-            href="/register"
+            href={appUrl("/register")}
             style={{ background: TEAL, color: "#ffffff", padding: "14px 28px", borderRadius: 999, fontWeight: 700, fontSize: 15 }}
           >
             Start free trial <span aria-hidden="true">→</span>
@@ -1566,7 +1567,7 @@ function Pricing() {
             style={{ fontSize: 15, color: MUTED }}
           >
             Plans couldn&apos;t load right now.{" "}
-            <Link href="/register" style={{ color: TEAL, fontWeight: 600 }}>
+            <Link href={appUrl("/register")} style={{ color: TEAL, fontWeight: 600 }}>
               Start the free trial
             </Link>{" "}
             and see them in Billing.
@@ -1613,7 +1614,7 @@ function PricingPlans({ catalog }: { catalog: PlanCatalog }) {
           </div>
         </div>
         <Link
-          href="/register"
+          href={appUrl("/register")}
           style={{
             background: TEAL,
             color: "#ffffff",
@@ -1791,7 +1792,7 @@ function PayAsYouGo({ catalog }: { catalog: PlanCatalog }) {
         </div>
       </div>
       <Link
-        href="/register"
+        href={appUrl("/register")}
         style={{ color: TEAL_DARK, fontWeight: 600, fontSize: 14, whiteSpace: "nowrap" }}
       >
         Create an account →
@@ -1811,7 +1812,7 @@ function PlanCard({
 }) {
   const features = planBullets(catalog, plan)
   const ctaHref = plan.available
-    ? `/register?plan=${plan.code.toLowerCase()}`
+    ? appUrl(`/register?plan=${plan.code.toLowerCase()}`)
     : contactHref(catalog, plan)
   const cta = plan.available ? `Choose ${plan.name}` : "Contact us"
   return (
@@ -2123,7 +2124,7 @@ function FinalCTA() {
         </p>
         <div className="flex items-center justify-center gap-3 flex-wrap" style={{ position: "relative" }}>
           <Link
-            href="/register"
+            href={appUrl("/register")}
             style={{
               background: "#ffffff",
               color: TEAL_DARK,
@@ -2203,8 +2204,8 @@ function Footer() {
         <FooterCol
           title="Get started"
           links={[
-            ["Sign in", "/login"],
-            ["Create account", "/register"],
+            ["Sign in", appUrl("/login")],
+            ["Create account", appUrl("/register")],
           ]}
         />
       </div>

@@ -1,3 +1,5 @@
+import { MARKETING_ORIGIN } from "../origins"
+
 /**
  * Where the content section lives, and the palette it borrows.
  *
@@ -12,7 +14,7 @@
  */
 export const CONTENT_BASE = "guides"
 
-export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.onlinedoctranslator.ai").replace(/\/$/, "")
+export const SITE_URL = MARKETING_ORIGIN
 
 export const SITE_NAME = "OnlineDocTranslator"
 
