@@ -183,6 +183,12 @@ app.add_middleware(
 
 
 
+# The editor embeds the source preview, so the app's own origin (FRONTEND_URL) must be allowed to frame it.
+_PREVIEW_FRAME_ANCESTORS = "frame-ancestors " + " ".join(
+    o for o in dict.fromkeys(["'self'", _settings.frontend_origin, *_settings.cors_origins, "http://localhost:3000"]) if o
+)
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -198,12 +204,7 @@ async def security_headers(request: Request, call_next):
     path = request.url.path
     is_preview = "/preview/source" in path
     if is_preview:
-        response.headers["Content-Security-Policy"] = (
-            "frame-ancestors 'self' "
-            "https://www.onlinedoctranslator.ai "
-            "https://onlinedoctranslator.ai "
-            "http://localhost:3000"
-        )
+        response.headers["Content-Security-Policy"] = _PREVIEW_FRAME_ANCESTORS
     else:
         response.headers.setdefault("X-Frame-Options", "DENY")
 
